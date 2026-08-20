@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+
+<html lang="vi"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GustoPOS - Trang Chủ</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Courier+Prime&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary": "#00685c",
+                        "secondary-container": "#d7e4ec",
+                        "on-tertiary-container": "#f4fffb",
+                        "background": "#f9f9f9",
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "on-secondary-fixed-variant": "#3c494f",
+                        "on-error-container": "#93000a",
+                        "primary-fixed": "#ffdbd1",
+                        "surface-variant": "#e2e2e2",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "on-primary-container": "#fffbff",
+                        "outline-variant": "#e4beb4",
+                        "secondary-fixed-dim": "#bbc8d0",
+                        "surface-container-low": "#f3f3f3",
+                        "on-tertiary-fixed": "#00201b",
+                        "primary-container": "#d53e0b",
+                        "inverse-primary": "#ffb5a0",
+                        "on-primary-fixed": "#3b0900",
+                        "tertiary-fixed-dim": "#7ad7c6",
+                        "on-primary-fixed-variant": "#872100",
+                        "on-error": "#ffffff",
+                        "on-surface": "#1a1c1c",
+                        "on-background": "#1a1c1c",
+                        "surface-container-highest": "#e2e2e2",
+                        "error-container": "#ffdad6",
+                        "on-surface-variant": "#5b4139",
+                        "error": "#ba1a1a",
+                        "inverse-surface": "#2f3131",
+                        "surface-bright": "#f9f9f9",
+                        "surface-container": "#eeeeee",
+                        "secondary-fixed": "#d7e4ec",
+                        "on-tertiary-fixed-variant": "#005047",
+                        "tertiary-fixed": "#97f3e2",
+                        "on-secondary-container": "#5a666d",
+                        "surface-tint": "#b02e00",
+                        "primary-fixed-dim": "#ffb5a0",
+                        "surface-dim": "#dadada",
+                        "surface-container-high": "#e8e8e8",
+                        "tertiary-container": "#198374",
+                        "secondary": "#546067",
+                        "on-secondary-fixed": "#111d23",
+                        "on-tertiary": "#ffffff",
+                        "outline": "#8f7068",
+                        "inverse-on-surface": "#f1f1f1",
+                        "surface": "#f9f9f9"
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.125rem",
+                        lg: "0.25rem",
+                        xl: "0.5rem",
+                        full: "0.75rem"
+                    },
+                    spacing: {
+                        "xs": "4px",
+                        "sm": "8px",
+                        "lg": "24px",
+                        "base": "8px",
+                        "margin-desktop": "32px",
+                        "margin-mobile": "16px",
+                        "gutter": "16px",
+                        "xl": "32px",
+                        "md": "16px"
+                    },
+                    fontFamily: {
+                        "headline-lg": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "body-md": ["Inter"],
+                        "mono-label": ["Courier Prime"],
+                        "label-md": ["Inter"],
+                        "label-lg": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-sm": ["Inter"],
+                        "headline-md": ["Inter"]
+                    },
+                    fontSize: {
+                        "headline-lg": ["32px", { lineHeight: "40px", letterSpacing: "-0.01em", fontWeight: "600" }],
+                        "display-lg": ["48px", { lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "700" }],
+                        "body-sm": ["14px", { lineHeight: "20px", fontWeight: "400" }],
+                        "body-md": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+                        "mono-label": ["14px", { lineHeight: "20px", fontWeight: "400" }],
+                        "label-md": ["12px", { lineHeight: "16px", letterSpacing: "0.04em", fontWeight: "600" }],
+                        "label-lg": ["14px", { lineHeight: "20px", letterSpacing: "0.01em", fontWeight: "600" }],
+                        "body-lg": ["18px", { lineHeight: "28px", fontWeight: "400" }],
+                        "headline-sm": ["20px", { lineHeight: "28px", fontWeight: "600" }],
+                        "headline-md": ["24px", { lineHeight: "32px", fontWeight: "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill {
+            font-variation-settings: 'FILL' 1;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased selection:bg-primary-container selection:text-on-primary-container min-h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-surface-container-lowest shadow-sm flex justify-between items-center w-full px-margin-desktop py-4 sticky top-0 z-40">
+<div class="flex items-center gap-4">
+<span class="font-headline-md text-headline-md font-extrabold text-primary">GustoPOS</span>
+</div>
+<nav class="hidden md:flex items-center gap-6">
+<a class="font-label-md text-label-md text-primary font-bold border-b-2 border-primary py-2 transition-all opacity-80" href="#">Trang chủ</a>
+<a class="font-label-md text-label-md text-secondary font-medium py-2 hover:bg-surface-container-high transition-all rounded px-2" href="#">Thực đơn</a>
+<a class="font-label-md text-label-md text-secondary font-medium py-2 hover:bg-surface-container-high transition-all rounded px-2" href="#">Giới thiệu</a>
+<a class="font-label-md text-label-md text-secondary font-medium py-2 hover:bg-surface-container-high transition-all rounded px-2" href="#">Liên hệ</a>
+</nav>
+<div class="flex items-center gap-4">
+<button class="hidden md:flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-all text-on-surface-variant">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="hidden md:flex items-center justify-center w-10 h-10 rounded-full hover:bg-surface-container-high transition-all text-on-surface-variant">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="bg-primary text-on-primary font-label-lg text-label-lg px-6 py-2 rounded-lg hover:shadow-md transition-shadow">
+                Đặt bàn ngay
+            </button>
+</div>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 w-full overflow-y-auto">
+<!-- Hero Section -->
+<section class="relative w-full h-[819px] min-h-[600px] flex items-center justify-center bg-surface-variant overflow-hidden">
+<div class="absolute inset-0 bg-cover bg-center z-0" data-alt="A cinematic, high-resolution photograph of a vibrant, modern restaurant interior. The scene is brightly lit with warm, natural sunlight streaming through large windows, illuminating elegantly set tables with sleek, terracotta accents. A masterfully plated gourmet dish sits in the foreground, sharp in focus, while the background gently blurs out, capturing the lively yet sophisticated ambiance of a premium dining experience. Corporate modern aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCnhHD7SH9yDOwSKKhzTA1ZVWyCmju-LFA4OYTutBOU-4u67OZsTTuEPQ8CjrDZChpt7EMbiIua5MQgDyv31WRbXHpHu5kyrwkX_U5rHOYxyUIOYQa2OIUYAcMJrEp3b-IYdq1HEAC4qBX6KL_wRWiqe6F7uP6lkxbO9ZVCS1OCwg_UBQCcX-W4BMhhDK7C6qw8zrWrY-TAgMmJfM-GnZkUX3eCY6ikGT7XTKmmJ_kx5GGjkaaDnDSTow')"></div>
+<div class="absolute inset-0 bg-inverse-surface/40 z-10"></div>
+<div class="relative z-20 text-center px-margin-mobile max-w-4xl mx-auto flex flex-col items-center gap-6">
+<h1 class="font-display-lg text-display-lg text-on-primary drop-shadow-lg">Hương Vị Hoàn Hảo,<br/>Trải Nghiệm Thăng Hoa</h1>
+<p class="font-body-lg text-body-lg text-on-primary/90 max-w-2xl drop-shadow">Khám phá tinh hoa ẩm thực đương đại tại GustoPOS, nơi mỗi món ăn là một tác phẩm nghệ thuật và mọi khoảnh khắc đều đáng nhớ.</p>
+<div class="flex flex-col sm:flex-row gap-4 mt-4">
+<button class="bg-primary text-on-primary font-label-lg text-label-lg px-8 py-3 rounded-full hover:bg-primary-container hover:shadow-lg transition-all transform hover:-translate-y-1">
+                        Đặt Bàn Ngay
+                    </button>
+<button class="bg-surface-container-lowest/20 backdrop-blur-md border border-outline-variant text-on-primary font-label-lg text-label-lg px-8 py-3 rounded-full hover:bg-surface-container-lowest/30 transition-all">
+                        Xem Thực Đơn
+                    </button>
+</div>
+</div>
+</section>
+<!-- Featured Dishes (Bento Grid) -->
+<section class="py-24 px-margin-desktop max-w-7xl mx-auto">
+<div class="text-center mb-16">
+<h2 class="font-headline-lg text-headline-lg text-on-surface mb-4">Món Ăn Đặc Sắc</h2>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-2xl mx-auto">Tuyển tập những hương vị tinh túy nhất, được chế biến tỉ mỉ bởi các đầu bếp trứ danh của chúng tôi.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[250px]">
+<!-- Large Item -->
+<div class="md:col-span-2 md:row-span-2 rounded-xl overflow-hidden relative group shadow-sm bg-surface-container-low">
+<img class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" data-alt="A top-down, high-quality culinary photo of a perfectly seared premium beef steak, elegantly plated on a pristine white ceramic dish. The steak is accompanied by a vibrant, artistic drizzle of dark reduction sauce, microgreens, and a side of golden, crispy fondant potatoes. The lighting is bright and directional, emphasizing the rich textures and appetizing colors of the food against a clean, modern corporate background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuApzDkChU35fl_AEncvO3F4RfntPCOK35TsQRN0G7wAhf0B2H7_TL3bwYr7ytCMbqKm18JgvUjZPkRcf44BmSX1BbS0y2BZ8EeGfZrAmqcONatxuYoSAxBNkHxqkNk5MQODt_BEdxg8u3PY-MmqH-jvOp7EO6ot6RD_BkdTliJhDA-wbynBEq9YwYVh1579Ze4Yy1JqRgoU1SSwVIsrm_g8CIY5iOpVx1uS7Rtr5R5pEQ86DR1wSejWDg"/>
+<div class="absolute inset-0 bg-gradient-to-t from-inverse-surface/80 to-transparent flex flex-col justify-end p-8">
+<div class="flex items-center gap-2 mb-2">
+<span class="bg-primary-container text-on-primary-container font-label-md text-label-md px-2 py-1 rounded">Chef's Special</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-primary mb-2">Thăn Bò Wagyu A5 Thượng Hạng</h3>
+<p class="font-body-md text-body-md text-on-primary/80 line-clamp-2">Được nướng hoàn hảo trên lửa than hồng, ăn kèm sốt nấm truffle đặc biệt và măng tây áp chảo.</p>
+</div>
+</div>
+<!-- Small Items -->
+<div class="rounded-xl overflow-hidden relative group shadow-sm bg-surface-container-low">
+<img class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" data-alt="A close-up, beautifully styled photograph of a fresh, colorful summer salad in a shallow modern bowl. The salad features mixed artisanal greens, bright red cherry tomatoes, edible flowers, and thin shavings of parmesan cheese, all lightly dressed. Bright, natural daylight highlights the crispness of the vegetables, set against a soft, light-toned minimalist background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCIIhBHh39lYGUWaREvnwZlbHRw05EUJLNiGrc2lYXrtDaas6XeA386A2rgKh68J3sl_gYxWG2X5zY6OWRlLMtIiSt-MmC9UQGdWj4f3C9puMY4gGp0Xei-AJtxU-FdOaHzNZkIpkaT6yFDLbmguciWJTBbZ_-BKBTTlr1kem6pw9JdE2OajPpdaM_VPlhWbRIJlOakUDlzxqQI3R9aSUF4a6FhYs3LXAwc3XAnJ616E6DT5GGtdwU31g"/>
+<div class="absolute inset-0 bg-gradient-to-t from-inverse-surface/80 via-transparent to-transparent flex flex-col justify-end p-6">
+<h3 class="font-headline-sm text-headline-sm text-on-primary">Salad Mùa Hè Tươi Mát</h3>
+</div>
+</div>
+<div class="rounded-xl overflow-hidden relative group shadow-sm bg-surface-container-low">
+<img class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" data-alt="A stunning macro shot of an exquisite, modern dessert. A smooth, glossy dark chocolate dome sits on a crumbly biscuit base, garnished with a single sheet of edible gold leaf and a fresh raspberry. The setting is clean and high-contrast, with soft, diffused lighting creating elegant reflections on the dessert's surface, reflecting a premium dining experience." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0Bn5aODYSUmmLUqN_NFETM-xnfGr7Wwjf3KxBGjC-uQ4QobsYKnQKHI3X6uQGWNCAx-Ksnft7QFGXskyM5rPiF6Fcf9-viv3_T4xj22jgDo4Tos8oslHDS98FXY66LFRmXUQq4EaYeWL4_f719r17JNTLG4gtF6i1CGohCrjlvWdwirq6cT7ASYTASOi3EaIHFRYAc4wO5FDUGTOqWQpOK0klwY66QoI51mM36alfitPTz0bMsrOXJw"/>
+<div class="absolute inset-0 bg-gradient-to-t from-inverse-surface/80 via-transparent to-transparent flex flex-col justify-end p-6">
+<h3 class="font-headline-sm text-headline-sm text-on-primary">Mousse Chocolate Hảo Hạng</h3>
+</div>
+</div>
+</div>
+</section>
+</main>
+<footer class="bg-surface-container-highest py-12 px-margin-desktop mt-auto border-t border-surface-variant">
+<div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+<div class="flex items-center gap-2">
+<span class="font-headline-sm text-headline-sm font-bold text-on-surface">GustoPOS</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant text-center md:text-left">
+                © 2024 GustoPOS. All rights reserved.
+            </p>
+</div>
+</footer>
+</body></html>
