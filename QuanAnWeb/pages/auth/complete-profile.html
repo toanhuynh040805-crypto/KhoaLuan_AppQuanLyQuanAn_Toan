@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hoàn tất Đăng ký - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "background": "#f9f9f9",
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "surface-container-lowest": "#ffffff",
+                        "on-surface": "#1a1c1c",
+                        "on-surface-variant": "#5b4139",
+                        "outline-variant": "#e4beb4",
+                        "error": "#ba1a1a",
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface antialiased min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-surface-container-lowest rounded-2xl shadow-lg border border-outline-variant/60 p-8 max-w-md w-full relative overflow-hidden">
+        
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <span class="material-symbols-outlined text-primary text-5xl mb-2" style="font-variation-settings: 'FILL' 1;">restaurant</span>
+            <h1 class="text-2xl font-bold text-primary">Hoàn tất hồ sơ</h1>
+            <p class="text-sm text-on-surface-variant mt-2">GustoPOS cần thêm số điện thoại của bạn để đảm bảo việc liên hệ khi đặt bàn và giao hàng.</p>
+        </div>
+
+        <!-- Form -->
+        <form id="completeProfileForm" class="space-y-5">
+            
+            <!-- Email (Disabled) -->
+            <div>
+                <label for="email" class="block text-sm font-medium text-on-surface mb-1">Email (Tài khoản Google)</label>
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/50 text-[20px]">mail</span>
+                    <input type="email" id="email" disabled class="w-full pl-10 pr-4 py-2.5 bg-gray-100 border border-outline-variant/50 rounded-lg text-on-surface-variant/80 cursor-not-allowed">
+                </div>
+            </div>
+
+            <!-- Full Name (Disabled) -->
+            <div>
+                <label for="fullName" class="block text-sm font-medium text-on-surface mb-1">Họ và tên</label>
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/50 text-[20px]">person</span>
+                    <input type="text" id="fullName" disabled class="w-full pl-10 pr-4 py-2.5 bg-gray-100 border border-outline-variant/50 rounded-lg text-on-surface-variant/80 cursor-not-allowed">
+                </div>
+            </div>
+
+            <!-- Phone (Nhập liệu) -->
+            <div>
+                <label for="phone" class="block text-sm font-medium text-on-surface mb-1">Số điện thoại liên hệ <span class="text-error">*</span></label>
+                <div class="relative">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">phone</span>
+                    <input type="tel" id="phone" required placeholder="Nhập số điện thoại (ví dụ: 0901234567)" 
+                           pattern="[0-9]{10,11}"
+                           title="Vui lòng nhập 10-11 chữ số"
+                           class="w-full pl-10 pr-4 py-2.5 bg-white border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg text-on-surface transition-all">
+                </div>
+            </div>
+
+            <!-- Lỗi hiển thị -->
+            <div id="errorMessage" class="hidden text-error text-sm font-medium bg-red-50 p-3 rounded-lg border border-red-100"></div>
+
+            <!-- Nút submit -->
+            <button type="submit" id="submitBtn" class="w-full bg-primary hover:bg-[#8c2400] text-on-primary font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                Hoàn tất đăng ký
+                <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+            </button>
+        </form>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Lấy params từ URL (do Backend Redirect trả về)
+            const urlParams = new URLSearchParams(window.location.search);
+            const email = urlParams.get('email');
+            const name = urlParams.get('name');
+
+            // Nếu không có email, tức là người dùng truy cập trái phép trang này
+            if (!email) {
+                window.location.replace('/pages/auth/login_register.html');
+                return;
+            }
+
+            // Điền sẵn dữ liệu vào form
+            document.getElementById('email').value = email;
+            document.getElementById('fullName').value = decodeURIComponent(name || 'Khách hàng');
+
+            const form = document.getElementById('completeProfileForm');
+            const errorDiv = document.getElementById('errorMessage');
+            const submitBtn = document.getElementById('submitBtn');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                // Reset trạng thái
+                errorDiv.classList.add('hidden');
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[18px]">autorenew</span> Đang xử lý...';
+
+                const phone = document.getElementById('phone').value;
+
+                try {
+                    // Gọi API Backend CompleteProfile
+                    const response = await fetch('http://localhost:5000/api/auth/google/complete-profile', {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({ 
+                            email: email, 
+                            fullName: decodeURIComponent(name || 'Khách hàng'), 
+                            phone: phone 
+                        })
+                    });
+
+                    let data;
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.indexOf("application/json") !== -1) {
+                        data = await response.json();
+                    } else {
+                        data = await response.text();
+                    }
+
+                    if (response.ok) {
+                        // Lưu token theo key dùng chung với session.js để đồng bộ với luồng đăng nhập khác
+                        const accessToken = data?.accessToken ?? data?.token ?? data;
+                        if (typeof accessToken === 'string' && accessToken.trim()) {
+                            localStorage.setItem('gusto_customer_access_token', accessToken);
+                            localStorage.setItem('customer_token', accessToken);
+                        }
+                        
+                        // Chuyển hướng về trang chủ web
+                        window.location.replace('/index.html');
+                    } else {
+                        // Lỗi từ backend (ví dụ: trùng số điện thoại)
+                        errorDiv.textContent = typeof data === 'object' ? (data.message || 'Có lỗi xảy ra') : data;
+                        errorDiv.classList.remove('hidden');
+                        submitBtn.disabled = false;
+                        submitBtn.innerHTML = 'Hoàn tất đăng ký <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
+                    }
+                } catch (error) {
+                    console.error('Lỗi kết nối', error);
+                    errorDiv.textContent = 'Lỗi kết nối máy chủ. Vui lòng kiểm tra lại mạng.';
+                    errorDiv.classList.remove('hidden');
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = 'Hoàn tất đăng ký <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

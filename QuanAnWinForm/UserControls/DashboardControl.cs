@@ -1,22 +1,24 @@
+﻿using QuanAnWinForm.Models;
+using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
 
 namespace QuanAnWinForm.UserControls;
 
-// Man hinh Tong quan (Dashboard) - chi danh cho Role QuanLy.
-// TODO: hien dang dung du lieu mau. Can noi API thong ke that
-// (GET /api/reports/dashboard) khi Backend bo sung endpoint tuong ung.
+// Man hinh Tong quan (Dashboard) - chi danh cho Role QuanLy. Lay du lieu THAT
+// tu ReportsController (doanh thu, don hang, mon ban chay, bieu do theo gio),
+// TablesController (so ban dang phuc vu) va CustomersController (khach moi).
 public partial class DashboardControl : UserControl
 {
+    private readonly ApiService _api = new();
+
     public DashboardControl()
     {
         InitializeComponent();
         WireUpEvents();
-        LoadSampleChart();
+
+        Load += async (s, e) => await LoadAllAsync();
     }
 
-    // Cac event handler dung lambda KHONG duoc dat trong .Designer.cs (WinForms Designer
-    // khong parse duoc cu phap lambda -> loi "the designer cannot process the code").
-    // Phai dang ky o day, trong code-behind, sau khi InitializeComponent() da chay xong.
     private void WireUpEvents()
     {
         panelChartCard.Paint += (s, e) =>
@@ -25,15 +27,78 @@ public partial class DashboardControl : UserControl
             e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelTopItemsCard.Width - 1, panelTopItemsCard.Height - 1);
     }
 
-    private void LoadSampleChart()
+    private async Task LoadAllAsync()
     {
-        // Du lieu mau khop voi thiet ke Stitch: doanh thu theo khung gio trong ngay
-        chartPanel.Data = new List<(string Label, double Value)>
+        lblSubtitle.Text = $"Cập nhật lúc {DateTime.Now:HH:mm, dd/MM/yyyy}";
+
+        try
         {
-            ("08:00", 8_000_000), ("10:00", 14_000_000), ("12:00", 22_000_000),
-            ("14:00", 15_000_000), ("16:00", 27_000_000), ("18:00", 9_000_000), ("20:00", 6_000_000),
-        };
-        chartPanel.HighlightIndex = 4; // cot 16:00 duoc highlight giong thiet ke
+            await Task.WhenAll(
+                LoadSummaryAsync(),
+                LoadTablesAsync(),
+                LoadNewCustomersAsync(),
+                LoadChartAsync(),
+                LoadTopItemsAsync()
+            );
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Không tải được dữ liệu tổng quan: {ex.Message}");
+        }
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        var summary = await _api.GetReportSummaryAsync(DateTime.Today, DateTime.Today) ?? new RevenueSummaryDto();
+
+        var trendText = summary.TrendPercent.HasValue ? $"{Math.Abs(summary.TrendPercent.Value):0.#}% so với hôm qua" : null;
+        var trendUp = summary.TrendPercent is null or >= 0;
+
+        cardRevenue.Configure("💰", AppColors.Primary, AppColors.ErrorContainer, "DOANH THU HÔM NAY", $"{summary.Revenue:N0}đ", trendText, trendUp);
+        cardOrders.Configure("🧾", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "SỐ ĐƠN HÀNG", summary.OrderCount.ToString("N0"));
+    }
+
+    private async Task LoadTablesAsync()
+    {
+        // "Bàn mang về" (khu vực hệ thống "Mang về") không phải bàn ăn tại chỗ -> không tính vào thống kê bàn
+        var tables = (await _api.GetTablesAsync())
+            .Where(t => !string.Equals(t.AreaName?.Trim(), "Mang về", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var busy = tables.Count(t => t.Status == (int)TableStatusEnum.DangPhucVu);
+        cardTables.Configure("🪑", AppColors.Secondary, AppColors.SecondaryContainer, "BÀN ĐANG PHỤC VỤ", $"{busy}/{tables.Count}");
+    }
+
+    private async Task LoadNewCustomersAsync()
+    {
+        var customers = await _api.GetCustomersAsync();
+        var newToday = customers.Count(c => c.CreatedAt.Date == DateTime.Today);
+        cardNewCustomers.Configure("⭐", AppColors.Warning, Color.FromArgb(255, 243, 224), "KHÁCH MỚI HÔM NAY", newToday.ToString("N0"));
+    }
+
+    private async Task LoadChartAsync()
+    {
+        var points = await _api.GetRevenueByHourAsync(DateTime.Today);
+        chartPanel.Data = points.Select(p => (p.Label, (double)p.Revenue)).ToList();
+        chartPanel.HighlightIndex = points.Count > 0
+            ? points.Select((p, i) => (p.Revenue, i)).OrderByDescending(x => x.Revenue).First().i
+            : -1;
         chartPanel.Invalidate();
+    }
+
+    private async Task LoadTopItemsAsync()
+    {
+        flowTopItems.Controls.Clear();
+        var items = await _api.GetTopItemsAsync(DateTime.Today, DateTime.Today, take: 5);
+
+        if (items.Count == 0)
+        {
+            flowTopItems.Controls.Add(new Label { Text = "Chưa có dữ liệu bán hàng hôm nay.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(0, 8, 0, 0) });
+            return;
+        }
+
+        foreach (var item in items)
+        {
+            BuildTopItemRow(flowTopItems, item.MenuItemName, $"Đã bán: {item.QuantitySold}", $"{item.Revenue:N0}đ");
+        }
     }
 }

@@ -9,6 +9,8 @@ partial class MenuManagementControl
     private Label lblTitle;
     private Label lblSubtitle;
     private Button btnAddNew;
+    private Button btnManageCategories;
+    private TextBox txtSearch;
     private FlowLayoutPanel flowCategoryTabs;
     private FlowLayoutPanel flowMenuCards;
 
@@ -20,79 +22,103 @@ partial class MenuManagementControl
 
     private void InitializeComponent()
     {
-        this.lblTitle = new Label();
-        this.lblSubtitle = new Label();
-        this.btnAddNew = new Button();
-        this.flowCategoryTabs = new FlowLayoutPanel();
-        this.flowMenuCards = new FlowLayoutPanel();
-        this.SuspendLayout();
-        //
+        lblTitle = new Label();
+        lblSubtitle = new Label();
+        btnAddNew = new Button();
+        btnManageCategories = new Button();
+        txtSearch = new TextBox();
+        flowCategoryTabs = new FlowLayoutPanel();
+        flowMenuCards = new FlowLayoutPanel();
+        SuspendLayout();
+        // 
         // lblTitle
-        //
-        this.lblTitle.Text = "Quản lý Thực đơn";
-        this.lblTitle.Font = AppFonts.HeadlineLg;
-        this.lblTitle.Location = new Point(0, 0);
-        this.lblTitle.AutoSize = true;
-        //
+        // 
+        lblTitle.AutoSize = true;
+        lblTitle.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
+        lblTitle.Location = new Point(19, 15);
+        lblTitle.Name = "lblTitle";
+        lblTitle.Size = new Size(330, 50);
+        lblTitle.TabIndex = 6;
+        lblTitle.Text = "Quản lý Thực đơn";
+        // 
         // lblSubtitle
-        //
-        this.lblSubtitle.Text = "Cập nhật và quản lý danh sách món ăn, giá cả và trạng thái.";
-        this.lblSubtitle.Font = AppFonts.BodyMd;
-        this.lblSubtitle.ForeColor = AppColors.OnSurfaceVariant;
-        this.lblSubtitle.Location = new Point(0, 36);
-        this.lblSubtitle.AutoSize = true;
-        //
+        // 
+        lblSubtitle.AutoSize = true;
+        lblSubtitle.Font = new Font("Segoe UI", 10F);
+        lblSubtitle.ForeColor = Color.FromArgb(91, 65, 57);
+        lblSubtitle.Location = new Point(19, 65);
+        lblSubtitle.Name = "lblSubtitle";
+        lblSubtitle.Size = new Size(558, 23);
+        lblSubtitle.TabIndex = 5;
+        lblSubtitle.Text = "Cập nhật và quản lý danh sách món ăn, thức uống, giá cả và trạng thái.";
+        // 
         // btnAddNew
-        //
-        this.btnAddNew.Text = "+  Thêm món mới";
-        this.btnAddNew.Location = new Point(880, 8);
-        this.btnAddNew.Size = new Size(160, 40);
-        this.btnAddNew.FlatStyle = FlatStyle.Flat;
-        this.btnAddNew.BackColor = AppColors.Primary;
-        this.btnAddNew.ForeColor = Color.White;
-        this.btnAddNew.FlatAppearance.BorderSize = 0;
-        //
+        // 
+        btnAddNew.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnAddNew.BackColor = Color.FromArgb(172, 45, 0);
+        btnAddNew.FlatAppearance.BorderSize = 0;
+        btnAddNew.FlatStyle = FlatStyle.Flat;
+        btnAddNew.ForeColor = Color.White;
+        btnAddNew.Location = new Point(880, 8);
+        btnAddNew.Name = "btnAddNew";
+        btnAddNew.Size = new Size(160, 40);
+        btnAddNew.TabIndex = 4;
+        btnAddNew.Text = "+  Thêm món mới";
+        btnAddNew.UseVisualStyleBackColor = false;
+        // 
+        // btnManageCategories
+        // 
+        btnManageCategories.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnManageCategories.BackColor = Color.FromArgb(84, 96, 103);
+        btnManageCategories.FlatAppearance.BorderSize = 0;
+        btnManageCategories.FlatStyle = FlatStyle.Flat;
+        btnManageCategories.ForeColor = Color.White;
+        btnManageCategories.Location = new Point(696, 8);
+        btnManageCategories.Name = "btnManageCategories";
+        btnManageCategories.Size = new Size(168, 40);
+        btnManageCategories.TabIndex = 3;
+        btnManageCategories.Text = "Quản lý loại món";
+        btnManageCategories.UseVisualStyleBackColor = false;
+        // 
+        // txtSearch
+        // 
+        txtSearch.Font = new Font("Segoe UI", 10F);
+        txtSearch.Location = new Point(19, 104);
+        txtSearch.Name = "txtSearch";
+        txtSearch.PlaceholderText = "Tìm món theo tên...";
+        txtSearch.Size = new Size(320, 30);
+        txtSearch.TabIndex = 2;
+        // 
         // flowCategoryTabs
-        //
-        this.flowCategoryTabs.Location = new Point(0, 76);
-        this.flowCategoryTabs.Size = new Size(700, 34);
-        AddTab(this.flowCategoryTabs, "Tất cả món", true);
-        AddTab(this.flowCategoryTabs, "Món chính", false);
-        AddTab(this.flowCategoryTabs, "Khai vị", false);
-        AddTab(this.flowCategoryTabs, "Đồ uống", false);
-        AddTab(this.flowCategoryTabs, "Tráng miệng", false);
-        //
+        // 
+        flowCategoryTabs.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        flowCategoryTabs.Location = new Point(19, 140);
+        flowCategoryTabs.Name = "flowCategoryTabs";
+        flowCategoryTabs.Size = new Size(1060, 34);
+        flowCategoryTabs.TabIndex = 1;
+        // 
         // flowMenuCards
-        //
-        this.flowMenuCards.Location = new Point(0, 120);
-        this.flowMenuCards.Size = new Size(1060, 600);
-        this.flowMenuCards.AutoScroll = true;
-        //
+        // 
+        flowMenuCards.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        flowMenuCards.AutoScroll = true;
+        flowMenuCards.Location = new Point(19, 192);
+        flowMenuCards.Name = "flowMenuCards";
+        flowMenuCards.Size = new Size(1060, 518);
+        flowMenuCards.TabIndex = 0;
+        // 
         // MenuManagementControl
-        //
-        this.BackColor = AppColors.Background;
-        this.Controls.Add(this.flowMenuCards);
-        this.Controls.Add(this.flowCategoryTabs);
-        this.Controls.Add(this.btnAddNew);
-        this.Controls.Add(this.lblSubtitle);
-        this.Controls.Add(this.lblTitle);
-        this.Name = "MenuManagementControl";
-        this.Size = new Size(1060, 700);
-        this.ResumeLayout(false);
-        this.PerformLayout();
-    }
-
-    private void AddTab(FlowLayoutPanel parent, string label, bool selected)
-    {
-        var lbl = new Label
-        {
-            Text = label,
-            Font = selected ? AppFonts.LabelLg : AppFonts.BodyMd,
-            ForeColor = selected ? AppColors.Primary : AppColors.OnSurfaceVariant,
-            AutoSize = true,
-            Margin = new Padding(0, 6, 24, 6),
-            Cursor = Cursors.Hand,
-        };
-        parent.Controls.Add(lbl);
+        // 
+        BackColor = Color.FromArgb(249, 249, 249);
+        Controls.Add(flowMenuCards);
+        Controls.Add(flowCategoryTabs);
+        Controls.Add(txtSearch);
+        Controls.Add(btnManageCategories);
+        Controls.Add(btnAddNew);
+        Controls.Add(lblSubtitle);
+        Controls.Add(lblTitle);
+        Name = "MenuManagementControl";
+        Size = new Size(1200, 760);
+        ResumeLayout(false);
+        PerformLayout();
     }
 }

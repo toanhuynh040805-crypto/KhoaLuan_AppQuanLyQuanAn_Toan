@@ -1,23 +1,16 @@
-using System.Security.Cryptography;
-using System.Text;
+using BCrypt.Net;
 
 namespace QuanAnBackend.Services;
 
-// Ham bam mat khau don gian bang SHA256 (du dung cho do an/demo).
-// LUU Y: cho san pham that nen doi sang BCrypt.Net-Next hoac ASP.NET Core Identity
-// (SHA256 khong co "salt" nen kem an toan hon truoc tan cong rainbow table).
+// Bam mat khau bang BCrypt: tu sinh salt rieng cho tung user, cost factor = 11
+// (tang so nay len se cham hon nhung an toan hon truoc brute-force).
 public static class PasswordHasher
 {
+    private const int WorkFactor = 11;
+
     public static string Hash(string plainPassword)
-    {
-        var bytes = Encoding.UTF8.GetBytes(plainPassword);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash); // chuoi hex chu HOA, vi du "8D969EEF..."
-    }
+        => BCrypt.Net.BCrypt.HashPassword(plainPassword, WorkFactor);
 
     public static bool Verify(string plainPassword, string storedHash)
-    {
-        var computed = Hash(plainPassword);
-        return string.Equals(computed, storedHash, StringComparison.OrdinalIgnoreCase);
-    }
+        => BCrypt.Net.BCrypt.Verify(plainPassword, storedHash);
 }

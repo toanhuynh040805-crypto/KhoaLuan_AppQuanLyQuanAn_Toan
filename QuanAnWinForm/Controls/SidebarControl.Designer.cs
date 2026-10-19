@@ -21,71 +21,88 @@ partial class SidebarControl
 
     private void InitializeComponent()
     {
-        this.panelHeader = new Panel();
-        this.panelLogo = new Panel();
-        this.lblAppName = new Label();
-        this.lblBranch = new Label();
-        this.panelDivider = new Panel();
-        this.flowNavItems = new FlowLayoutPanel();
-        this.panelHeader.SuspendLayout();
-        this.SuspendLayout();
-        //
-        // panelLogo
-        //
-        this.panelLogo.BackColor = AppColors.Primary;
-        this.panelLogo.Location = new Point(20, 18);
-        this.panelLogo.Size = new Size(40, 40);
-        //
-        // lblAppName
-        //
-        this.lblAppName.AutoSize = true;
-        this.lblAppName.Font = AppFonts.HeadlineSm;
-        this.lblAppName.ForeColor = AppColors.Primary;
-        this.lblAppName.Location = new Point(70, 18);
-        this.lblAppName.Text = "GustoPOS";
-        //
-        // lblBranch
-        //
-        this.lblBranch.AutoSize = true;
-        this.lblBranch.Font = AppFonts.BodyMd;
-        this.lblBranch.ForeColor = AppColors.OnSurfaceVariant;
-        this.lblBranch.Location = new Point(70, 40);
-        this.lblBranch.Text = "Chi nhánh chính";
-        //
+        panelHeader = new Panel();
+        panelLogo = new Panel();
+        lblAppName = new Label();
+        lblBranch = new Label();
+        panelDivider = new Panel();
+        flowNavItems = new FlowLayoutPanel();
+        panelHeader.SuspendLayout();
+        SuspendLayout();
+        // 
         // panelHeader
-        //
-        this.panelHeader.Controls.Add(this.panelLogo);
-        this.panelHeader.Controls.Add(this.lblAppName);
-        this.panelHeader.Controls.Add(this.lblBranch);
-        this.panelHeader.Dock = DockStyle.Top;
-        this.panelHeader.Height = 76;
-        //
+        // 
+        panelHeader.Controls.Add(panelLogo);
+        panelHeader.Controls.Add(lblAppName);
+        panelHeader.Controls.Add(lblBranch);
+        panelHeader.Dock = DockStyle.Top;
+        panelHeader.Location = new Point(0, 0);
+        panelHeader.Name = "panelHeader";
+        panelHeader.Size = new Size(1546, 76);
+        panelHeader.TabIndex = 2;
+        // 
+        // panelLogo
+        // 
+        panelLogo.BackColor = Color.FromArgb(172, 45, 0);
+        panelLogo.Location = new Point(20, 18);
+        panelLogo.Name = "panelLogo";
+        panelLogo.Size = new Size(40, 40);
+        panelLogo.TabIndex = 0;
+        // 
+        // lblAppName
+        // 
+        lblAppName.AutoSize = true;
+        lblAppName.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        lblAppName.ForeColor = Color.FromArgb(172, 45, 0);
+        lblAppName.Location = new Point(70, 18);
+        lblAppName.Name = "lblAppName";
+        lblAppName.Size = new Size(117, 30);
+        lblAppName.TabIndex = 1;
+        lblAppName.Text = "GustoPOS";
+        // 
+        // lblBranch
+        // 
+        lblBranch.AutoSize = true;
+        lblBranch.Font = new Font("Segoe UI", 10F);
+        lblBranch.ForeColor = Color.FromArgb(91, 65, 57);
+        lblBranch.Location = new Point(70, 48);
+        lblBranch.Name = "lblBranch";
+        lblBranch.Size = new Size(136, 23);
+        lblBranch.TabIndex = 2;
+        lblBranch.Text = "Chi nhánh chính";
+        // 
         // panelDivider
-        //
-        this.panelDivider.BackColor = AppColors.OutlineVariant;
-        this.panelDivider.Dock = DockStyle.Top;
-        this.panelDivider.Height = 1;
-        //
+        // 
+        panelDivider.BackColor = Color.FromArgb(224, 224, 224);
+        panelDivider.Dock = DockStyle.Top;
+        panelDivider.Location = new Point(0, 76);
+        panelDivider.Name = "panelDivider";
+        panelDivider.Size = new Size(1546, 1);
+        panelDivider.TabIndex = 1;
+        // 
         // flowNavItems
-        //
-        this.flowNavItems.AutoSize = true;
-        this.flowNavItems.Dock = DockStyle.Top;
-        this.flowNavItems.FlowDirection = FlowDirection.TopDown;
-        this.flowNavItems.WrapContents = false;
-        this.flowNavItems.Padding = new Padding(12, 12, 12, 12);
-        //
+        // 
+        flowNavItems.AutoSize = true;
+        flowNavItems.Dock = DockStyle.Top;
+        flowNavItems.FlowDirection = FlowDirection.TopDown;
+        flowNavItems.Location = new Point(0, 77);
+        flowNavItems.Name = "flowNavItems";
+        flowNavItems.Padding = new Padding(12);
+        flowNavItems.Size = new Size(1546, 24);
+        flowNavItems.TabIndex = 0;
+        flowNavItems.WrapContents = false;
+        // 
         // SidebarControl
-        //
-        this.BackColor = AppColors.SidebarBg;
-        this.Controls.Add(this.flowNavItems);
-        this.Controls.Add(this.panelDivider);
-        this.Controls.Add(this.panelHeader);
-        this.Dock = DockStyle.Left;
-        this.Width = 224;
-        this.Name = "SidebarControl";
-        this.Size = new Size(224, 750);
-        this.panelHeader.ResumeLayout(false);
-        this.panelHeader.PerformLayout();
-        this.ResumeLayout(false);
+        // 
+        BackColor = Color.White;
+        Controls.Add(flowNavItems);
+        Controls.Add(panelDivider);
+        Controls.Add(panelHeader);
+        Name = "SidebarControl";
+        Size = new Size(1546, 747);
+        panelHeader.ResumeLayout(false);
+        panelHeader.PerformLayout();
+        ResumeLayout(false);
+        PerformLayout();
     }
 }

@@ -1,19 +1,17 @@
-using Microsoft.AspNetCore.SignalR.Client;
+﻿using Microsoft.AspNetCore.SignalR.Client;
 using QuanAnWinForm.Models;
 using System.Text.Json;
 
 namespace QuanAnWinForm.Services;
 
-// Ket noi realtime toi OrderHub ben Backend.
-// Man hinh Bep/Quay nuoc dung service nay de nhan phieu moi ngay lap tuc,
-// khong can bam F5 hay polling lien tuc.
 public class SignalRService
 {
     private HubConnection? _connection;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-    // Su kien ban WinForm (KitchenForm) dang ky de nhan phieu moi
     public event Action<NewTicketPayload>? OnNewTicket;
+    public event Action<ItemStatusUpdatedPayload>? OnItemStatusUpdated;
+    public event Action<OrderItemCancelledPayload>? OnOrderItemCancelled;
 
     public async Task ConnectAndJoinDepartmentAsync(string departmentName)
     {
@@ -28,6 +26,18 @@ public class SignalRService
             if (payload is not null) OnNewTicket?.Invoke(payload);
         });
 
+        _connection.On<JsonElement>("ItemStatusUpdated", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<ItemStatusUpdatedPayload>(raw.GetRawText(), JsonOpts);
+            if (payload is not null) OnItemStatusUpdated?.Invoke(payload);
+        });
+
+        _connection.On<JsonElement>("OrderItemCancelled", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<OrderItemCancelledPayload>(raw.GetRawText(), JsonOpts);
+            if (payload is not null) OnOrderItemCancelled?.Invoke(payload);
+        });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await _connection.StartAsync();
         await _connection.InvokeAsync("JoinDepartmentGroup", departmentName);
     }

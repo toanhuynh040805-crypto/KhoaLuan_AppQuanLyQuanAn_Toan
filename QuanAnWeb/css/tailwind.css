@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+    --color-primary: #ac2d00;
+    --color-primary-container: #d53e0b;
+    --color-on-primary: #ffffff;
+    --color-background: #f9f9f9;
+    --color-on-background: #1a1c1c;
+    --color-surface: #f9f9f9;
+    --color-on-surface: #1a1c1c;
+    --color-surface-container-lowest: #ffffff;
+    --color-surface-container-low: #f3f3f3;
+    --color-surface-container: #eeeeee;
+    --color-surface-container-high: #e8e8e8;
+    --color-surface-variant: #e2e2e2;
+    --color-on-surface-variant: #5b4139;
+    --color-outline-variant: #e4beb4;
+    --color-tertiary: #00685c;
+    --color-tertiary-container: #198374;
+    --color-secondary: #546067;
+    --color-secondary-container: #d7e4ec;
+    --color-error: #ba1a1a;
+    --color-error-container: #ffdad6;
+}
+
+/* Tùy chỉnh ẩn thanh cuộn */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}

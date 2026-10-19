@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thanh toán - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    </style>
+</head>
+<body class="min-h-screen bg-[#f9f9f9] text-[#1a1c1c]">
+    <header class="sticky top-0 z-40 flex items-center justify-between border-b border-[#e4beb4]/50 bg-white/95 px-5 py-4 shadow-sm backdrop-blur md:px-10">
+        <a class="text-xl font-extrabold text-[#ac2d00]" href="../../index.html">GustoPOS</a>
+        <a class="flex items-center gap-2" href="/pages/auth/login_register.html" data-customer-account data-profile-href="/pages/profile/index.html" data-login-href="/pages/auth/login_register.html">
+            <span class="material-symbols-outlined flex h-9 w-9 items-center justify-center rounded-full bg-[#f3f3f3] text-[#5b4139]" aria-hidden="true">person</span>
+            <span id="header-user-name" class="text-sm font-semibold">Đăng nhập</span>
+        </a>
+    </header>
+
+    <main class="mx-auto w-full max-w-6xl px-4 py-8 md:px-8 md:py-12">
+        <div class="mb-7">
+            <p class="text-sm font-semibold text-[#00685c]">GUSTOPOS · ĐẶT MÓN</p>
+            <h1 class="mt-1 text-3xl font-extrabold">Xác nhận đơn hàng</h1>
+        </div>
+
+        <div data-checkout-auth-state class="mb-5 hidden" aria-live="polite"></div>
+        <form data-checkout-form class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]" novalidate>
+            <section class="rounded-xl border border-[#e4beb4]/60 bg-white p-5 shadow-sm md:p-7">
+                <h2 class="text-lg font-bold">Thông tin đặt món</h2>
+                <div data-checkout-customer class="mt-4" aria-live="polite"></div>
+
+                <label class="mt-6 block text-sm font-semibold" for="checkout-table">Chọn bàn</label>
+                <select id="checkout-table" data-checkout-table class="mt-2 h-12 w-full rounded-lg border border-[#d8c8c2] bg-white px-3 text-sm" required>
+                    <option value="">Đang tải danh sách bàn...</option>
+                </select>
+
+                <div class="mt-7 rounded-lg border border-[#e4beb4]/70 bg-[#fffaf7] p-3 text-sm">
+                    <p class="font-semibold">Thanh toán tại quầy</p>
+                    <p class="mt-1 text-[#5b4139]">Checkout chỉ tạo đơn đang mở. Thanh toán sẽ được nhân viên ghi nhận theo quy trình của nhà hàng; chưa có thanh toán trực tuyến tại bước này.</p>
+                </div>
+            </section>
+
+            <section class="h-fit rounded-xl border border-[#e4beb4]/60 bg-white p-5 shadow-sm md:p-7">
+                <h2 class="text-lg font-bold">Món đã chọn</h2>
+                <div data-checkout-cart class="mt-4" aria-live="polite"></div>
+                <p data-checkout-status class="mt-4 min-h-6 text-sm text-[#5b4139]" role="status" aria-live="polite"></p>
+                <div data-checkout-recovery class="mt-3" aria-live="polite"></div>
+                <button id="custom-submit-btn" type="button" class="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#ac2d00] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#8f2500] disabled:cursor-not-allowed disabled:opacity-50">
+                    <span class="material-symbols-outlined text-[22px]">send</span>
+                    Xác nhận đặt món
+                </button>
+                <button data-checkout-submit type="submit" class="hidden" aria-hidden="true" tabindex="-1">Gửi đơn</button>
+            </section>
+        </form>
+    </main>
+
+    <script type="module" src="../../js/pages/checkout.js?v=auth-session-2"></script>
+</body>
+</html>

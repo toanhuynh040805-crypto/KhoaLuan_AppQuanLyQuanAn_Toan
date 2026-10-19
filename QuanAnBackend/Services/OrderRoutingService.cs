@@ -6,17 +6,6 @@ using QuanAnBackend.Models;
 
 namespace QuanAnBackend.Services;
 
-/// <summary>
-/// NGHIỆP VỤ CỐT LÕI #2: Thuật toán phân luồng đơn hàng.
-///
-/// Khi 1 Order được tạo/thêm món từ Mobile, service này:
-///   1. Nhóm các OrderItem theo DepartmentId (Bếp / Quầy nước)
-///   2. Với mỗi nhóm, tạo 1 "phiếu ảo" (PrintTicket) ghi log lại
-///   3. Đẩy realtime (SignalR) riêng biệt tới đúng group của từng bộ phận
-///      -> màn hình Bếp CHỈ thấy món ăn, màn hình Quầy nước CHỈ thấy đồ uống
-///
-/// Đây là điểm khác biệt so với cách làm "gộp chung 1 phiếu" thông thường.
-/// </summary>
 public class OrderRoutingService
 {
     private readonly AppDbContext _db;
@@ -30,53 +19,61 @@ public class OrderRoutingService
 
     public async Task RouteNewOrderItemsAsync(int orderId, List<int> newOrderItemIds)
     {
-        // Lấy các OrderItem vừa tạo, kèm thông tin món + bộ phận phụ trách
         var items = await _db.OrderItems
             .Include(oi => oi.MenuItem)!
-                .ThenInclude(mi => mi!.Department)
+                .ThenInclude(mi => mi!.Station)
             .Include(oi => oi.Order)
                 .ThenInclude(o => o!.Table)
-            .Where(oi => newOrderItemIds.Contains(oi.Id))
+            .Where(oi => newOrderItemIds.Contains(oi.OrderItemId))
             .ToListAsync();
 
-        // Bước 1: phân nhóm theo bộ phận (đây là bước "phân luồng")
-        var groupedByDepartment = items.GroupBy(oi => oi.MenuItem!.DepartmentId);
+        var groupedByStation = items
+            .Where(oi => oi.MenuItem is not null)
+            .GroupBy(oi => oi.MenuItem!.StationId);
 
-        foreach (var group in groupedByDepartment)
+        foreach (var group in groupedByStation)
         {
-            var department = await _db.Departments.FindAsync(group.Key);
-            if (department is null) continue;
+            if (group.Key is null) continue;
+
+            var station = await _db.Stations.FindAsync(group.Key.Value);
+            if (station is null) continue;
 
             var ticketPayload = group.Select(oi => new
             {
-                oi.Id,
-                MenuItemName = oi.MenuItem!.Name,
+                Id = oi.OrderItemId,
+                MenuItemName = oi.MenuItem!.ItemName,
                 oi.Quantity,
-                oi.Note
+                oi.Note,
+                // Món mang về: cờ của món hoặc cả đơn là đơn mang về.
+                IsTakeaway = oi.IsTakeaway || (oi.Order != null && oi.Order.OrderType == OrderTypes.MangVe),
+                oi.CreatedAt
             }).ToList();
 
-            // Bước 2: ghi log phiếu cho từng món trong nhóm
             foreach (var oi in group)
             {
-                _db.PrintTickets.Add(new PrintTicket
+                _db.KitchenTickets.Add(new KitchenTicket
                 {
-                    OrderItemId = oi.Id,
-                    DepartmentId = department.Id,
-                    PrintedAt = DateTime.Now
+                    OrderItemId = oi.OrderItemId,
+                    StationId = station.StationId,
+                    SentTime = DateTime.Now,
+                    Status = KitchenTicketStatus.ChoXuLy
                 });
-                oi.KitchenStatus = KitchenStatus.DaInPhieu;
             }
 
             await _db.SaveChangesAsync();
 
-            // Bước 3: đẩy realtime CHỈ tới group của bộ phận này
-            var tableName = items.First().Order!.Table?.TableName ?? "N/A";
-            await _hub.Clients.Group($"dept-{department.Name}")
+            var firstOrder = items.First().Order;
+            var orderLabel = firstOrder?.Table?.TableName
+                ?? (firstOrder?.TakeawayCode is not null
+                    ? $"Mang về {firstOrder.TakeawayCode}"
+                    : "N/A");
+
+            await _hub.Clients.Group($"dept-{station.StationName}")
                 .SendAsync("NewTicket", new
                 {
                     OrderId = orderId,
-                    TableName = tableName,
-                    Department = department.Name,
+                    TableName = orderLabel,
+                    Department = station.StationName,
                     Items = ticketPayload
                 });
         }

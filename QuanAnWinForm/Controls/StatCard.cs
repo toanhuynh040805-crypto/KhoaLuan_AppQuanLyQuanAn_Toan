@@ -2,8 +2,6 @@ using QuanAnWinForm.Theme;
 
 namespace QuanAnWinForm.Controls;
 
-// The thong ke nho (icon + nhan xu huong % + tieu de + gia tri lon).
-// Dung chung cho Dashboard, Doanh thu, Nhan vien.
 public class StatCard : Panel
 {
     private readonly Panel _iconBox;
@@ -14,36 +12,40 @@ public class StatCard : Panel
 
     public StatCard()
     {
-        Size = new Size(220, 130);
+        Size = new Size(200, 100);
         BackColor = Color.White;
-        Padding = new Padding(16);
+        Padding = new Padding(12);
 
-        _iconBox = new Panel { Size = new Size(40, 40), Location = new Point(16, 16) };
-        _lblIcon = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 14) };
+        // Icon Box (Thu nhỏ vừa vặn)
+        _iconBox = new Panel { Size = new Size(32, 32), Location = new Point(12, 10) };
+        _lblIcon = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11) };
         _iconBox.Controls.Add(_lblIcon);
 
+        // Trend Label
         _lblTrend = new Label
         {
             AutoSize = true,
             Font = AppFonts.LabelMd,
-            Location = new Point(140, 24),
+            Location = new Point(110, 14),
             TextAlign = ContentAlignment.MiddleCenter,
         };
 
+        // Title Label (TỔNG KHÁCH HÀNG)
         _lblTitle = new Label
         {
             AutoSize = true,
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(16, 68),
+            Location = new Point(12, 46),
         };
 
+        // Value Label (Chữ số hiển thị rõ ràng)
         _lblValue = new Label
         {
             AutoSize = true,
-            Font = AppFonts.HeadlineMd,
+            Font = new Font("Segoe UI", 16F, FontStyle.Bold), // Hạ cỡ chữ vừa đủ không vỡ khung
             ForeColor = AppColors.OnSurface,
-            Location = new Point(16, 88),
+            Location = new Point(12, 66),
         };
 
         Controls.Add(_iconBox);

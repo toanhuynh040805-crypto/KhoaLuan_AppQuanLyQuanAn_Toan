@@ -1,8 +1,13 @@
 namespace QuanAnWinForm.Services;
 
-// TODO: doi thanh dia chi may chay Backend trong mang LAN quan an
 public static class ApiConfig
 {
-    public const string BaseUrl = "http://localhost:5000";
-    public const string HubUrl = $"{BaseUrl}/hubs/order";
+    public static string BaseUrl { get; set; } = Load();
+    public static string HubUrl => $"{BaseUrl}/hubs/order";
+
+    private static string Load()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "apiurl.txt");
+        return File.Exists(path) ? File.ReadAllText(path).Trim() : "http://localhost:5000";
+    }
 }

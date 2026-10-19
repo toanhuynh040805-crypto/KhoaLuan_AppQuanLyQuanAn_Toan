@@ -2,20 +2,97 @@ using Microsoft.AspNetCore.SignalR;
 
 namespace QuanAnBackend.Hubs;
 
-// Hub trung tâm: đẩy sự kiện realtime tới WinForm (Bếp/Quầy nước/Thu ngân)
-// và ngược lại về Mobile (khi món đã xong, khi thanh toán thành công...)
+// Hub realtime dung chung cho WinForms va Flutter Mobile.
 public class OrderHub : Hub
 {
-    // Client (WinForm) có thể tham gia 1 "group" theo bộ phận
-    // để chỉ nhận đúng thông báo dành cho bộ phận mình.
-    // Ví dụ: WinForm màn hình Bếp gọi JoinDepartmentGroup("Bep")
+    // Group theo bo phan / role, duoc ca WinForms va Mobile su dung.
     public async Task JoinDepartmentGroup(string departmentName)
     {
-        await Groups.AddToGroupAsync(Context.ConnectionId, $"dept-{departmentName}");
+        if (string.IsNullOrWhiteSpace(departmentName))
+            return;
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"dept-{departmentName.Trim()}"
+        );
     }
 
     public async Task LeaveDepartmentGroup(string departmentName)
     {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"dept-{departmentName}");
+        if (string.IsNullOrWhiteSpace(departmentName))
+            return;
+
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"dept-{departmentName.Trim()}"
+        );
+    }
+
+    // Group theo EmployeeCode - contract cua Flutter Mobile.
+    public async Task JoinEmployeeGroup(string employeeCode)
+    {
+        if (string.IsNullOrWhiteSpace(employeeCode))
+            return;
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"employee-{employeeCode.Trim()}"
+        );
+    }
+
+    public async Task LeaveEmployeeGroup(string employeeCode)
+    {
+        if (string.IsNullOrWhiteSpace(employeeCode))
+            return;
+
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"employee-{employeeCode.Trim()}"
+        );
+    }
+
+    // Group theo UserId/Role - contract cua Backend/WinForms moi.
+    public async Task JoinUserGroup(int userId)
+    {
+        if (userId <= 0)
+            return;
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"user-{userId}"
+        );
+    }
+
+    public async Task LeaveUserGroup(int userId)
+    {
+        if (userId <= 0)
+            return;
+
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"user-{userId}"
+        );
+    }
+
+    public async Task JoinRoleGroup(string role)
+    {
+        if (string.IsNullOrWhiteSpace(role))
+            return;
+
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"role-{role.Trim()}"
+        );
+    }
+
+    public async Task LeaveRoleGroup(string role)
+    {
+        if (string.IsNullOrWhiteSpace(role))
+            return;
+
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"role-{role.Trim()}"
+        );
     }
 }

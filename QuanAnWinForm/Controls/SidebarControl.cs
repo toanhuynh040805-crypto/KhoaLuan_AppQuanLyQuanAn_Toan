@@ -10,16 +10,25 @@ public partial class SidebarControl : UserControl
 {
     public event Action<string>? NavItemSelected;
 
+    // LƯU Ý: bảng Roles trong QuanAnManagementDB_Final.sql chỉ seed đúng 4 vai trò:
+    // QuanLy, ThuNgan, PhucVu, Bep (KHÔNG có vai trò "QuayNuoc" - Quầy nước chỉ là
+    // một Station/bộ phận chế biến, không phải Role đăng nhập). Vì vậy màn hình
+    // "Quầy nước" vẫn dùng chung Role "Bep" (nhân viên bếp có thể trực cả 2 bộ phận),
+    // và nhân viên Phục vụ (PhucVu) được thêm quyền vào "Bán hàng"/"Sơ đồ bàn" để
+    // gọi món cho khách - đúng nghiệp vụ thực tế của vai trò này.
     private readonly List<NavItem> _allItems = new()
     {
         new NavItem { Key = "dashboard", Label = "Tổng quan",  AllowedRoles = new[] { "QuanLy" } },
-        new NavItem { Key = "sales",     Label = "Bán hàng",   AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
-        new NavItem { Key = "tables",    Label = "Sơ đồ bàn",  AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
+        new NavItem { Key = "sales",     Label = "Thanh toán",   AllowedRoles = new[] { "QuanLy", "ThuNgan", "PhucVu" } },
+        new NavItem { Key = "tables",    Label = "Sơ đồ bàn",  AllowedRoles = new[] { "QuanLy", "ThuNgan", "PhucVu" } },
+        new NavItem { Key = "orders",    Label = "Đơn hàng",   AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
         new NavItem { Key = "menu",      Label = "Thực đơn",   AllowedRoles = new[] { "QuanLy" } },
+        new NavItem { Key = "customers", Label = "Khách hàng", AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
         new NavItem { Key = "staff",     Label = "Nhân viên",  AllowedRoles = new[] { "QuanLy" } },
         new NavItem { Key = "kitchen",   Label = "Bếp",        AllowedRoles = new[] { "QuanLy", "Bep" } },
-        new NavItem { Key = "bar",       Label = "Quầy nước",  AllowedRoles = new[] { "QuanLy", "QuayNuoc" } },
+        new NavItem { Key = "bar",       Label = "Quầy nước",  AllowedRoles = new[] { "QuanLy", "Bep" } },
         new NavItem { Key = "revenue",   Label = "Doanh thu",  AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
+        new NavItem { Key = "promotions", Label = "Khuyến mãi", AllowedRoles = new[] { "QuanLy" } },
         new NavItem { Key = "settings",  Label = "Cài đặt",    AllowedRoles = new[] { "QuanLy" } },
     };
 
@@ -33,7 +42,6 @@ public partial class SidebarControl : UserControl
         BuildNavButtons();
     }
 
-    // Xem giai thich chi tiet trong DashboardControl.cs: lambda khong duoc dat trong .Designer.cs.
     private void WireUpEvents()
     {
         panelLogo.Paint += (s, e) =>
@@ -44,7 +52,6 @@ public partial class SidebarControl : UserControl
         };
     }
 
-    // Goi lai tu MainForm sau khi biet Role thuc su cua nguoi dang dang nhap
     public void SetRole(string role)
     {
         _role = role;
@@ -83,6 +90,8 @@ public partial class SidebarControl : UserControl
 
         if (visibleItems.Count > 0) SelectItem(visibleItems[0].Key);
     }
+
+    public void SelectNavItem(string key) => SelectItem(key);
 
     private void NavButton_Click(object? sender, EventArgs e)
     {

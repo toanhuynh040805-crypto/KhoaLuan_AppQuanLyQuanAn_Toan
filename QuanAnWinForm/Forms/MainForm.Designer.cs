@@ -19,28 +19,50 @@ partial class MainForm
 
     private void InitializeComponent()
     {
-        this.sidebar = new SidebarControl();
-        this.headerBar = new HeaderBar();
-        this.panelContent = new Panel();
-        this.SuspendLayout();
-        //
+        sidebar = new SidebarControl();
+        headerBar = new HeaderBar();
+        panelContent = new Panel();
+        SuspendLayout();
+        // 
+        // sidebar
+        // 
+        sidebar.BackColor = Color.White;
+        sidebar.Dock = DockStyle.Left;
+        sidebar.Location = new Point(0, 0);
+        sidebar.Name = "sidebar";
+        sidebar.Size = new Size(224, 850);
+        sidebar.TabIndex = 2;
+        // 
+        // headerBar
+        // 
+        headerBar.BackColor = Color.White;
+        headerBar.Dock = DockStyle.Top;
+        headerBar.Location = new Point(224, 0);
+        headerBar.Name = "headerBar";
+        headerBar.Size = new Size(1176, 64);
+        headerBar.TabIndex = 1;
+        // 
         // panelContent
-        //
-        this.panelContent.Dock = DockStyle.Fill;
-        this.panelContent.BackColor = AppColors.Background;
-        this.panelContent.Padding = new Padding(32, 24, 32, 24);
-        //
+        // 
+        panelContent.BackColor = Color.FromArgb(249, 249, 249);
+        panelContent.Dock = DockStyle.Fill;
+        panelContent.Location = new Point(224, 64);
+        panelContent.Name = "panelContent";
+        panelContent.Padding = new Padding(32, 24, 32, 24);
+        panelContent.Size = new Size(1176, 786);
+        panelContent.TabIndex = 0;
+        // 
         // MainForm
-        //
-        this.ClientSize = new Size(1400, 850);
-        this.Controls.Add(this.panelContent);
-        this.Controls.Add(this.headerBar);
-        this.Controls.Add(this.sidebar);
-        this.BackColor = AppColors.Background;
-        this.MinimumSize = new Size(1200, 750);
-        this.WindowState = FormWindowState.Maximized;
-        this.Text = "GustoPOS - Hệ thống quản lý quán ăn";
-        this.Name = "MainForm";
-        this.ResumeLayout(false);
+        // 
+        BackColor = Color.FromArgb(249, 249, 249);
+        ClientSize = new Size(1400, 850);
+        Controls.Add(panelContent);
+        Controls.Add(headerBar);
+        Controls.Add(sidebar);
+        MinimumSize = new Size(1200, 750);
+        Name = "MainForm";
+        Text = "GustoPOS - Hệ thống quản lý quán ăn";
+        WindowState = FormWindowState.Maximized;
+        ResumeLayout(false);
     }
 }

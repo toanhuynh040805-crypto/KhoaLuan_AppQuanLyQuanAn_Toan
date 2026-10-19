@@ -19,47 +19,60 @@ partial class SettingsControl
 
     private void InitializeComponent()
     {
-        this.lblTitle = new Label();
-        this.panelTabsContainer = new Panel();
-        this.flowSettingsTabs = new FlowLayoutPanel();
-        this.panelSettingsContent = new Panel();
-        this.SuspendLayout();
-        //
+        lblTitle = new Label();
+        panelTabsContainer = new Panel();
+        flowSettingsTabs = new FlowLayoutPanel();
+        panelSettingsContent = new Panel();
+        panelTabsContainer.SuspendLayout();
+        SuspendLayout();
+        // 
         // lblTitle
-        //
-        this.lblTitle.Text = "Cài đặt hệ thống";
-        this.lblTitle.Font = AppFonts.HeadlineLg;
-        this.lblTitle.ForeColor = AppColors.Primary;
-        this.lblTitle.Location = new Point(0, 0);
-        this.lblTitle.AutoSize = true;
-        //
-        // flowSettingsTabs
-        //
-        this.flowSettingsTabs.FlowDirection = FlowDirection.TopDown;
-        this.flowSettingsTabs.WrapContents = false;
-        this.flowSettingsTabs.Dock = DockStyle.Fill;
-        //
+        // 
+        lblTitle.AutoSize = true;
+        lblTitle.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
+        lblTitle.ForeColor = Color.FromArgb(172, 45, 0);
+        lblTitle.Location = new Point(0, 0);
+        lblTitle.Name = "lblTitle";
+        lblTitle.Size = new Size(309, 50);
+        lblTitle.TabIndex = 2;
+        lblTitle.Text = "Cài đặt hệ thống";
+        // 
         // panelTabsContainer
-        //
-        this.panelTabsContainer.Location = new Point(0, 50);
-        this.panelTabsContainer.Size = new Size(240, 400);
-        this.panelTabsContainer.Controls.Add(this.flowSettingsTabs);
-        //
+        // 
+        panelTabsContainer.Controls.Add(flowSettingsTabs);
+        panelTabsContainer.Location = new Point(0, 50);
+        panelTabsContainer.Name = "panelTabsContainer";
+        panelTabsContainer.Size = new Size(240, 400);
+        panelTabsContainer.TabIndex = 1;
+        // 
+        // flowSettingsTabs
+        // 
+        flowSettingsTabs.Dock = DockStyle.Fill;
+        flowSettingsTabs.FlowDirection = FlowDirection.TopDown;
+        flowSettingsTabs.Location = new Point(0, 0);
+        flowSettingsTabs.Name = "flowSettingsTabs";
+        flowSettingsTabs.Size = new Size(240, 400);
+        flowSettingsTabs.TabIndex = 0;
+        flowSettingsTabs.WrapContents = false;
+        // 
         // panelSettingsContent
-        //
-        this.panelSettingsContent.Location = new Point(256, 50);
-        this.panelSettingsContent.Size = new Size(800, 400);
-        this.panelSettingsContent.BackColor = Color.White;
-        //
+        // 
+        panelSettingsContent.BackColor = Color.White;
+        panelSettingsContent.Location = new Point(256, 50);
+        panelSettingsContent.Name = "panelSettingsContent";
+        panelSettingsContent.Size = new Size(783, 400);
+        panelSettingsContent.TabIndex = 0;
+        // 
         // SettingsControl
-        //
-        this.BackColor = AppColors.Background;
-        this.Controls.Add(this.panelSettingsContent);
-        this.Controls.Add(this.panelTabsContainer);
-        this.Controls.Add(this.lblTitle);
-        this.Name = "SettingsControl";
-        this.Size = new Size(1060, 500);
-        this.ResumeLayout(false);
-        this.PerformLayout();
+        // 
+        BackColor = Color.FromArgb(249, 249, 249);
+        Controls.Add(panelSettingsContent);
+        Controls.Add(panelTabsContainer);
+        Controls.Add(lblTitle);
+        Name = "SettingsControl";
+        Size = new Size(1141, 582);
+        panelTabsContainer.ResumeLayout(false);
+        ResumeLayout(false);
+        PerformLayout();
     }
 }

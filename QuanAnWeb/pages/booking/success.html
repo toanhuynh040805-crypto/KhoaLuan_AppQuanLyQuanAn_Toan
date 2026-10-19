@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xác nhận đặt bàn - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Courier+Prime&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary": "#00685c",
+                        "secondary-container": "#d7e4ec",
+                        "on-tertiary-container": "#f4fffb",
+                        "background": "#f9f9f9",
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "surface-variant": "#e2e2e2",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-low": "#f3f3f3",
+                        "surface-container": "#eeeeee",
+                        "surface-container-high": "#e8e8e8",
+                        "surface-container-highest": "#e2e2e2",
+                        "on-surface": "#1a1c1c",
+                        "on-background": "#1a1c1c",
+                        "on-surface-variant": "#5b4139",
+                        "outline-variant": "#e4beb4",
+                        "primary-container": "#d53e0b",
+                        "on-primary-container": "#fffbff",
+                        "error": "#ba1a1a",
+                        "error-container": "#ffdad6",
+                        "on-error-container": "#93000a",
+                        "secondary": "#546067",
+                        "on-secondary-container": "#5a666d"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col items-center justify-center p-4 md:p-8">
+    <main class="w-full max-w-2xl bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/60 p-6 md:p-10 flex flex-col items-center text-center">
+        <!-- Icon thành công -->
+        <div class="w-16 h-16 rounded-full bg-tertiary-container flex items-center justify-center mb-6">
+            <span class="material-symbols-outlined text-on-tertiary-container text-4xl" data-weight="fill">check_circle</span>
+        </div>
+
+        <h1 class="text-3xl font-bold text-primary mb-2">Đặt bàn thành công!</h1>
+        <p class="text-base text-on-surface-variant mb-8">Cảm ơn bạn đã lựa chọn GustoPOS. Chúng tôi đã nhận được thông tin đặt bàn của bạn.</p>
+
+        <!-- Khung chi tiết đặt bàn -->
+        <div class="w-full bg-surface-container-low rounded-xl p-6 mb-8 text-left border border-outline-variant/40">
+            <h2 class="text-lg font-bold text-on-surface mb-4 pb-3 border-b border-outline-variant/60">Chi tiết đặt bàn</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Mã đặt bàn</p>
+                    <p class="text-base font-mono text-primary font-bold mt-1" id="res-code">---</p>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Trạng thái</p>
+                    <p class="text-sm font-semibold text-tertiary mt-1">Đã xác nhận</p>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tên khách hàng</p>
+                    <p class="text-sm text-on-surface mt-1" id="res-name">---</p>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Số điện thoại</p>
+                    <p class="text-sm text-on-surface mt-1" id="res-phone">---</p>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Ngày giờ đến</p>
+                    <p class="text-sm text-on-surface mt-1 flex items-center gap-2" id="res-datetime">
+                        <span class="material-symbols-outlined text-on-surface-variant text-sm">calendar_today</span> ---
+                    </p>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Số người</p>
+                    <p class="text-sm text-on-surface mt-1 flex items-center gap-2" id="res-guests">
+                        <span class="material-symbols-outlined text-on-surface-variant text-sm">group</span> ---
+                    </p>
+                </div>
+                <div class="md:col-span-2">
+                    <p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Yêu cầu đặc biệt</p>
+                    <p class="text-sm text-on-surface italic mt-1" id="res-note">Không có yêu cầu đặc biệt.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Khung lưu ý -->
+        <div class="w-full bg-secondary-container/60 rounded-xl p-4 mb-8 text-left border border-outline-variant/40 flex items-start gap-3">
+            <span class="material-symbols-outlined text-on-secondary-container mt-0.5">info</span>
+            <div>
+                <h3 class="text-sm font-semibold text-on-secondary-container mb-1">Lưu ý khi đến quán:</h3>
+                <ul class="list-disc list-inside text-xs text-on-secondary-container space-y-1">
+                    <li>Vui lòng đến đúng giờ. Bàn của bạn sẽ được giữ tối đa 15 phút.</li>
+                    <li>Để thay đổi thông tin đặt bàn, vui lòng liên hệ hotline: 1900 1234.</li>
+                    <li>Cung cấp mã đặt bàn cho nhân viên lễ tân khi đến.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Các nút hành động -->
+        <div class="flex flex-col sm:flex-row w-full gap-4 justify-center">
+            <a href="../../index.html" class="bg-primary text-on-primary font-semibold py-3 px-6 rounded-lg shadow-sm hover:opacity-95 transition-all flex-1 text-center">
+                Quay lại trang chủ
+            </a>
+            <a href="./lookup.html" class="bg-surface-container-lowest text-primary border border-primary font-semibold py-3 px-6 rounded-lg hover:bg-surface-container-high transition-colors flex-1 text-center">
+                Tra cứu đặt bàn
+            </a>
+        </div>
+    </main>
+
+    <!-- Nạp file script xử lý logic hiển thị đã được làm sạch dữ liệu mẫu, có thêm version để chống cache -->
+    <script type="module" src="../../js/pages/bookingSuccess.js?v=auth-session-2"></script>
+</body>
+</html>

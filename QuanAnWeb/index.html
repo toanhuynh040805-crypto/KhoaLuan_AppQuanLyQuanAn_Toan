@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trang chủ - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary": "#00685c",
+                        "secondary-container": "#d7e4ec",
+                        "background": "#f9f9f9",
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "surface-variant": "#e2e2e2",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-low": "#f3f3f3",
+                        "surface-container": "#eeeeee",
+                        "surface-container-high": "#e8e8e8",
+                        "surface-container-highest": "#e2e2e2",
+                        "on-surface": "#1a1c1c",
+                        "on-background": "#1a1c1c",
+                        "on-surface-variant": "#5b4139",
+                        "outline-variant": "#e4beb4",
+                        "primary-container": "#d53e0b",
+                        "on-primary-container": "#fffbff",
+                        "error": "#ba1a1a",
+                        "inverse-surface": "#2f3131"
+                    },
+                    fontFamily: {
+                        "inter": ["Inter", "sans-serif"]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased min-h-screen flex flex-col">
+    <!-- TopAppBar / Thanh điều hướng đồng bộ với toàn hệ thống -->
+    <header class="bg-surface-container-lowest/95 backdrop-blur-md shadow-sm flex justify-between items-center w-full px-6 md:px-12 py-4 sticky top-0 z-50 border-b border-outline-variant/40">
+        <div class="flex items-center gap-4">
+            <a class="font-bold text-2xl text-primary tracking-tight" href="./index.html">GustoPOS</a>
+        </div>
+        
+        <!-- Menu Điều hướng Đã sửa đồng bộ hoàn thiện -->
+        <nav class="hidden md:flex items-center gap-x-8">
+            <a class="text-sm font-semibold text-primary border-b-2 border-primary py-2 transition-all" href="./index.html" aria-current="page">Trang chủ web</a>
+            <a class="text-sm font-medium text-on-surface-variant hover:text-primary py-2 transition-all" href="./pages/menu/index.html">Thực đơn</a>
+            <a class="text-sm font-medium text-on-surface-variant hover:text-primary py-2 transition-all" href="./pages/booking/index.html">Đặt bàn</a>
+            <a class="text-sm font-medium text-on-surface-variant hover:text-primary py-2 transition-all" href="./pages/promotions/index.html">Khuyến mãi</a>
+            <a class="text-sm font-medium text-on-surface-variant hover:text-primary py-2 transition-all" href="./pages/booking/lookup.html">Tra cứu / hủy</a>
+        </nav>
+        
+        <div class="flex items-center gap-3">
+            <!-- Nút User / Đăng nhập động trên Trang chủ -->
+            <a href="./pages/profile/index.html" data-customer-account data-profile-href="./pages/profile/index.html" data-login-href="./pages/auth/login_register.html" class="hidden md:flex items-center gap-2 mr-2 p-2 hover:bg-surface-container-high rounded-lg transition-colors border-r border-outline-variant/40 pr-4">
+                <div class="w-8 h-8 rounded-full bg-surface-variant flex items-center justify-center overflow-hidden border border-outline-variant">
+                    <img id="home-user-avatar" class="w-full h-full object-cover" alt="Avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <span class="material-symbols-outlined text-on-surface-variant text-[18px] hidden">person</span>
+                </div>
+                <span id="home-user-name" class="text-sm font-semibold text-on-surface">Đăng nhập</span>
+            </a>
+            
+            <a href="./pages/booking/index.html" class="bg-primary text-on-primary text-sm font-semibold px-6 py-2.5 rounded-lg shadow-sm hover:opacity-95 transition-all">
+                Đặt bàn ngay
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Content Canvas -->
+    <main class="flex-1 w-full overflow-y-auto">
+        <!-- Hero Section bám sát Hình 1 -->
+        <section class="relative w-full min-h-[580px] md:min-h-[640px] flex items-center justify-center bg-surface-variant overflow-hidden">
+            <div class="absolute inset-0 bg-cover bg-center z-0" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCnhHD7SH9yDOwSKKhzTA1ZVWyCmju-LFA4OYTutBOU-4u67OZsTTuEPQ8CjrDZChpt7EMbiIua5MQgDyv31WRbXHpHu5kyrwkX_U5rHOYxyUIOYQa2OIUYAcMJrEp3b-IYdq1HEAC4qBX6KL_wRWiqe6F7uP6lkxbO9ZVCS1OCwg_UBQCcX-W4BMhhDK7C6qw8zrWrY-TAgMmJfM-GnZkUX3eCY6ikGT7XTKmmJ_kx5GGjkaaDnDSTow')"></div>
+            <div class="absolute inset-0 bg-gradient-to-b from-black/50 via-black/60 to-black/70 z-10"></div>
+            <div class="relative z-20 text-center px-6 max-w-3xl mx-auto flex flex-col items-center gap-6">
+                <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-on-primary tracking-tight leading-tight drop-shadow-md">
+                    Hương Vị Hoàn Hảo,<br>Trải Nghiệm Thăng Hoa
+                </h1>
+                <p class="text-base md:text-lg text-on-primary/90 max-w-xl font-normal drop-shadow">
+                    Khám phá tinh hoa ẩm thực đương đại tại GustoPOS, nơi mỗi món ăn là một tác phẩm nghệ thuật và mọi khoảnh khắc đều đáng nhớ.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 pt-2">
+                    <a href="./pages/booking/index.html" class="bg-primary text-on-primary text-base font-semibold px-8 py-3.5 rounded-full shadow-lg hover:opacity-95 transition-all text-center">
+                        Đặt Bàn Ngay
+                    </a>
+                    <a href="./pages/menu/index.html" class="bg-white/10 backdrop-blur-md border border-white/50 text-on-primary text-base font-semibold px-8 py-3.5 rounded-full hover:bg-white/20 transition-all text-center">
+                        Xem Thực Đơn
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Featured Dishes (Bento Grid) -->
+        <section class="py-20 px-6 md:px-12 max-w-7xl mx-auto">
+            <div class="text-center mb-14">
+                <h2 class="text-3xl font-bold text-on-surface mb-3">Món Ăn Đặc Sắc</h2>
+                <p class="text-base text-on-surface-variant max-w-xl mx-auto">
+                    Tuyển tập những hương vị tinh túy nhất, được chế biến tỉ mỉ bởi các đầu bếp trứ danh của chúng tôi.
+                </p>
+            </div>
+
+            <!-- Layout bất đối xứng -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                <!-- Large Item (Thăn bò Wagyu A5) -->
+                <div class="lg:col-span-7 rounded-2xl overflow-hidden relative group shadow-sm bg-surface-container-low border border-outline-variant/40 flex flex-col justify-between cursor-pointer" onclick="window.location.href='./pages/menu/index.html'">
+                    <div class="relative h-80 sm:h-[420px] overflow-hidden">
+                        <img class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuApzDkChU35fl_AEncvO3F4RfntPCOK35TsQRN0G7wAhf0B2H7_TL3bwYr7ytCMbqKm18JgvUjZPkRcf44BmSX1BbS0y2BZ8EeGfZrAmqcONatxuYoSAxBNkHxqkNk5MQODt_BEdxg8u3PY-MmqH-jvOp7EO6ot6RD_BkdTliJhDA-wbynBEq9YwYVh1579Ze4Yy1JqRgoU1SSwVIsrm_g8CIY5iOpVx1uS7Rtr5R5pEQ86DR1wSejWDg" alt="Thăn Bò Wagyu A5 Thượng Hạng">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-6 md:p-8">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="bg-primary text-on-primary text-xs font-bold px-3 py-1 rounded-md shadow">Chef's Special</span>
+                            </div>
+                            <h3 class="text-2xl font-bold text-white mb-2">Thăn Bò Wagyu A5 Thượng Hạng</h3>
+                            <p class="text-sm text-white/90 font-light leading-relaxed">Được nướng hoàn hảo trên lửa than hồng, ăn kèm sốt nấm truffle đặc biệt và măng tây áp chảo.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Small Items (Salad & Mousse Chocolate) -->
+                <div class="lg:col-span-5 flex flex-col gap-6 justify-between">
+                    <!-- Small Item 1 -->
+                    <div class="rounded-2xl overflow-hidden relative group shadow-sm bg-surface-container-low border border-outline-variant/40 flex flex-col sm:flex-row items-stretch flex-1 cursor-pointer" onclick="window.location.href='./pages/menu/index.html'">
+                        <div class="relative sm:w-2/5 h-48 sm:h-auto overflow-hidden">
+                            <img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCIIhBHh39lYGUWaREvnwZlbHRw05EUJLNiGrc2lYXrtDaas6XeA386A2rgKh68J3sl_gYxWG2X5zY6OWRlLMtIiSt-MmC9UQGdWj4f3C9puMY4gGp0Xei-AJtxU-FdOaHzNZkIpkaT6yFDLbmguciWJTBbZ_-BKBTTlr1kem6pw9JdE2OajPpdaM_VPlhWbRIJlOakUDlzxqQI3R9aSUF4a6FhYs3LXAwc3XAnJ616E6DT5GGtdwU31g" alt="Salad Mùa Hè Tươi Mát">
+                        </div>
+                        <div class="p-5 sm:w-3/5 flex flex-col justify-center bg-surface-container-lowest">
+                            <span class="text-xs font-semibold text-tertiary uppercase tracking-wider mb-1">Khai vị</span>
+                            <h3 class="text-lg font-bold text-on-surface mb-1">Salad Mùa Hè Tươi Mát</h3>
+                            <p class="text-xs text-on-surface-variant line-clamp-2 leading-relaxed">Rau củ hữu cơ kết hợp sốt chanh leo thanh dịu.</p>
+                        </div>
+                    </div>
+
+                    <!-- Small Item 2 -->
+                    <div class="rounded-2xl overflow-hidden relative group shadow-sm bg-surface-container-low border border-outline-variant/40 flex flex-col sm:flex-row items-stretch flex-1 cursor-pointer" onclick="window.location.href='./pages/menu/index.html'">
+                        <div class="relative sm:w-2/5 h-48 sm:h-auto overflow-hidden">
+                            <img class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0Bn5aODYSUmmLUqN_NFETM-xnfGr7Wwjf3KxBGjC-uQ4QobsYKnQKHI3X6uQGWNCAx-Ksnft7QFGXskyM5rPiF6Fcf9-viv3_T4xj22jgDo4Tos8oslHDS98FXY66LFRmXUQq4EaYeWL4_f719r17JNTLG4gtF6i1CGohCrjlvWdwirq6cT7ASYTASOi3EaIHFRYAc4wO5FDUGTOqWQpOK0klwY66QoI51mM36alfitPTz0bMsrOXJw" alt="Mousse Chocolate Hảo Hạng">
+                        </div>
+                        <div class="p-5 sm:w-3/5 flex flex-col justify-center bg-surface-container-lowest">
+                            <span class="text-xs font-semibold text-tertiary uppercase tracking-wider mb-1">Tráng miệng</span>
+                            <h3 class="text-lg font-bold text-on-surface mb-1">Mousse Chocolate Hảo Hạng</h3>
+                            <p class="text-xs text-on-surface-variant line-clamp-2 leading-relaxed">Vị đắng nhẹ cacao nguyên chất béo mịn.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer tiêu chuẩn -->
+    <footer class="bg-surface-container-highest/80 border-t border-outline-variant/40 py-8 px-6 md:px-12 mt-auto">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+            <span class="font-bold text-primary tracking-wide text-lg">GustoPOS</span>
+            <p class="text-sm text-on-surface-variant">
+                © 2026 GustoPOS. All rights reserved.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Use the generic avatar until the backend exposes an avatar field. -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const avatarImg = document.getElementById('home-user-avatar');
+            if (avatarImg) {
+                avatarImg.style.display = 'none';
+                avatarImg.nextElementSibling.style.display = 'block';
+            }
+        });
+    </script>
+    <script type="module" src="./js/pages/home.js?v=auth-session-2"></script>
+</body>
+</html>

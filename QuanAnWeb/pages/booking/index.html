@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đặt Bàn Trực Tuyến - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary": "#00685c",
+                        "secondary-container": "#d7e4ec",
+                        "background": "#f9f9f9",
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "surface-variant": "#e2e2e2",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-low": "#f3f3f3",
+                        "surface-container": "#eeeeee",
+                        "surface-container-high": "#e8e8e8",
+                        "surface-container-highest": "#e2e2e2",
+                        "on-surface": "#1a1c1c",
+                        "on-background": "#1a1c1c",
+                        "on-surface-variant": "#5b4139",
+                        "outline-variant": "#e4beb4",
+                        "primary-container": "#d53e0b",
+                        "on-primary-container": "#fffbff",
+                        "error": "#ba1a1a",
+                        "secondary": "#546067"
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased min-h-screen flex flex-col md:flex-row">
+    <!-- Sidebar Navigation chuẩn Khách hàng -->
+    <aside class="hidden md:flex flex-col h-screen w-64 fixed left-0 top-0 bg-surface border-r border-outline-variant/60 py-8 shadow-sm z-50">
+        <div class="px-6 mb-8 flex items-center gap-3">
+            <span class="material-symbols-outlined text-primary text-3xl" style="font-variation-settings: 'FILL' 1;">restaurant</span>
+            <div>
+                <h1 class="font-bold text-xl text-primary leading-tight">GustoPOS</h1>
+                <p class="text-xs text-secondary font-medium">Chi nhánh chính</p>
+            </div>
+        </div>
+        <nav class="flex-1 flex flex-col gap-1.5 px-3">
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../../index.html">
+                <span class="material-symbols-outlined">home</span>
+                <span class="text-sm font-medium">Trang chủ web</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../menu/index.html">
+                <span class="material-symbols-outlined">restaurant_menu</span>
+                <span class="text-sm font-medium">Thực đơn</span>
+            </a>
+            <a class="flex items-center gap-4 bg-primary text-on-primary rounded-lg px-4 py-3 shadow-sm" href="./index.html">
+                <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">table_restaurant</span>
+                <span class="text-sm font-semibold">Đặt bàn</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../promotions/index.html">
+                <span class="material-symbols-outlined">local_offer</span>
+                <span class="text-sm font-medium">Khuyến mãi</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="./lookup.html">
+                <span class="material-symbols-outlined">search</span>
+                <span class="text-sm font-medium">Tra cứu / hủy</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../profile/index.html">
+                <span class="material-symbols-outlined">person</span>
+                <span class="text-sm font-medium">Hồ sơ cá nhân</span>
+            </a>
+        </nav>
+        <div class="px-4 mt-auto">
+            <a href="../menu/index.html" class="w-full bg-primary text-on-primary text-sm font-semibold py-3 rounded-lg flex justify-center items-center gap-2 hover:opacity-95 transition-opacity shadow-sm">
+                <span class="material-symbols-outlined text-[18px]">restaurant</span> Xem thực đơn
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 md:ml-64 flex flex-col min-h-screen relative">
+        <!-- Top App Bar -->
+        <header class="flex justify-between items-center w-full px-6 md:px-10 py-4 sticky top-0 z-40 bg-surface-container-lowest/95 backdrop-blur-md border-b border-outline-variant/40 shadow-sm">
+            <div class="flex items-center gap-4 md:hidden">
+                <span class="font-bold text-xl text-primary">GustoPOS</span>
+            </div>
+            <div class="hidden md:flex items-center gap-4 w-1/3">
+                <div class="relative w-full">
+                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
+                    <input class="w-full pl-10 pr-4 py-2 bg-surface-container/60 rounded-full border-none focus:ring-2 focus:ring-primary text-sm text-on-surface" placeholder="Tìm kiếm nhanh..." type="text">
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <button class="text-on-surface-variant hover:text-primary transition-colors p-1" title="Thông báo" type="button" aria-label="Thông báo">
+                    <span class="material-symbols-outlined">notifications</span>
+                </button>
+                <button class="text-on-surface-variant hover:text-primary transition-colors p-1" title="Trợ giúp" type="button" aria-label="Trợ giúp">
+                    <span class="material-symbols-outlined">help</span>
+                </button>
+                
+                <!-- Khu vực hiển thị tên và avatar khách hàng linh hoạt (không gán cứng) -->
+                <a href="../auth/login_register.html" data-customer-account data-profile-href="../profile/index.html" data-login-href="../auth/login_register.html" class="flex items-center gap-2 cursor-pointer border-l border-outline-variant/50 pl-4 hover:bg-surface-container-high p-2 rounded-lg transition-colors">
+                    <div class="w-9 h-9 rounded-full object-cover border border-outline-variant bg-surface-variant flex items-center justify-center overflow-hidden">
+                        <img id="header-user-avatar" class="w-full h-full object-cover" alt="Avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <span class="material-symbols-outlined text-on-surface-variant text-[20px] hidden">person</span>
+                    </div>
+                    <span id="header-user-name" class="hidden md:block text-sm font-semibold text-on-surface">Đăng nhập</span>
+                    <span class="material-symbols-outlined hidden md:block text-on-surface-variant text-[18px]">expand_more</span>
+                </a>
+            </div>
+        </header>
+
+        <!-- Booking Content Canvas -->
+        <div class="p-6 md:p-10 max-w-6xl mx-auto w-full flex-1">
+            <div class="mb-8">
+                <h2 class="text-3xl font-extrabold text-on-background mb-2">Đặt Bàn Trực Tuyến</h2>
+                <p class="text-base text-on-surface-variant">Vui lòng điền thông tin bên dưới để giữ chỗ tại nhà hàng của chúng tôi.</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Booking Form -->
+                <div class="lg:col-span-8 bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/60 p-6 md:p-8">
+                    <form class="space-y-6" data-booking-form novalidate>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-date">Ngày đến <span class="text-error">*</span></label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">calendar_today</span>
+                                    <input class="w-full pl-10 pr-4 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-date" name="date" required type="date">
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-time">Giờ đến <span class="text-error">*</span></label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">schedule</span>
+                                    <input class="w-full pl-10 pr-4 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-time" name="time" required type="time" lang="en-GB">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Số lượng khách: Cho phép nhập tự số lượng lớn (8, 16 người...) kết hợp menu thả xuống -->
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-guests">Số lượng khách <span class="text-error">*</span></label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">group</span>
+                                    <input class="w-full pl-10 pr-4 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-guests" name="numberOfGuests" placeholder="Nhập số người (VD: 2, 8, 16...)" min="1" max="100" required type="number">
+                                </div>
+                            </div>
+
+                            <!-- Bàn phù hợp: Lọc bàn 4 người hoặc gợi ý ghép bàn thông minh khi đi đoàn đông -->
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-table">Bàn phù hợp <span class="text-error">*</span></label>
+                                <div class="relative">
+                                    <select id="booking-table" name="tableId" class="w-full pl-3 pr-10 h-12 bg-surface rounded-lg border border-outline-variant text-sm text-on-surface focus:border-primary focus:ring-1 focus:ring-primary appearance-none bg-none [&::-ms-expand]:hidden" disabled required>
+                                        <option value="">Chọn ngày, giờ và nhập số khách trước</option>
+                                    </select>
+                                    <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">expand_more</span>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="text-xs text-on-surface-variant" data-booking-table-state>Hệ thống tự động lọc bàn trống. Khách dưới hoặc bằng 4 người gợi ý bàn 4; đi đông (8, 16 người...) sẽ gợi ý ghép nhóm nhiều bàn 4 người cùng khu vực.</p>
+
+                        <hr class="border-outline-variant/60 my-6">
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-name">Họ và Tên <span class="text-error">*</span></label>
+                                <input class="w-full px-4 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-name" name="customerName" placeholder="Nguyễn Văn A" autocomplete="name" minlength="2" maxlength="100" required type="text">
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-phone">Số điện thoại <span class="text-error">*</span></label>
+                                <input class="w-full px-4 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-phone" name="customerPhone" placeholder="090 123 4567" autocomplete="tel" inputmode="tel" maxlength="20" required type="tel">
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            <label class="text-sm font-semibold text-on-surface" for="booking-note">Yêu cầu đặc biệt (Không bắt buộc)</label>
+                            <textarea id="booking-note" name="note" maxlength="255" class="w-full px-4 py-3 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface resize-none" placeholder="Ghi chú về dị ứng, vị trí ngồi ưu thích..." rows="3"></textarea>
+                        </div>
+
+                        <p class="text-sm text-error" role="status" aria-live="polite" data-booking-status></p>
+
+                        <button class="w-full h-12 bg-primary text-on-primary font-semibold rounded-lg shadow-sm hover:opacity-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed" data-booking-submit type="submit" disabled>
+                            Xác Nhận Đặt Bàn
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Contact & Location -->
+                <div class="lg:col-span-4 flex flex-col gap-6">
+                    <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/60 p-6">
+                        <h3 class="text-lg font-bold text-on-surface mb-4">Thông tin liên hệ</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-start gap-3">
+                                <span class="material-symbols-outlined text-primary mt-0.5">location_on</span>
+                                <div>
+                                    <p class="text-sm font-semibold text-on-surface">Địa chỉ</p>
+                                    <p class="text-xs text-on-surface-variant">123 Đường Ẩm Thực, Quận 1, TP. Hồ Chí Minh</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span class="material-symbols-outlined text-primary mt-0.5">call</span>
+                                <div>
+                                    <p class="text-sm font-semibold text-on-surface">Hotline</p>
+                                    <p class="text-xs text-on-surface-variant">1900 1234 (8:00 - 22:00)</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span class="material-symbols-outlined text-primary mt-0.5">mail</span>
+                                <div>
+                                    <p class="text-sm font-semibold text-on-surface">Email</p>
+                                    <p class="text-xs text-on-surface-variant">booking@gustopos.vn</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Map Card -->
+                    <div class="bg-surface-container-lowest rounded-2xl shadow-sm border border-outline-variant/60 overflow-hidden h-64 relative">
+                        <img class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBn4mDDc4zTxVSJX_Jisg1CApDMLvA6eHRQT-8CatVNQuA3uF7KHOii7Ee3mb9Bfb6ahi9tO-S5O6KusISlhoBOAqwamlG93HHpSdOBVtYdS23-6Yxc4XeouAVdLSwAN-n-9lI1jmIvZSWTtcKBcHT2T76PC9IfKSTHNsOk5vOT_Vu3X3izFdNCEZzrI4nGJTbCvEDG2LoGomdr-XwohoafwpCSpiBIVUeo1gvqSQ3GAqdAL-ir83av2A" alt="Map Location">
+                        <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent flex items-end p-4">
+                            <a href="https://www.google.com/maps/search/?api=1&query=123+Đường+Ẩm+Thực,+Quận+1,+TP+Hồ+Chí+Minh" target="_blank" rel="noopener noreferrer" class="bg-surface-container-lowest text-on-surface text-xs font-semibold px-4 py-2 rounded-full shadow-md flex items-center gap-2 hover:bg-surface-container transition-colors">
+                                <span class="material-symbols-outlined text-sm">directions</span> Chỉ đường
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Use the generic avatar until the backend exposes an avatar field. -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const avatarImg = document.getElementById('header-user-avatar');
+            if (avatarImg) {
+                avatarImg.style.display = 'none';
+                avatarImg.nextElementSibling.style.display = 'block';
+            }
+        });
+    </script>
+    <script type="module" src="../../js/pages/booking.js?v=auth-session-2"></script>
+</body>
+</html>
