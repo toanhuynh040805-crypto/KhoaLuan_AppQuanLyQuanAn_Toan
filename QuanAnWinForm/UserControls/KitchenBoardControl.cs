@@ -85,7 +85,7 @@ public partial class KitchenBoardControl : UserControl
                         Quantity = i.Quantity,
                         Note = i.Note,
                         IsTakeaway = i.IsTakeaway,
-                        KitchenStatus = i.KitchenStatus,
+                        Status = i.KitchenStatus,
                         CreatedAt = i.CreatedAt,
                     }).ToList(),
                 };
@@ -397,7 +397,7 @@ public partial class KitchenBoardControl : UserControl
         {
             ItemId = item.Id,
             CreatedAt = item.CreatedAt,
-            CurrentStatus = item.KitchenStatus,
+            CurrentStatus = item.Status,
             NameLabel = lblName,
             ActionButton = btnAction,
             RowPanel = row
