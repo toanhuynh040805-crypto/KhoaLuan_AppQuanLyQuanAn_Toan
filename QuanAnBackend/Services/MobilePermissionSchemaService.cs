@@ -64,7 +64,8 @@ public class MobilePermissionSchemaService
                 (N'area.all',         N'Tất cả khu vực',         N'Không bị giới hạn bởi phân công khu vực'),
                 (N'area.assign',      N'Phân công khu vực',      N'Được cấu hình nhân viên phụ trách khu vực'),
                 (N'access.configure', N'Cấu hình quyền',         N'Được thay đổi quyền của các vai trò'),
-                (N'statistics.view', N'Xem thống kê',           N'Được xem doanh thu, món bán chạy và doanh thu theo nhân viên')
+                (N'statistics.view', N'Xem thống kê',           N'Được xem doanh thu, món bán chạy và doanh thu theo nhân viên'),
+                (N'staff.manage', N'Quản lý nhân viên',       N'Được phân ca, giao nhiệm vụ và xem lịch sử làm việc của nhân viên')
             ) AS source(PermissionKey, DisplayName, Description)
             ON target.PermissionKey = source.PermissionKey
             WHEN MATCHED THEN UPDATE SET
@@ -118,7 +119,8 @@ public class MobilePermissionSchemaService
                 (N'QuanLy', N'area.all'),
                 (N'QuanLy', N'area.assign'),
                 (N'QuanLy', N'access.configure'),
-                (N'QuanLy', N'statistics.view');
+                (N'QuanLy', N'statistics.view'),
+                (N'QuanLy', N'staff.manage');
 
             INSERT INTO dbo.RoleMobilePermissions(RoleId, PermissionKey, IsAllowed)
             SELECT r.RoleId, d.PermissionKey, 1
