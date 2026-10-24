@@ -199,7 +199,7 @@ class _KitchenScreenState extends State<KitchenScreen>
 
     batches.sort((a, b) {
       // Cùng một bàn: LUÔN giữ đúng thứ tự gọi món cũ trước, mới sau.
-      if (a.tableId == b.tableId && a.orderId == b.orderId) {
+      if (a.tableId == b.tableId) {
         final int timeCompare = a.createdAt.compareTo(b.createdAt);
         if (timeCompare != 0) return timeCompare;
         return a.keyValue.compareTo(b.keyValue);
