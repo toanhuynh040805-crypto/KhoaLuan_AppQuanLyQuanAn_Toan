@@ -36,6 +36,8 @@ public class EmployeeDto
     public string? Phone { get; set; }
     public string? Email { get; set; }
     public string EmployeeCode { get; set; } = "";
+    public int? StationId { get; set; }
+    public string? StationName { get; set; }
     public bool IsActive { get; set; }
     public int RoleId { get; set; }
     public string RoleName { get; set; } = "";
