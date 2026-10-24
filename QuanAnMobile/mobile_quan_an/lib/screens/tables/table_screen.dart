@@ -1491,6 +1491,9 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                   notifications: notifications,
                   notificationService: _notificationService,
                   employeeCode: appEmployee.employeeCode,
+                  onReadStateChanged: () {
+                    if (mounted) setState(() {});
+                  },
                 )
               : ProfileScreen(notifications: notifications),
         ),
