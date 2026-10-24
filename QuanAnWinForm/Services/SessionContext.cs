@@ -10,6 +10,8 @@ public static class SessionContext
     public static int UserId { get; set; }
     public static string FullName { get; set; } = "";
     public static string RoleName { get; set; } = "";
+    public static int? StationId { get; set; }
+    public static string StationName { get; set; } = "";
 
     public static void Clear()
     {
@@ -17,5 +19,7 @@ public static class SessionContext
         UserId = 0;
         FullName = "";
         RoleName = "";
+        StationId = null;
+        StationName = "";
     }
 }
