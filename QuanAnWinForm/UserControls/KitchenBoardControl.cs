@@ -178,6 +178,7 @@ public partial class KitchenBoardControl : UserControl
 
             row.CurrentStatus = payload.Status;
             ApplyItemStatusUI(row);
+            ApplyBulkActionUI(card);
 
             if (card.Rows.All(r => r.CurrentStatus is (int)KitchenStatus.DaCheBien or (int)KitchenStatus.DaPhucVu or (int)KitchenStatus.DaHuy))
                 _ = RemoveTicketAfterDelayAsync(card.OrderId);
@@ -196,6 +197,7 @@ public partial class KitchenBoardControl : UserControl
             row.CurrentStatus = (int)KitchenStatus.DaHuy;
             row.CancelReason = payload.Reason;
             ApplyItemStatusUI(row);
+            ApplyBulkActionUI(card);
 
             // Báo hủy bằng màu đỏ, tự động loại bỏ phiếu sau 3 giây
             Task.Run(async () =>
@@ -300,43 +302,76 @@ public partial class KitchenBoardControl : UserControl
         {
             var btnDoneAll = new Button
             {
-                Text = "Xác nhận hoàn thành tất cả",
                 Location = new Point(10, footerY + 8),
                 Size = new Size(CardWidth - 20, 38),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = AppColors.Primary,
-                ForeColor = Color.White,
                 Font = AppFonts.LabelMd,
+                Cursor = Cursors.Hand,
             };
             btnDoneAll.FlatAppearance.BorderSize = 0;
+            card.BulkActionButton = btnDoneAll;
+            ApplyBulkActionUI(card);
+
             btnDoneAll.Click += async (s, e) =>
             {
                 btnDoneAll.Enabled = false;
                 try
                 {
-                    foreach (var row in card.Rows.Where(r => r.CurrentStatus != (int)KitchenStatus.DaCheBien && r.CurrentStatus != (int)KitchenStatus.DaHuy))
-                    {
-                        // Phai di DUNG qua tung buoc trung gian (khong duoc nhay thang
-                        // tu MoiGoi -> DaCheBien) vi Backend chi cho phep chuyen TUNG
-                        // BUOC MOT: MoiGoi -> DangCheBien -> DaCheBien.
-                        if (row.CurrentStatus == (int)KitchenStatus.MoiGoi)
-                        {
-                            var step1 = await _api.UpdateOrderItemStatusAsync(row.ItemId, (int)KitchenStatus.DangCheBien, _chefUserId);
-                            row.CurrentStatus = step1?.KitchenStatus ?? (int)KitchenStatus.DangCheBien;
-                        }
+                    var hasNewItems = card.Rows.Any(
+                        r => r.CurrentStatus == (int)KitchenStatus.MoiGoi);
 
-                        if (row.CurrentStatus == (int)KitchenStatus.DangCheBien)
+                    if (hasNewItems)
+                    {
+                        // Bước 1: chỉ bắt đầu các món đang Mới gọi.
+                        foreach (var row in card.Rows.Where(
+                                     r => r.CurrentStatus == (int)KitchenStatus.MoiGoi))
                         {
-                            var step2 = await _api.UpdateOrderItemStatusAsync(row.ItemId, (int)KitchenStatus.DaCheBien, _chefUserId);
-                            row.CurrentStatus = step2?.KitchenStatus ?? (int)KitchenStatus.DaCheBien;
+                            var result = await _api.UpdateOrderItemStatusAsync(
+                                row.ItemId,
+                                (int)KitchenStatus.DangCheBien,
+                                _chefUserId);
+                            row.CurrentStatus =
+                                result?.KitchenStatus ?? (int)KitchenStatus.DangCheBien;
+                            ApplyItemStatusUI(row);
                         }
                     }
-                    RemoveTicket(card.OrderId);
+                    else
+                    {
+                        // Bước 2: khi tất cả món đã bắt đầu mới cho xác nhận hoàn thành.
+                        foreach (var row in card.Rows.Where(
+                                     r => r.CurrentStatus == (int)KitchenStatus.DangCheBien))
+                        {
+                            var result = await _api.UpdateOrderItemStatusAsync(
+                                row.ItemId,
+                                (int)KitchenStatus.DaCheBien,
+                                _chefUserId);
+                            row.CurrentStatus =
+                                result?.KitchenStatus ?? (int)KitchenStatus.DaCheBien;
+                            ApplyItemStatusUI(row);
+                        }
+                    }
+
+                    ApplyBulkActionUI(card);
+
+                    if (card.Rows.All(r =>
+                            r.CurrentStatus is (int)KitchenStatus.DaCheBien
+                                or (int)KitchenStatus.DaPhucVu
+                                or (int)KitchenStatus.DaHuy))
+                    {
+                        await RemoveTicketAfterDelayAsync(card.OrderId);
+                    }
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Không cập nhật được trạng thái: {ex.Message}");
-                    btnDoneAll.Enabled = true;
+                }
+                finally
+                {
+                    if (!btnDoneAll.IsDisposed)
+                    {
+                        btnDoneAll.Enabled = true;
+                        ApplyBulkActionUI(card);
+                    }
                 }
             };
             column.Controls.Add(btnDoneAll);
@@ -365,12 +400,12 @@ public partial class KitchenBoardControl : UserControl
         };
 
         var lblQty = new Label { Text = $"{item.Quantity}x", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(12, 9), AutoSize = true };
-        var lblName = new Label { Text = item.MenuItemName, Font = AppFonts.LabelLg, Location = new Point(56, 11), Size = new Size(160, 22), AutoEllipsis = true };
+        var lblName = new Label { Text = item.MenuItemName, Font = AppFonts.LabelLg, Location = new Point(56, 11), Size = new Size(140, 22), AutoEllipsis = true };
         var btnAction = new Button
         {
             Text = "Bắt đầu",
-            Size = new Size(80, 32),
-            Location = new Point(CardWidth - 80 - 12, 8),
+            Size = new Size(104, 32),
+            Location = new Point(CardWidth - 104 - 12, 8),
             FlatStyle = FlatStyle.Flat,
             Font = AppFonts.LabelMd,
             Cursor = Cursors.Hand,
@@ -442,6 +477,35 @@ public partial class KitchenBoardControl : UserControl
         return row;
     }
 
+    private static void ApplyBulkActionUI(TicketCard card)
+    {
+        var button = card.BulkActionButton;
+        if (button is null || button.IsDisposed) return;
+
+        var hasNew = card.Rows.Any(r => r.CurrentStatus == (int)KitchenStatus.MoiGoi);
+        var hasCooking = card.Rows.Any(r => r.CurrentStatus == (int)KitchenStatus.DangCheBien);
+
+        if (hasNew)
+        {
+            button.Text = "Bắt đầu tất cả";
+            button.BackColor = AppColors.Warning;
+            button.ForeColor = AppColors.OnSurface;
+            button.Visible = true;
+            return;
+        }
+
+        if (hasCooking)
+        {
+            button.Text = "Xác nhận hoàn thành tất cả";
+            button.BackColor = AppColors.Primary;
+            button.ForeColor = Color.White;
+            button.Visible = true;
+            return;
+        }
+
+        button.Visible = false;
+    }
+
     private static void ApplyItemStatusUI(TicketRow row)
     {
         switch (row.CurrentStatus)
@@ -458,7 +522,7 @@ public partial class KitchenBoardControl : UserControl
             case (int)KitchenStatus.DangCheBien:
                 row.NameLabel.ForeColor = AppColors.OnSurface;
                 row.NameLabel.Font = AppFonts.LabelLg;
-                row.ActionButton.Text = "Hoàn thành";
+                row.ActionButton.Text = "Xác nhận";
                 row.ActionButton.BackColor = AppColors.Primary;
                 row.ActionButton.ForeColor = Color.White;
                 row.ActionButton.Visible = true;
@@ -493,6 +557,7 @@ public partial class KitchenBoardControl : UserControl
         public Label LblTable = null!;
         public Label LblOrder = null!;
         public Label ElapsedBadge = null!;
+        public Button? BulkActionButton;
         public List<TicketRow> Rows { get; } = new();
     }
 
