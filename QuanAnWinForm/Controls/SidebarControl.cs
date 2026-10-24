@@ -34,6 +34,7 @@ public partial class SidebarControl : UserControl
 
     private readonly List<Button> _navButtons = new();
     private string _role = "QuanLy";
+    private string _stationName = "";
 
     public SidebarControl()
     {
@@ -52,9 +53,10 @@ public partial class SidebarControl : UserControl
         };
     }
 
-    public void SetRole(string role)
+    public void SetRole(string role, string? stationName = null)
     {
         _role = role;
+        _stationName = stationName?.Trim() ?? "";
         flowNavItems.Controls.Clear();
         _navButtons.Clear();
         BuildNavButtons();
@@ -63,6 +65,23 @@ public partial class SidebarControl : UserControl
     private void BuildNavButtons()
     {
         var visibleItems = _allItems.Where(i => i.IsVisibleFor(_role)).ToList();
+
+        // Bếp và Quầy nước là hai Station của cùng Role Bep.
+        // Nhân viên chế biến chỉ thấy đúng màn Station đã được phân công;
+        // Quản lý vẫn thấy cả hai để giám sát.
+        if (string.Equals(_role, "Bep", StringComparison.OrdinalIgnoreCase))
+        {
+            var isBar = string.Equals(_stationName, "QuayNuoc", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(_stationName, "Quầy nước", StringComparison.OrdinalIgnoreCase);
+            var isKitchen = string.Equals(_stationName, "Bep", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(_stationName, "Bếp", StringComparison.OrdinalIgnoreCase);
+
+            visibleItems = visibleItems
+                .Where(i =>
+                    (i.Key == "bar" && isBar) ||
+                    (i.Key == "kitchen" && isKitchen))
+                .ToList();
+        }
 
         foreach (var item in visibleItems)
         {
