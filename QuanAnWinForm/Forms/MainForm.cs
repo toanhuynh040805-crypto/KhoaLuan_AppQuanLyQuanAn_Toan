@@ -264,32 +264,46 @@ public partial class MainForm : Form
     // > 0 = mở đơn mang về đang mở đó để thanh toán.
     private void ShowContent(string key, int? preselectedTableId, int? takeawayOrderId = null)
     {
-        foreach (var old in panelContent.Controls.Cast<Control>().ToList())
+        // Popup là các Form nổi độc lập. Nếu giữ chúng mở trong lúc đổi màn hình,
+        // người dùng có cảm giác cửa sổ/nội dung bị chồng lên nhau.
+        _notificationPopup.Hide();
+        _searchPopup.Hide();
+
+        panelContent.SuspendLayout();
+        try
         {
-            panelContent.Controls.Remove(old);
-            if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
-            else old.Dispose();
+            foreach (var old in panelContent.Controls.Cast<Control>().ToList())
+            {
+                panelContent.Controls.Remove(old);
+                if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
+                else old.Dispose();
+            }
+
+            UserControl content = key switch
+            {
+                "dashboard" => new DashboardControl(),
+                "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
+                "tables" => BuildDiningTabsControl(),
+                "orders" => new OrderManagementControl(_userId),
+                "menu" => new MenuManagementControl(),
+                "customers" => new CustomerManagementControl(),
+                "staff" => new StaffControl(),
+                "kitchen" => new KitchenBoardControl(_userId, "Bep", "Màn hình Bếp"),
+                "bar" => new KitchenBoardControl(_userId, "QuayNuoc", "Màn hình Quầy nước"),
+                "revenue" => new RevenueControl(),
+                "promotions" => new PromotionsControl(_userId),
+                "settings" => new SettingsControl(),
+                _ => new DashboardControl(),
+            };
+
+            content.Dock = DockStyle.Fill;
+            panelContent.Controls.Add(content);
+            content.BringToFront();
         }
-
-        UserControl content = key switch
+        finally
         {
-            "dashboard" => new DashboardControl(),
-            "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
-            "tables" => BuildDiningTabsControl(),
-            "orders" => new OrderManagementControl(_userId),
-            "menu" => new MenuManagementControl(),
-            "customers" => new CustomerManagementControl(),
-            "staff" => new StaffControl(),
-            "kitchen" => new KitchenBoardControl(_userId, "Bep", "Màn hình Bếp"),
-            "bar" => new KitchenBoardControl(_userId, "QuayNuoc", "Màn hình Quầy nước"),
-            "revenue" => new RevenueControl(),
-            "promotions" => new PromotionsControl(_userId),
-            "settings" => new SettingsControl(),
-            _ => new DashboardControl(),
-        };
-
-        content.Dock = DockStyle.Fill;
-        panelContent.Controls.Add(content);
+            panelContent.ResumeLayout(performLayout: true);
+        }
     }
 
     // Màn "Sơ đồ bàn" gồm 2 tab: Ăn tại chỗ (sơ đồ bàn) và Mang về (danh sách đơn mang về).
