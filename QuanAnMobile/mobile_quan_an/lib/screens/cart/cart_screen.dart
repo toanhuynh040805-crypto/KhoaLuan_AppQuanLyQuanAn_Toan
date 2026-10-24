@@ -28,6 +28,7 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   final List<String> _recentNotes = <String>[];
   bool _loadingRecentNotes = true;
+  int? _activeNoteMenuItemId;
 
   @override
   void initState() {
@@ -65,6 +66,7 @@ class _CartScreenState extends State<CartScreen> {
   void _applyRecentNote(CartItem item, String note) {
     setState(() {
       item.note = note;
+      _activeNoteMenuItemId = item.menuItem.id;
     });
   }
 
@@ -137,6 +139,9 @@ class _CartScreenState extends State<CartScreen> {
   void removeItem(CartItem item) {
     setState(() {
       widget.cartItems.remove(item);
+      if (_activeNoteMenuItemId == item.menuItem.id) {
+        _activeNoteMenuItemId = null;
+      }
     });
   }
 
@@ -380,6 +385,13 @@ class _CartScreenState extends State<CartScreen> {
                         initialValue: item.note ?? '',
                         maxLines: 2,
                         minLines: 1,
+                        onTap: () {
+                          if (_activeNoteMenuItemId != item.menuItem.id) {
+                            setState(() {
+                              _activeNoteMenuItemId = item.menuItem.id;
+                            });
+                          }
+                        },
 
                         decoration: InputDecoration(
                           hintText: 'Ghi chú món (VD: ít cay, không hành...)',
@@ -429,7 +441,8 @@ class _CartScreenState extends State<CartScreen> {
                         },
                       ),
 
-                      if (_loadingRecentNotes || _recentNotes.isNotEmpty) ...[
+                      if (_activeNoteMenuItemId == item.menuItem.id &&
+                          (_loadingRecentNotes || _recentNotes.isNotEmpty)) ...[
                         const SizedBox(height: 10),
                         Text(
                           'Ghi chú gần đây',
