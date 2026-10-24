@@ -12,9 +12,10 @@ public partial class SidebarControl : UserControl
 
     // LƯU Ý: bảng Roles trong QuanAnManagementDB_Final.sql chỉ seed đúng 4 vai trò:
     // QuanLy, ThuNgan, PhucVu, Bep (KHÔNG có vai trò "QuayNuoc" - Quầy nước chỉ là
-    // một Station/bộ phận chế biến, không phải Role đăng nhập). Vì vậy màn hình
-    // "Quầy nước" vẫn dùng chung Role "Bep" (nhân viên bếp có thể trực cả 2 bộ phận),
-    // và nhân viên Phục vụ (PhucVu) được thêm quyền vào "Bán hàng"/"Sơ đồ bàn" để
+    // một Station/bộ phận chế biến, không phải Role đăng nhập). Bếp và Quầy nước
+    // dùng chung Role "Bep" nhưng mỗi tài khoản được gán đúng một Station và chỉ
+    // thấy màn hình Station đó. Nhân viên Phục vụ (PhucVu) được thêm quyền vào
+    // "Bán hàng"/"Sơ đồ bàn" để
     // gọi món cho khách - đúng nghiệp vụ thực tế của vai trò này.
     private readonly List<NavItem> _allItems = new()
     {
