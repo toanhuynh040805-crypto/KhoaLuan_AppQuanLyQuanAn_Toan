@@ -60,12 +60,27 @@ public partial class LoginForm : Form
             // Luu phien dang nhap - AuthHeaderHandler se tu dong dinh kem Token
             // nay vao moi request API tu day tro di (o TAT CA man hinh, vi no
             // doc truc tiep tu SessionContext chu khong qua ApiService instance).
+            if (string.Equals(result.RoleName, "Bep", StringComparison.OrdinalIgnoreCase) &&
+                (!result.StationId.HasValue || string.IsNullOrWhiteSpace(result.StationName)))
+            {
+                lblError.Text = "Tài khoản chế biến chưa được phân công Bếp hoặc Quầy nước.";
+                lblError.Visible = true;
+                return;
+            }
+
             SessionContext.Token = result.Token;
             SessionContext.UserId = result.UserId;
             SessionContext.FullName = result.FullName;
             SessionContext.RoleName = result.RoleName;
+            SessionContext.StationId = result.StationId;
+            SessionContext.StationName = result.StationName ?? "";
 
-            var main = new MainForm(result.UserId, result.FullName, result.RoleName);
+            var main = new MainForm(
+                result.UserId,
+                result.FullName,
+                result.RoleName,
+                result.StationId,
+                result.StationName);
             main.FormClosed += (s, e) =>
             {
                 if (main.LoggedOut)
