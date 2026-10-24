@@ -282,6 +282,8 @@ class _KitchenScreenState extends State<KitchenScreen>
         elevation: 0,
         title: Text(
           '$_stationDisplayName - món cần xử lý',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             color: AppTheme.textColor,
             fontWeight: FontWeight.bold,
@@ -392,20 +394,26 @@ class _KitchenScreenState extends State<KitchenScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Text(
+            row.tableName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 17,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              Expanded(
-                child: Text(
-                  row.tableName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17,
-                  ),
-                ),
-              ),
-              if (itemPriority || tablePriority) ...[
+              if (itemPriority || tablePriority)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.redAccent.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(14),
@@ -419,8 +427,6 @@ class _KitchenScreenState extends State<KitchenScreen>
                     ),
                   ),
                 ),
-                const SizedBox(width: 6),
-              ],
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 9,
@@ -492,8 +498,9 @@ class _KitchenScreenState extends State<KitchenScreen>
                 onPressed: saving ? null : () => _advance(row),
                 style: FilledButton.styleFrom(
                   backgroundColor: row.item.status == 'Đang chế biến'
-                      ? Colors.green
+                      ? const Color(0xFF2563EB)
                       : AppTheme.orangeColor,
+                  foregroundColor: Colors.white,
                 ),
                 icon: saving
                     ? const SizedBox(
@@ -506,25 +513,38 @@ class _KitchenScreenState extends State<KitchenScreen>
                       )
                     : Icon(
                         row.item.status == 'Đang chế biến'
-                            ? Icons.check
+                            ? Icons.outlined_flag
                             : Icons.play_arrow,
                       ),
                 label: Text(
                   row.item.status == 'Đang chế biến'
-                      ? 'Hoàn thành món'
+                      ? 'Xác nhận hoàn thành'
                       : 'Bắt đầu chế biến',
                 ),
               ),
             ),
           ] else ...[
             const SizedBox(height: 10),
-            const Text(
-              'Đã xong - chờ nhân viên phục vụ mang món ra bàn.',
-              style: TextStyle(
-                color: Colors.green,
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text(
+                    'Đã hoàn thành - chờ nhân viên phục vụ mang món ra bàn.',
+                    style: TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ],
