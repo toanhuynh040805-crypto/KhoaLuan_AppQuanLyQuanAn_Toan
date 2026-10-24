@@ -9,20 +9,24 @@ public partial class KitchenBoardControl : UserControl
 {
     private readonly int _chefUserId;
     private readonly string _departmentName;
+    private int? _stationId;
     private readonly SignalRService _signalR = new();
     private readonly ApiService _api = new();
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 15_000 };
 
-    private int StationId => _departmentName == "QuayNuoc" ? 2 : 1;
-
     private readonly Dictionary<int, TicketCard> _cardsByOrderId = new();
 
-    public KitchenBoardControl() : this(0, "Bep", "Màn hình Bếp") { }
+    public KitchenBoardControl() : this(0, "Bep", "Màn hình Bếp", null) { }
 
-    public KitchenBoardControl(int chefUserId, string departmentName, string title)
+    public KitchenBoardControl(
+        int chefUserId,
+        string departmentName,
+        string title,
+        int? stationId = null)
     {
         _chefUserId = chefUserId;
         _departmentName = departmentName;
+        _stationId = stationId;
         InitializeComponent();
         lblTitle.Text = title;
 
@@ -41,11 +45,28 @@ public partial class KitchenBoardControl : UserControl
         };
     }
 
+    private async Task<int> ResolveStationIdAsync()
+    {
+        if (_stationId.HasValue) return _stationId.Value;
+
+        var stations = await _api.GetStationsAsync();
+        var station = stations.FirstOrDefault(s =>
+            string.Equals(s.Name, _departmentName, StringComparison.OrdinalIgnoreCase));
+
+        if (station is null)
+            throw new InvalidOperationException(
+                $"Không tìm thấy bộ phận chế biến '{_departmentName}' trong Backend.");
+
+        _stationId = station.Id;
+        return station.Id;
+    }
+
     private async Task LoadPendingTicketsAsync()
     {
         try
         {
-            var items = await _api.GetOrderItemsAsync(StationId);
+            var stationId = await ResolveStationIdAsync();
+            var items = await _api.GetOrderItemsAsync(stationId);
             var groups = items
                 .GroupBy(i => new { i.OrderId, i.TableName })
                 .OrderBy(g => g.Min(i => i.CreatedAt));
@@ -64,6 +85,7 @@ public partial class KitchenBoardControl : UserControl
                         Quantity = i.Quantity,
                         Note = i.Note,
                         IsTakeaway = i.IsTakeaway,
+                        KitchenStatus = i.KitchenStatus,
                         CreatedAt = i.CreatedAt,
                     }).ToList(),
                 };
@@ -278,11 +300,11 @@ public partial class KitchenBoardControl : UserControl
         {
             var btnDoneAll = new Button
             {
-                Text = "✓ Hoàn thành tất cả",
+                Text = "Xác nhận hoàn thành tất cả",
                 Location = new Point(10, footerY + 8),
                 Size = new Size(CardWidth - 20, 38),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = AppColors.Success,
+                BackColor = AppColors.Primary,
                 ForeColor = Color.White,
                 Font = AppFonts.LabelMd,
             };
@@ -375,7 +397,7 @@ public partial class KitchenBoardControl : UserControl
         {
             ItemId = item.Id,
             CreatedAt = item.CreatedAt,
-            CurrentStatus = (int)KitchenStatus.MoiGoi,
+            CurrentStatus = item.KitchenStatus,
             NameLabel = lblName,
             ActionButton = btnAction,
             RowPanel = row
@@ -436,7 +458,7 @@ public partial class KitchenBoardControl : UserControl
             case (int)KitchenStatus.DangCheBien:
                 row.NameLabel.ForeColor = AppColors.OnSurface;
                 row.NameLabel.Font = AppFonts.LabelLg;
-                row.ActionButton.Text = "Xong";
+                row.ActionButton.Text = "Hoàn thành";
                 row.ActionButton.BackColor = AppColors.Primary;
                 row.ActionButton.ForeColor = Color.White;
                 row.ActionButton.Visible = true;
