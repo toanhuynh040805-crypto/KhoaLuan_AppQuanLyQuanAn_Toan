@@ -289,6 +289,35 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     }
   }
 
+  Future<void> _changeAssignmentStatus(
+    ManagedShiftAssignment assignment,
+    int status,
+  ) async {
+    try {
+      await AppServices.staffManagementService
+          .updateAssignmentStatus(assignment.id, status);
+      await _loadAssignments();
+      await _loadHistory();
+      _show('Đã cập nhật trạng thái ca', TopMessageType.success);
+    } on ApiException catch (e) {
+      _show(e.message, TopMessageType.error);
+    }
+  }
+
+  Future<void> _changeTaskStatus(
+    ManagedStaffTask task,
+    int status,
+  ) async {
+    try {
+      await AppServices.staffManagementService
+          .updateTaskStatus(task.id, status);
+      await _loadTasks();
+      _show('Đã cập nhật trạng thái nhiệm vụ', TopMessageType.success);
+    } on ApiException catch (e) {
+      _show(e.message, TopMessageType.error);
+    }
+  }
+
   Future<void> _deleteAssignment(ManagedShiftAssignment a) async {
     if (!await _confirm(
       'Xóa phân ca',
@@ -627,9 +656,22 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     '${(a.areaName ?? '').trim().isEmpty ? '' : '\nKhu vực: ${a.areaName}'}'
                     '\n${a.statusLabel}',
                   ),
-                  trailing: IconButton(
-                    onPressed: () => _deleteAssignment(a),
-                    icon: const Icon(Icons.delete_outline),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 's0') _changeAssignmentStatus(a, 0);
+                      if (value == 's1') _changeAssignmentStatus(a, 1);
+                      if (value == 's2') _changeAssignmentStatus(a, 2);
+                      if (value == 's3') _changeAssignmentStatus(a, 3);
+                      if (value == 'delete') _deleteAssignment(a);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 's0', child: Text('Đã xếp lịch')),
+                      PopupMenuItem(value: 's1', child: Text('Đã điểm danh')),
+                      PopupMenuItem(value: 's2', child: Text('Vắng mặt')),
+                      PopupMenuItem(value: 's3', child: Text('Đã hoàn thành')),
+                      PopupMenuDivider(),
+                      PopupMenuItem(value: 'delete', child: Text('Xóa phân ca')),
+                    ],
                   ),
                 ),
               ),
@@ -648,8 +690,8 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
           Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<int?>(
-                  value: taskUserId,
+                child: DropdownButtonFormField<int>(
+                  value: taskUserId ?? 0,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Lọc nhân viên',
@@ -657,12 +699,12 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     isDense: true,
                   ),
                   items: [
-                    const DropdownMenuItem<int?>(
-                      value: null,
+                    const DropdownMenuItem<int>(
+                      value: 0,
                       child: Text('Tất cả nhân viên'),
                     ),
                     ...employees.map(
-                      (e) => DropdownMenuItem<int?>(
+                      (e) => DropdownMenuItem<int>(
                         value: e.userId,
                         child: Text(
                           e.fullName,
@@ -672,7 +714,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     ),
                   ],
                   onChanged: (v) async {
-                    setState(() => taskUserId = v);
+                    setState(() => taskUserId = (v == null || v == 0) ? null : v);
                     await _loadTasks();
                   },
                 ),
@@ -713,6 +755,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                           PopupMenuButton<String>(
                             onSelected: (v) {
                               if (v == 'edit') _editTask(t);
+                              if (v == 'status0') _changeTaskStatus(t, 0);
+                              if (v == 'status1') _changeTaskStatus(t, 1);
+                              if (v == 'status2') _changeTaskStatus(t, 2);
                               if (v == 'delete') _deleteTask(t);
                             },
                             itemBuilder: (_) => const [
@@ -720,6 +765,20 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                                 value: 'edit',
                                 child: Text('Sửa'),
                               ),
+                              PopupMenuDivider(),
+                              PopupMenuItem(
+                                value: 'status0',
+                                child: Text('Trạng thái: Chưa làm'),
+                              ),
+                              PopupMenuItem(
+                                value: 'status1',
+                                child: Text('Trạng thái: Đang làm'),
+                              ),
+                              PopupMenuItem(
+                                value: 'status2',
+                                child: Text('Trạng thái: Hoàn thành'),
+                              ),
+                              PopupMenuDivider(),
                               PopupMenuItem(
                                 value: 'delete',
                                 child: Text('Xóa'),
@@ -761,27 +820,27 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       child: ListView(
         padding: const EdgeInsets.all(14),
         children: [
-          DropdownButtonFormField<int?>(
-            value: historyUserId,
+          DropdownButtonFormField<int>(
+            value: historyUserId ?? 0,
             isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Nhân viên',
               border: OutlineInputBorder(),
             ),
             items: [
-              const DropdownMenuItem<int?>(
-                value: null,
+              const DropdownMenuItem<int>(
+                value: 0,
                 child: Text('Tất cả nhân viên'),
               ),
               ...employees.map(
-                (e) => DropdownMenuItem<int?>(
+                (e) => DropdownMenuItem<int>(
                   value: e.userId,
                   child: Text(e.fullName, overflow: TextOverflow.ellipsis),
                 ),
               ),
             ],
             onChanged: (v) async {
-              setState(() => historyUserId = v);
+              setState(() => historyUserId = (v == null || v == 0) ? null : v);
               await _loadHistory();
             },
           ),
