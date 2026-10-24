@@ -68,6 +68,15 @@ class ApiClient {
         ),
       );
 
+  Future<dynamic> putValue(String endpoint, Object? value) =>
+      _execute(
+        () => _client.put(
+          _uri(endpoint),
+          headers: _headers,
+          body: jsonEncode(value),
+        ),
+      );
+
   Future<dynamic> delete(String endpoint) =>
       _execute(() => _client.delete(_uri(endpoint), headers: _headers));
 
