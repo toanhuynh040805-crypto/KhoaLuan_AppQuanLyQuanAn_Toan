@@ -12,12 +12,14 @@ class NotificationScreen extends StatefulWidget {
   final List<AppNotification> notifications;
   final NotificationService notificationService;
   final String employeeCode;
+  final VoidCallback? onReadStateChanged;
 
   const NotificationScreen({
     super.key,
     required this.notifications,
     required this.notificationService,
     required this.employeeCode,
+    this.onReadStateChanged,
   });
 
   @override
@@ -90,30 +92,62 @@ class _NotificationScreenState
   }
 
   Future<void> _markAllAsRead() async {
-    final List<int> unreadIndexes = [];
+    final Set<int> unreadIds = widget.notifications
+        .where((item) => !item.isRead && item.id != null)
+        .map((item) => item.id!)
+        .toSet();
 
-    for (int i = 0;
-        i < widget.notifications.length;
-        i++) {
-      final AppNotification item =
-          widget.notifications[i];
+    if (unreadIds.isEmpty) return;
 
-      if (!item.isRead &&
-          item.id != null) {
-        unreadIndexes.add(i);
+    // Cập nhật local NGAY LẬP TỨC để badge ở mọi tab biến mất ngay,
+    // không phụ thuộc tốc độ mạng hay việc người dùng chuyển tab quá nhanh.
+    void markLocalRead() {
+      for (int i = 0; i < widget.notifications.length; i++) {
+        final AppNotification item = widget.notifications[i];
+        if (!item.isRead && item.id != null && unreadIds.contains(item.id)) {
+          widget.notifications[i] = item.copyWith(isRead: true);
+        }
       }
     }
 
-    for (final int index in unreadIndexes) {
-      if (!mounted ||
-          index >= widget.notifications.length) {
-        return;
+    if (mounted) {
+      setState(markLocalRead);
+    } else {
+      markLocalRead();
+    }
+    widget.onReadStateChanged?.call();
+
+    try {
+      // Một request duy nhất thay cho việc gọi tuần tự từng thông báo.
+      await widget.notificationService.markAllAsRead(
+        employeeCode: widget.employeeCode,
+      );
+    } catch (_) {
+      // Nếu server không cập nhật được, trả local về trạng thái chưa đọc để
+      // badge không nói sai trạng thái thật.
+      void rollback() {
+        for (int i = 0; i < widget.notifications.length; i++) {
+          final AppNotification item = widget.notifications[i];
+          if (item.id != null && unreadIds.contains(item.id)) {
+            widget.notifications[i] = item.copyWith(isRead: false);
+          }
+        }
       }
 
-      await _markAsRead(
-        index,
-        showError: false,
-      );
+      if (mounted) {
+        setState(rollback);
+      } else {
+        rollback();
+      }
+      widget.onReadStateChanged?.call();
+
+      if (mounted) {
+        TopMessage.show(
+          context,
+          message: 'Không thể cập nhật trạng thái thông báo',
+          type: TopMessageType.error,
+        );
+      }
     }
   }
 
@@ -127,41 +161,63 @@ class _NotificationScreenState
     int index, {
     bool showError = true,
   }) async {
-    final AppNotification notification =
-        widget.notifications[index];
+    if (index < 0 || index >= widget.notifications.length) return;
 
-    if (notification.isRead ||
-        notification.id == null) {
-      return;
+    final AppNotification notification = widget.notifications[index];
+
+    if (notification.isRead || notification.id == null) return;
+
+    final int notificationId = notification.id!;
+
+    // Optimistic update: shared List được đổi ngay cả khi màn Thông báo
+    // bị đóng trước khi request mạng hoàn tất.
+    void markLocalRead() {
+      final int currentIndex = widget.notifications.indexWhere(
+        (item) => item.id == notificationId,
+      );
+      if (currentIndex >= 0) {
+        widget.notifications[currentIndex] =
+            widget.notifications[currentIndex].copyWith(isRead: true);
+      }
     }
+
+    if (mounted) {
+      setState(markLocalRead);
+    } else {
+      markLocalRead();
+    }
+    widget.onReadStateChanged?.call();
 
     try {
       await widget.notificationService.markAsRead(
-        notificationId: notification.id!,
+        notificationId: notificationId,
         employeeCode: widget.employeeCode,
       );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        widget.notifications[index] =
-            notification.copyWith(
-          isRead: true,
-        );
-      });
     } catch (_) {
-      if (!mounted || !showError) {
-        return;
+      void rollback() {
+        final int currentIndex = widget.notifications.indexWhere(
+          (item) => item.id == notificationId,
+        );
+        if (currentIndex >= 0) {
+          widget.notifications[currentIndex] =
+              widget.notifications[currentIndex].copyWith(isRead: false);
+        }
       }
 
-      TopMessage.show(
-        context,
-        message:
-            'Không thể cập nhật trạng thái thông báo',
-        type: TopMessageType.error,
-      );
+      if (mounted) {
+        setState(rollback);
+      } else {
+        rollback();
+      }
+      widget.onReadStateChanged?.call();
+
+      if (mounted && showError) {
+        TopMessage.show(
+          context,
+          message: 'Không thể cập nhật trạng thái thông báo',
+          type: TopMessageType.error,
+        );
+      }
     }
   }
 
