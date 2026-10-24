@@ -7,7 +7,8 @@ Tài liệu này bám theo góp ý của giảng viên: demo phải chạy xuyê
 - Backend chạy và truy cập được từ các máy trong cùng LAN/Wi-Fi.
 - Mobile, WinForms và Web cùng trỏ về **một Backend** và **một QuanAnManagementDB**.
 - Kiểm tra ảnh thực đơn hiển thị đúng tên món trên cả 3 nền tảng.
-- Chuẩn bị tài khoản: Khách hàng, Phục vụ, Bếp/Quầy nước, Thu ngân, Quản lý.
+- Chuẩn bị tài khoản: Khách hàng, Phục vụ, Bếp, Quầy nước, Thu ngân, Quản lý.
+- Bếp và Quầy nước dùng cùng Role `Bep` nhưng phải là **hai tài khoản riêng**, mỗi tài khoản gán đúng Station `Bep` hoặc `QuayNuoc`.
 - Xóa/đóng các đơn test cũ nếu chúng làm ảnh hưởng dữ liệu demo.
 - Mở sẵn terminal Backend để quan sát lỗi trong lúc demo.
 
