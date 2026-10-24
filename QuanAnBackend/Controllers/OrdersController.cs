@@ -199,6 +199,11 @@ public class OrdersController : ControllerBase
                 );
             }
 
+            // Mỗi lần nhân viên bấm xác nhận gọi món là một đợt (batch).
+            // Toàn bộ món trong cùng request dùng chung CreatedAt để Bếp/Quầy nước
+            // gom đúng một phiếu. Gọi thêm lần sau sẽ có CreatedAt mới và xếp sau.
+            var batchCreatedAt = DateTime.Now;
+
             var addedItems = new List<AddedOrderItemDto>();
             var realtimeTickets = new List<(string StationName, int Id, string Name, int Quantity, string? Note, bool IsTakeaway)>();
 
@@ -279,7 +284,7 @@ public class OrdersController : ControllerBase
                                 N'MoiGoi',
                                 0,
                                 @IsTakeaway,
-                                GETDATE()
+                                @CreatedAt
                             );
 
                         SELECT CAST(SCOPE_IDENTITY() AS int);
@@ -291,6 +296,7 @@ public class OrdersController : ControllerBase
                     AddDbParameter(insertItem, "@UnitPrice", price);
                     AddDbParameter(insertItem, "@Note", dto.Note);
                     AddDbParameter(insertItem, "@IsTakeaway", dto.IsTakeaway);
+                    AddDbParameter(insertItem, "@CreatedAt", batchCreatedAt);
 
                     var value = await insertItem.ExecuteScalarAsync();
                     newOrderItemId = Convert.ToInt32(value);
@@ -471,6 +477,7 @@ public class OrdersController : ControllerBase
 
             var newItemIds = new List<int>();
             var addedItems = new List<AddedOrderItemDto>();
+            var batchCreatedAt = DateTime.Now;
 
             foreach (var dto in items)
             {
@@ -495,7 +502,7 @@ public class OrdersController : ControllerBase
                     Status = KitchenStatus.MoiGoi,
                     IsRefillRequest = false,
                     IsTakeaway = true,
-                    CreatedAt = DateTime.Now
+                    CreatedAt = batchCreatedAt
                 };
                 _db.OrderItems.Add(orderItem);
                 await _db.SaveChangesAsync();
