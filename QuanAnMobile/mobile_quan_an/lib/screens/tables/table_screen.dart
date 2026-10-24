@@ -1461,8 +1461,8 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     // chọn bàn/đơn chỉ khi nhân viên đã chọn món và xác nhận giỏ hàng.
     await Navigator.push<void>(
       context,
-      MaterialPageRoute<void>(
-        builder: (context) => MenuScreen(notifications: notifications),
+      _tabRoute<void>(
+        MenuScreen(notifications: notifications),
       ),
     );
 
