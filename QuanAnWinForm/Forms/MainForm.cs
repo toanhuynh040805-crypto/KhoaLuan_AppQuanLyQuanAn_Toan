@@ -9,6 +9,8 @@ public partial class MainForm : Form
 {
     private readonly int _userId;
     private readonly string _roleName;
+    private readonly int? _stationId;
+    private readonly string _stationName;
     private readonly ApiService _api = new();
     private readonly NotificationHubClient _notificationHub = new();
     private readonly NotificationPopupForm _notificationPopup = new();
@@ -21,15 +23,22 @@ public partial class MainForm : Form
     // nen hien lai man hinh dang nhap hay thoat han ung dung).
     public bool LoggedOut { get; private set; }
 
-    public MainForm(int userId, string userFullName, string roleName)
+    public MainForm(
+        int userId,
+        string userFullName,
+        string roleName,
+        int? stationId = null,
+        string? stationName = null)
     {
         _userId = userId;
         _roleName = roleName;
+        _stationId = stationId;
+        _stationName = stationName?.Trim() ?? "";
 
         InitializeComponent();
 
-        sidebar.SetRole(roleName);
-        headerBar.SetUser(userFullName, DisplayRoleName(roleName));
+        sidebar.SetRole(roleName, _stationName);
+        headerBar.SetUser(userFullName, DisplayRoleName(roleName, _stationName));
         sidebar.NavItemSelected += OnNavItemSelected;
 
         headerBar.NotificationClicked += ToggleNotificationPopup;
@@ -51,7 +60,7 @@ public partial class MainForm : Form
             try { await _notificationHub.DisconnectAsync(); } catch { /* dang thoat, bo qua */ }
         };
 
-        OnNavItemSelected(DefaultTabFor(roleName));
+        OnNavItemSelected(DefaultTabFor(roleName, _stationName));
 
         Load += async (s, e) => await InitNotificationsAsync();
     }
@@ -240,20 +249,26 @@ public partial class MainForm : Form
         }
     }
 
-    private string DefaultTabFor(string role) => role switch
+    private string DefaultTabFor(string role, string stationName) => role switch
     {
         "QuanLy" => "dashboard",
         "ThuNgan" => "sales",
         "PhucVu" => "sales",
+        "Bep" when IsBarStation(stationName) => "bar",
         "Bep" => "kitchen",
         _ => "dashboard",
     };
 
-    private string DisplayRoleName(string role) => role switch
+    private static bool IsBarStation(string? stationName)
+        => string.Equals(stationName, "QuayNuoc", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(stationName, "Quầy nước", StringComparison.OrdinalIgnoreCase);
+
+    private string DisplayRoleName(string role, string stationName) => role switch
     {
         "QuanLy" => "Quản lý",
         "ThuNgan" => "Thu ngân",
         "PhucVu" => "Phục vụ",
+        "Bep" when IsBarStation(stationName) => "Quầy nước",
         "Bep" => "Bếp",
         _ => role,
     };
@@ -264,6 +279,16 @@ public partial class MainForm : Form
     // > 0 = mở đơn mang về đang mở đó để thanh toán.
     private void ShowContent(string key, int? preselectedTableId, int? takeawayOrderId = null)
     {
+        // Tài khoản chế biến chỉ được mở đúng Station đã phân công.
+        // Backend vẫn là lớp bảo vệ cuối cùng; đoạn này giúp UI không cho đi nhầm màn.
+        if (string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase))
+        {
+            if (IsBarStation(_stationName) && key == "kitchen")
+                key = "bar";
+            else if (!IsBarStation(_stationName) && key == "bar")
+                key = "kitchen";
+        }
+
         // Popup là các Form nổi độc lập. Nếu giữ chúng mở trong lúc đổi màn hình,
         // người dùng có cảm giác cửa sổ/nội dung bị chồng lên nhau.
         _notificationPopup.Hide();
@@ -288,8 +313,16 @@ public partial class MainForm : Form
                 "menu" => new MenuManagementControl(),
                 "customers" => new CustomerManagementControl(),
                 "staff" => new StaffControl(),
-                "kitchen" => new KitchenBoardControl(_userId, "Bep", "Màn hình Bếp"),
-                "bar" => new KitchenBoardControl(_userId, "QuayNuoc", "Màn hình Quầy nước"),
+                "kitchen" => new KitchenBoardControl(
+                    _userId,
+                    "Bep",
+                    "Màn hình Bếp",
+                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
+                "bar" => new KitchenBoardControl(
+                    _userId,
+                    "QuayNuoc",
+                    "Màn hình Quầy nước",
+                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
                 "revenue" => new RevenueControl(),
                 "promotions" => new PromotionsControl(_userId),
                 "settings" => new SettingsControl(),
