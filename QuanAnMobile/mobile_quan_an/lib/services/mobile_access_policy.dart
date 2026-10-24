@@ -48,6 +48,7 @@ class MobileAccessPolicy {
   static bool hasAllAreas() => has('area.all');
   static bool canConfigureAccess() => has('access.configure');
   static bool canViewStatistics() => has('statistics.view');
+  static bool canManageStaff() => has('staff.manage');
 
   /// Giữ tương thích cho code cũ còn tham chiếu MobileRole, nhưng suy ra từ
   /// capability thay vì từ chuỗi tên vai trò.
@@ -83,6 +84,7 @@ class MobileAccessPolicy {
     if (canCompletePayment('')) capabilities.add('thanh toán');
     if (canAssignAreas()) capabilities.add('phân công khu vực');
     if (canViewStatistics()) capabilities.add('xem thống kê');
+    if (canManageStaff()) capabilities.add('quản lý nhân viên');
 
     return capabilities.isEmpty
         ? 'Quyền của tài khoản được cấu hình từ hệ thống.'

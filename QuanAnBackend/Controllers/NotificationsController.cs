@@ -158,15 +158,53 @@ public class NotificationsController : ControllerBase
         return Ok();
     }
 
+    // WinForms:
     // PUT /api/notifications/read-all?userId=5&role=PhucVu
+    // Mobile:
+    // PUT /api/notifications/read-all?employeeCode=NV001
     [HttpPut("read-all")]
-    public async Task<IActionResult> MarkAllRead([FromQuery] int userId, [FromQuery] string role)
+    public async Task<IActionResult> MarkAllRead(
+        [FromQuery] int? userId,
+        [FromQuery] string? role,
+        [FromQuery] string? employeeCode)
     {
+        if ((!userId.HasValue || string.IsNullOrWhiteSpace(role)) &&
+            !string.IsNullOrWhiteSpace(employeeCode))
+        {
+            var code = employeeCode.Trim();
+
+            var employee = await _db.Employees
+                .AsNoTracking()
+                .Include(e => e.User)
+                    .ThenInclude(u => u!.UserRoles)
+                        .ThenInclude(ur => ur.Role)
+                .FirstOrDefaultAsync(e => e.EmployeeCode == code);
+
+            if (employee?.User is null)
+                return NotFound(new { message = "Không tìm thấy nhân viên" });
+
+            userId = employee.UserId;
+            role = employee.User.UserRoles
+                .Where(ur => ur.IsActive && ur.Role != null)
+                .Select(ur => ur.Role!.RoleName)
+                .FirstOrDefault();
+        }
+
+        if (!userId.HasValue || string.IsNullOrWhiteSpace(role))
+            return BadRequest(new { message = "Thiếu thông tin người dùng" });
+
+        var normalizedRole = role.Trim();
+
         var items = await _db.Notifications
-            .Where(n => !n.IsRead && (n.TargetUserId == userId || (n.TargetUserId == null && n.TargetRole == role)))
+            .Where(n =>
+                !n.IsRead &&
+                (n.TargetUserId == userId.Value ||
+                 (n.TargetUserId == null && n.TargetRole == normalizedRole)))
             .ToListAsync();
 
-        foreach (var n in items) n.IsRead = true;
+        foreach (var n in items)
+            n.IsRead = true;
+
         await _db.SaveChangesAsync();
 
         return Ok(new { updated = items.Count });

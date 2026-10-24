@@ -54,4 +54,13 @@ class NotificationService {
       },
     );
   }
+
+  Future<void> markAllAsRead({
+    required String employeeCode,
+  }) async {
+    final String encoded = Uri.encodeQueryComponent(employeeCode);
+    await _apiClient.put(
+      '/notifications/read-all?employeeCode=$encoded',
+    );
+  }
 }

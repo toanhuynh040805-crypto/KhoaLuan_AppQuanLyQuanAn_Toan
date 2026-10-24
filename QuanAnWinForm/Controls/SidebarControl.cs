@@ -12,9 +12,10 @@ public partial class SidebarControl : UserControl
 
     // LƯU Ý: bảng Roles trong QuanAnManagementDB_Final.sql chỉ seed đúng 4 vai trò:
     // QuanLy, ThuNgan, PhucVu, Bep (KHÔNG có vai trò "QuayNuoc" - Quầy nước chỉ là
-    // một Station/bộ phận chế biến, không phải Role đăng nhập). Vì vậy màn hình
-    // "Quầy nước" vẫn dùng chung Role "Bep" (nhân viên bếp có thể trực cả 2 bộ phận),
-    // và nhân viên Phục vụ (PhucVu) được thêm quyền vào "Bán hàng"/"Sơ đồ bàn" để
+    // một Station/bộ phận chế biến, không phải Role đăng nhập). Bếp và Quầy nước
+    // dùng chung Role "Bep" nhưng mỗi tài khoản được gán đúng một Station và chỉ
+    // thấy màn hình Station đó. Nhân viên Phục vụ (PhucVu) được thêm quyền vào
+    // "Bán hàng"/"Sơ đồ bàn" để
     // gọi món cho khách - đúng nghiệp vụ thực tế của vai trò này.
     private readonly List<NavItem> _allItems = new()
     {
@@ -34,6 +35,7 @@ public partial class SidebarControl : UserControl
 
     private readonly List<Button> _navButtons = new();
     private string _role = "QuanLy";
+    private string _stationName = "";
 
     public SidebarControl()
     {
@@ -52,9 +54,10 @@ public partial class SidebarControl : UserControl
         };
     }
 
-    public void SetRole(string role)
+    public void SetRole(string role, string? stationName = null)
     {
         _role = role;
+        _stationName = stationName?.Trim() ?? "";
         flowNavItems.Controls.Clear();
         _navButtons.Clear();
         BuildNavButtons();
@@ -63,6 +66,23 @@ public partial class SidebarControl : UserControl
     private void BuildNavButtons()
     {
         var visibleItems = _allItems.Where(i => i.IsVisibleFor(_role)).ToList();
+
+        // Bếp và Quầy nước là hai Station của cùng Role Bep.
+        // Nhân viên chế biến chỉ thấy đúng màn Station đã được phân công;
+        // Quản lý vẫn thấy cả hai để giám sát.
+        if (string.Equals(_role, "Bep", StringComparison.OrdinalIgnoreCase))
+        {
+            var isBar = string.Equals(_stationName, "QuayNuoc", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(_stationName, "Quầy nước", StringComparison.OrdinalIgnoreCase);
+            var isKitchen = string.Equals(_stationName, "Bep", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(_stationName, "Bếp", StringComparison.OrdinalIgnoreCase);
+
+            visibleItems = visibleItems
+                .Where(i =>
+                    (i.Key == "bar" && isBar) ||
+                    (i.Key == "kitchen" && isKitchen))
+                .ToList();
+        }
 
         foreach (var item in visibleItems)
         {

@@ -4,19 +4,25 @@ import '../models/order_item.dart';
 import 'api_client.dart';
 
 class KitchenQueueItem {
+  final int orderId;
   final int tableId;
   final String tableName;
+  final DateTime createdAt;
   final OrderItem item;
 
   const KitchenQueueItem({
+    required this.orderId,
     required this.tableId,
     required this.tableName,
+    required this.createdAt,
     required this.item,
   });
 
   factory KitchenQueueItem.fromJson(Map<String, dynamic> json) {
     return KitchenQueueItem(
+      orderId: _parseInt(json['orderId'] ?? json['OrderId']),
       tableId: _parseInt(json['tableId'] ?? json['TableId']),
+      createdAt: _parseDateTime(json['createdAt'] ?? json['CreatedAt']),
       tableName:
           json['tableName']?.toString() ??
           json['TableName']?.toString() ??
@@ -36,6 +42,12 @@ class KitchenQueueItem {
         isTakeaway: _parseBool(json['isTakeaway'] ?? json['IsTakeaway']),
       ),
     );
+  }
+
+  static DateTime _parseDateTime(dynamic value) {
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value?.toString() ?? '') ??
+        DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   static bool _parseBool(dynamic value) {

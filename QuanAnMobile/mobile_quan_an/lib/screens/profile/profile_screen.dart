@@ -12,6 +12,7 @@ import 'notification_settings_screen.dart';
 import '../login/login_screen.dart';
 import '../invoices/invoice_history_screen.dart';
 import '../statistics/statistics_screen.dart';
+import '../staff/staff_management_screen.dart';
 import '../../models/employee_profile.dart';
 import '../../services/app_services.dart';
 import '../../services/api_client.dart';
@@ -558,6 +559,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 setState(() {});
               },
             ),
+
+            if (MobileAccessPolicy.canManageStaff()) ...[
+              const SizedBox(height: 10),
+              _buildMenuItem(
+                context: context,
+                icon: Icons.groups_2_outlined,
+                iconBackground: const Color(0xFFE8EEFF),
+                iconColor: Colors.indigo,
+                title: 'Quản lý nhân viên',
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const StaffManagementScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
 
             if (MobileAccessPolicy.canViewStatistics()) ...[
               const SizedBox(height: 10),

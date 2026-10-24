@@ -208,6 +208,8 @@ public class LoginResultDto
     public string FullName { get; set; } = "";
     public string Username { get; set; } = "";
     public string RoleName { get; set; } = "";
+    public int? StationId { get; set; }
+    public string? StationName { get; set; }
     public string Token { get; set; } = "";
     public DateTime ExpiresAt { get; set; }
 }
@@ -227,6 +229,7 @@ public class TicketItem
     public int Quantity { get; set; }
     public string? Note { get; set; }
     public bool IsTakeaway { get; set; }
+    public int Status { get; set; } = (int)KitchenStatus.MoiGoi;
     public DateTime CreatedAt { get; set; }
 }
 

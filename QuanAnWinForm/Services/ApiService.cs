@@ -165,15 +165,36 @@ public class ApiService
         return res ?? new List<EmployeeDto>();
     }
 
-    public async Task CreateEmployeeAsync(string fullName, string username, string password, string? phone, string? email, string employeeCode, int roleId)
+    public async Task<int> CreateEmployeeAsync(
+        string fullName,
+        string username,
+        string password,
+        string? phone,
+        string? email,
+        string employeeCode,
+        int roleId,
+        int? stationId = null)
     {
-        var res = await _http.PostAsJsonAsync("/api/users", new { fullName, username, password, phone, email, employeeCode, roleId });
+        var res = await _http.PostAsJsonAsync(
+            "/api/users",
+            new { fullName, username, password, phone, email, employeeCode, roleId, stationId });
         await EnsureSuccessOrThrowMessageAsync(res);
+
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+        return body.TryGetProperty("id", out var id) ? id.GetInt32() : 0;
     }
 
-    public async Task UpdateEmployeeAsync(int id, string fullName, string? phone, string? email, int roleId)
+    public async Task UpdateEmployeeAsync(
+        int id,
+        string fullName,
+        string? phone,
+        string? email,
+        int roleId,
+        int? stationId = null)
     {
-        var res = await _http.PutAsJsonAsync($"/api/users/{id}", new { fullName, phone, email, roleId });
+        var res = await _http.PutAsJsonAsync(
+            $"/api/users/{id}",
+            new { fullName, phone, email, roleId, stationId });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
