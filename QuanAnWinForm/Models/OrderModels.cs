@@ -208,6 +208,8 @@ public class LoginResultDto
     public string FullName { get; set; } = "";
     public string Username { get; set; } = "";
     public string RoleName { get; set; } = "";
+    public int? StationId { get; set; }
+    public string? StationName { get; set; }
     public string Token { get; set; } = "";
     public DateTime ExpiresAt { get; set; }
 }
