@@ -832,6 +832,9 @@ class _MenuScreenState extends State<MenuScreen> {
                   notifications: widget.notifications,
                   notificationService: AppServices.notificationService,
                   employeeCode: appEmployee.employeeCode,
+                  onReadStateChanged: () {
+                    if (mounted) setState(() {});
+                  },
                 )
               : ProfileScreen(notifications: widget.notifications),
         ),
