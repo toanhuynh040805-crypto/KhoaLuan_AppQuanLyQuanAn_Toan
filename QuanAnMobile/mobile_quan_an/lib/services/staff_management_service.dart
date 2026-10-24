@@ -58,6 +58,10 @@ class StaffManagementService {
     );
   }
 
+  Future<void> updateAssignmentStatus(int id, int status) async {
+    await _apiClient.putValue('/shifts/assignments/$id/status', status);
+  }
+
   Future<void> deleteAssignment(int id) async {
     await _apiClient.delete('/shifts/assignments/$id');
   }
@@ -106,6 +110,10 @@ class StaffManagementService {
         'dueAt': dueAt?.toIso8601String(),
       },
     );
+  }
+
+  Future<void> updateTaskStatus(int id, int status) async {
+    await _apiClient.putValue('/stafftasks/$id/status', status);
   }
 
   Future<void> deleteTask(int id) async {
