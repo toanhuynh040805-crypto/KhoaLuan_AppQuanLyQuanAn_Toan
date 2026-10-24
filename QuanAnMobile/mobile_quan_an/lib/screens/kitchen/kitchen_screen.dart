@@ -32,11 +32,22 @@ class _KitchenScreenState extends State<KitchenScreen>
   String? _error;
   String? _savingBatchKey;
 
-  String get _stationDisplayName {
+  bool get _isBarStation {
     final String station = appEmployee.stationName.trim().toLowerCase();
-    return station == 'quaynuoc' || station == 'quầy nước'
-        ? 'Quầy nước'
-        : 'Bếp';
+    return station == 'quaynuoc' || station == 'quầy nước';
+  }
+
+  String get _stationDisplayName => _isBarStation ? 'Quầy nước' : 'Bếp';
+
+  String _displayStatus(String status) {
+    if (!_isBarStation) return status;
+
+    return switch (status) {
+      'Chờ chế biến' => 'Chờ chuẩn bị',
+      'Đang chế biến' => 'Đang chuẩn bị',
+      'Đang xử lý' => 'Đang chuẩn bị',
+      _ => status,
+    };
   }
 
   @override
@@ -346,7 +357,9 @@ class _KitchenScreenState extends State<KitchenScreen>
       TopMessage.show(
         context,
         message: starting
-            ? 'Đã bắt đầu toàn bộ món của ${batch.tableName}'
+            ? (_isBarStation
+                ? 'Đã bắt đầu chuẩn bị phiếu ${batch.tableName}'
+                : 'Đã bắt đầu toàn bộ món của ${batch.tableName}')
             : 'Đã hoàn thành toàn bộ món của ${batch.tableName}',
         type: TopMessageType.success,
       );
@@ -517,7 +530,7 @@ class _KitchenScreenState extends State<KitchenScreen>
         batch.items.any((row) => row.item.status == 'Đang chế biến');
 
     final String? bulkLabel = hasWaiting
-        ? 'Bắt đầu chế biến tất cả'
+        ? (_isBarStation ? 'Bắt đầu chuẩn bị' : 'Bắt đầu chế biến tất cả')
         : hasCooking
             ? 'Xác nhận hoàn thành tất cả'
             : null;
@@ -575,7 +588,7 @@ class _KitchenScreenState extends State<KitchenScreen>
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Text(
-                  batchStatus,
+                  _displayStatus(batchStatus),
                   style: TextStyle(
                     color: statusColor,
                     fontSize: 11,
@@ -710,7 +723,7 @@ class _KitchenScreenState extends State<KitchenScreen>
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    row.item.status,
+                    _displayStatus(row.item.status),
                     style: TextStyle(
                       color: statusColor,
                       fontSize: 10,
@@ -769,7 +782,7 @@ class _KitchenScreenState extends State<KitchenScreen>
                 ),
               ),
             ],
-            if (canAdvance) ...[
+            if (canAdvance && !_isBarStation) ...[
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
