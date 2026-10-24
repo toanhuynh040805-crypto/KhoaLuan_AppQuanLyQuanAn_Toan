@@ -38,12 +38,20 @@ public partial class StaffControl : UserControl
 
     private List<EmployeeDto> _employees = new();
     private List<RoleDto> _roles = new();
+    private List<StationDto> _stations = new();
 
     // Lấy danh sách vai trò từ DB 1 lần rồi dùng lại (thay cho RoleId hardcode)
     private async Task<List<RoleDto>> EnsureRolesAsync()
     {
         if (_roles.Count == 0) _roles = await _api.GetRolesAsync();
         return _roles;
+    }
+
+    // Bếp và Quầy nước là Station của cùng vai trò Bep, không phải 2 Role khác nhau.
+    private async Task<List<StationDto>> EnsureStationsAsync()
+    {
+        if (_stations.Count == 0) _stations = await _api.GetStationsAsync();
+        return _stations;
     }
     private List<ShiftDto> _shifts = new();
     private List<ShiftAssignmentDto> _assignments = new();
@@ -157,6 +165,14 @@ public partial class StaffControl : UserControl
         _ => role,
     };
 
+    private static string DisplayStationName(string? station) => station switch
+    {
+        "Bep" => "Bếp",
+        "QuayNuoc" => "Quầy nước",
+        null or "" => "Chưa phân công",
+        _ => station,
+    };
+
     // Mau rieng cho tung vai tro de cac the/nhan de phan biet nhanh bang mat,
     // thay vi dung chung 1 mau do cho tat ca (nguyen nhan chinh khien man hinh
     // Nhan vien truoc day nhin "roi").
@@ -260,7 +276,9 @@ public partial class StaffControl : UserControl
 
         var badge = new Label
         {
-            Text = DisplayRoleName(s.RoleName),
+            Text = s.RoleName == "Bep"
+                ? $"{DisplayRoleName(s.RoleName)} · {DisplayStationName(s.StationName)}"
+                : DisplayRoleName(s.RoleName),
             Font = AppFonts.LabelMd,
             ForeColor = badgeFg,
             BackColor = badgeBg,
@@ -361,10 +379,15 @@ public partial class StaffControl : UserControl
     private async Task OpenAddEmployeeDialogAsync()
     {
         List<RoleDto> roles;
-        try { roles = await EnsureRolesAsync(); }
+        List<StationDto> stations;
+        try
+        {
+            roles = await EnsureRolesAsync();
+            stations = await EnsureStationsAsync();
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được danh sách vai trò: {ex.Message}");
+            MessageBox.Show($"Không tải được vai trò/bộ phận chế biến: {ex.Message}");
             return;
         }
         if (roles.Count == 0)
@@ -373,7 +396,7 @@ public partial class StaffControl : UserControl
             return;
         }
 
-        using var dialog = new Form { Text = "Thêm nhân viên mới", Width = 380, Height = 540, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var dialog = new Form { Text = "Thêm nhân viên mới", Width = 380, Height = 620, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
 
         var txtFullName = MakeLabeledInput(dialog, "Họ tên *", 20);
         var txtUsername = MakeLabeledInput(dialog, "Tên đăng nhập *", 80);
@@ -390,7 +413,38 @@ public partial class StaffControl : UserControl
         cbRole.SelectedIndex = defaultIdx >= 0 ? defaultIdx : 0;
         dialog.Controls.Add(cbRole);
 
-        var btnSave = new Button { Text = "Lưu", Location = new Point(140, 450), Size = new Size(100, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var lblStation = new Label
+        {
+            Text = "Bộ phận chế biến *",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 440),
+            AutoSize = true,
+            Visible = false,
+        };
+        var cbStation = new ComboBox
+        {
+            Location = new Point(20, 460),
+            Width = 320,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Visible = false,
+        };
+        cbStation.Items.AddRange(stations.Cast<object>().ToArray());
+        if (stations.Count > 0) cbStation.SelectedIndex = 0;
+        dialog.Controls.Add(lblStation);
+        dialog.Controls.Add(cbStation);
+
+        void SyncStationVisibility()
+        {
+            var isKitchen = cbRole.SelectedItem is RoleDto selectedRole &&
+                            selectedRole.RoleName == "Bep";
+            lblStation.Visible = isKitchen;
+            cbStation.Visible = isKitchen;
+        }
+
+        cbRole.SelectedIndexChanged += (s, e) => SyncStationVisibility();
+        SyncStationVisibility();
+
+        var btnSave = new Button { Text = "Lưu", Location = new Point(140, 525), Size = new Size(100, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
         dialog.Controls.Add(btnSave);
         dialog.AcceptButton = btnSave;
 
@@ -408,19 +462,31 @@ public partial class StaffControl : UserControl
             return;
         }
 
-        var roleId = ((RoleDto)cbRole.SelectedItem!).RoleId;
+        var selectedRole = (RoleDto)cbRole.SelectedItem!;
+        int? stationId = null;
+        if (selectedRole.RoleName == "Bep")
+        {
+            if (cbStation.SelectedItem is not StationDto selectedStation)
+            {
+                MessageBox.Show("Tài khoản chế biến phải chọn Bếp hoặc Quầy nước.");
+                return;
+            }
+            stationId = selectedStation.Id;
+        }
+
         await SaveNewEmployeeAsync(txtFullName.Text.Trim(), txtUsername.Text.Trim(), txtPassword.Text,
-            txtPhone.Text.Trim(), txtEmail.Text.Trim(), txtEmployeeCode.Text.Trim(), roleId);
+            txtPhone.Text.Trim(), txtEmail.Text.Trim(), txtEmployeeCode.Text.Trim(),
+            selectedRole.RoleId, stationId);
     }
 
-    private async Task SaveNewEmployeeAsync(string fullName, string username, string password, string phone, string email, string employeeCode, int roleId)
+    private async Task SaveNewEmployeeAsync(string fullName, string username, string password, string phone, string email, string employeeCode, int roleId, int? stationId)
     {
         try
         {
             await _api.CreateEmployeeAsync(fullName, username, password,
                 string.IsNullOrEmpty(phone) ? null : phone,
                 string.IsNullOrEmpty(email) ? null : email,
-                employeeCode, roleId);
+                employeeCode, roleId, stationId);
             await LoadStaffAsync();
             RenderTaskFilterOptions();
             RenderAssignments();
@@ -435,16 +501,21 @@ public partial class StaffControl : UserControl
     private async Task OpenEditEmployeeDialogAsync(EmployeeDto staff)
     {
         List<RoleDto> roles;
-        try { roles = await EnsureRolesAsync(); }
+        List<StationDto> stations;
+        try
+        {
+            roles = await EnsureRolesAsync();
+            stations = await EnsureStationsAsync();
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được danh sách vai trò: {ex.Message}");
+            MessageBox.Show($"Không tải được vai trò/bộ phận chế biến: {ex.Message}");
             return;
         }
 
         var isSelf = staff.UserId == SessionContext.UserId;
 
-        using var dialog = new Form { Text = $"Sửa nhân viên - {staff.EmployeeCode}", Width = 380, Height = 420, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var dialog = new Form { Text = $"Sửa nhân viên - {staff.EmployeeCode}", Width = 380, Height = 500, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
 
         dialog.Controls.Add(new Label { Text = $"Tên đăng nhập: {staff.Username} (không thể đổi)", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(20, 16), AutoSize = true });
 
@@ -462,7 +533,41 @@ public partial class StaffControl : UserControl
         cbRole.SelectedIndex = curIdx >= 0 ? curIdx : 0;
         dialog.Controls.Add(cbRole);
 
-        var btnSave = new Button { Text = "Lưu", Location = new Point(140, 310), Size = new Size(100, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var lblStation = new Label
+        {
+            Text = "Bộ phận chế biến *",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 288),
+            AutoSize = true,
+            Visible = false,
+        };
+        var cbStation = new ComboBox
+        {
+            Location = new Point(20, 308),
+            Width = 320,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Enabled = !isSelf,
+            Visible = false,
+        };
+        cbStation.Items.AddRange(stations.Cast<object>().ToArray());
+        var stationIdx = stations.FindIndex(s => s.Id == staff.StationId);
+        if (stations.Count > 0)
+            cbStation.SelectedIndex = stationIdx >= 0 ? stationIdx : 0;
+        dialog.Controls.Add(lblStation);
+        dialog.Controls.Add(cbStation);
+
+        void SyncStationVisibility()
+        {
+            var isKitchen = cbRole.SelectedItem is RoleDto selectedRole &&
+                            selectedRole.RoleName == "Bep";
+            lblStation.Visible = isKitchen;
+            cbStation.Visible = isKitchen;
+        }
+
+        cbRole.SelectedIndexChanged += (s, e) => SyncStationVisibility();
+        SyncStationVisibility();
+
+        var btnSave = new Button { Text = "Lưu", Location = new Point(140, 375), Size = new Size(100, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
         dialog.Controls.Add(btnSave);
         dialog.AcceptButton = btnSave;
 
@@ -478,10 +583,23 @@ public partial class StaffControl : UserControl
         {
             var phone = txtPhone.Text.Trim();
             var email = txtEmail.Text.Trim();
+            var selectedRole = (RoleDto)cbRole.SelectedItem!;
+            int? stationId = null;
+            if (selectedRole.RoleName == "Bep")
+            {
+                if (cbStation.SelectedItem is not StationDto selectedStation)
+                {
+                    MessageBox.Show("Tài khoản chế biến phải chọn Bếp hoặc Quầy nước.");
+                    return;
+                }
+                stationId = selectedStation.Id;
+            }
+
             await _api.UpdateEmployeeAsync(staff.Id, txtFullName.Text.Trim(),
                 string.IsNullOrEmpty(phone) ? null : phone,
                 string.IsNullOrEmpty(email) ? null : email,
-                ((RoleDto)cbRole.SelectedItem!).RoleId);
+                selectedRole.RoleId,
+                stationId);
             await LoadStaffAsync();
             RenderTaskFilterOptions();
             RenderAssignments();
