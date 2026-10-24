@@ -8,8 +8,21 @@ using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Controllers;
 
-public record CreateUserRequest(string FullName, string Username, string Password, string? Phone, string? Email, string EmployeeCode, int RoleId);
-public record UpdateUserRequest(string FullName, string? Phone, string? Email, int RoleId);
+public record CreateUserRequest(
+    string FullName,
+    string Username,
+    string Password,
+    string? Phone,
+    string? Email,
+    string EmployeeCode,
+    int RoleId,
+    int? StationId = null);
+public record UpdateUserRequest(
+    string FullName,
+    string? Phone,
+    string? Email,
+    int RoleId,
+    int? StationId = null);
 public record ResetPasswordRequest(string NewPassword);
 public record UpdateEmployeeStationRequest(int? StationId);
 
@@ -86,6 +99,25 @@ public class UsersController : ControllerBase
         var role = await _db.Roles.FindAsync(request.RoleId);
         if (role is null) return BadRequest(new { message = "Vai trò không tồn tại" });
 
+        int? stationId = null;
+        if (string.Equals(role.RoleName, "Bep", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!request.StationId.HasValue)
+                return BadRequest(new { message = "Tài khoản chế biến phải chọn Bếp hoặc Quầy nước" });
+
+            var stationExists = await _db.Stations
+                .AsNoTracking()
+                .AnyAsync(s => s.StationId == request.StationId.Value);
+            if (!stationExists)
+                return BadRequest(new { message = "Bộ phận chế biến không tồn tại" });
+
+            stationId = request.StationId.Value;
+        }
+        else if (request.StationId.HasValue)
+        {
+            return BadRequest(new { message = "Chỉ tài khoản Bếp mới được gán Bếp/Quầy nước" });
+        }
+
         var user = new User
         {
             FullName = request.FullName.Trim(),
@@ -104,7 +136,8 @@ public class UsersController : ControllerBase
             EmployeeCode = employeeCode,
             Position = role.RoleName,
             HireDate = DateTime.Now,
-            Status = EmployeeStatus.DangLamViec
+            Status = EmployeeStatus.DangLamViec,
+            StationId = stationId
         };
         _db.Employees.Add(employee);
 
@@ -130,6 +163,25 @@ public class UsersController : ControllerBase
 
         var role = await _db.Roles.FindAsync(request.RoleId);
         if (role is null) return BadRequest(new { message = "Vai trò không tồn tại" });
+
+        int? stationId = null;
+        if (string.Equals(role.RoleName, "Bep", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!request.StationId.HasValue)
+                return BadRequest(new { message = "Tài khoản chế biến phải chọn Bếp hoặc Quầy nước" });
+
+            var stationExists = await _db.Stations
+                .AsNoTracking()
+                .AnyAsync(s => s.StationId == request.StationId.Value);
+            if (!stationExists)
+                return BadRequest(new { message = "Bộ phận chế biến không tồn tại" });
+
+            stationId = request.StationId.Value;
+        }
+        else if (request.StationId.HasValue)
+        {
+            return BadRequest(new { message = "Chỉ tài khoản Bếp mới được gán Bếp/Quầy nước" });
+        }
 
         var activeRoleIds = employee.User.UserRoles.Where(ur => ur.IsActive).Select(ur => ur.RoleId).ToList();
         var roleChanged = !(activeRoleIds.Count == 1 && activeRoleIds[0] == request.RoleId);
@@ -172,6 +224,10 @@ public class UsersController : ControllerBase
 
             employee.Position = role.RoleName;
         }
+
+        // Station là thuộc tính của nhân viên chế biến, không phải một Role riêng.
+        // Khi đổi khỏi Role Bếp thì tự gỡ Station để không còn phân công cũ.
+        employee.StationId = stationId;
 
         await _db.SaveChangesAsync();
         return Ok(new { Id = employee.EmployeeId });
