@@ -229,6 +229,7 @@ public class TicketItem
     public int Quantity { get; set; }
     public string? Note { get; set; }
     public bool IsTakeaway { get; set; }
+    public int KitchenStatus { get; set; } = (int)KitchenStatus.MoiGoi;
     public DateTime CreatedAt { get; set; }
 }
 
