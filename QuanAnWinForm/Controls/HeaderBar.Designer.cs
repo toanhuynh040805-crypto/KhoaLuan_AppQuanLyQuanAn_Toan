@@ -47,7 +47,7 @@ partial class HeaderBar
         // 
         txtSearch.BorderStyle = BorderStyle.FixedSingle;
         txtSearch.Font = new Font("Segoe UI", 10F);
-        txtSearch.Location = new Point(24, 14);
+        txtSearch.Location = new Point(24, 23);
         txtSearch.Name = "txtSearch";
         txtSearch.PlaceholderText = "Tìm kiếm...";
         txtSearch.Size = new Size(320, 30);
@@ -62,8 +62,8 @@ partial class HeaderBar
         flowRight.FlowDirection = FlowDirection.RightToLeft;
         flowRight.Location = new Point(1289, 0);
         flowRight.Name = "flowRight";
-        flowRight.Padding = new Padding(0, 10, 24, 0);
-        flowRight.Size = new Size(420, 63);
+        flowRight.Padding = new Padding(0, 17, 24, 0);
+        flowRight.Size = new Size(420, 76);
         flowRight.TabIndex = 1;
         // 
         // panelUserInfo
@@ -71,16 +71,17 @@ partial class HeaderBar
         panelUserInfo.Controls.Add(panelAvatar);
         panelUserInfo.Controls.Add(lblUserName);
         panelUserInfo.Controls.Add(lblUserRole);
-        panelUserInfo.Location = new Point(243, 13);
+        panelUserInfo.Location = new Point(243, 17);
+        panelUserInfo.Margin = new Padding(3, 0, 3, 0);
         panelUserInfo.Name = "panelUserInfo";
-        panelUserInfo.Size = new Size(150, 40);
+        panelUserInfo.Size = new Size(150, 42);
         panelUserInfo.TabIndex = 0;
         // 
         // panelAvatar
         // 
         panelAvatar.BackColor = Color.FromArgb(215, 228, 236);
         panelAvatar.Controls.Add(lblAvatarInitial);
-        panelAvatar.Location = new Point(114, 2);
+        panelAvatar.Location = new Point(114, 3);
         panelAvatar.Name = "panelAvatar";
         panelAvatar.Size = new Size(36, 36);
         panelAvatar.TabIndex = 0;
@@ -100,7 +101,7 @@ partial class HeaderBar
         // 
         lblUserName.AutoSize = true;
         lblUserName.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-        lblUserName.Location = new Point(0, 4);
+        lblUserName.Location = new Point(0, 0);
         lblUserName.Name = "lblUserName";
         lblUserName.Size = new Size(0, 23);
         lblUserName.TabIndex = 1;
@@ -108,9 +109,9 @@ partial class HeaderBar
         // lblUserRole
         // 
         lblUserRole.AutoSize = true;
-        lblUserRole.Font = new Font("Segoe UI", 10F);
+        lblUserRole.Font = new Font("Segoe UI", 9F);
         lblUserRole.ForeColor = Color.FromArgb(91, 65, 57);
-        lblUserRole.Location = new Point(0, 22);
+        lblUserRole.Location = new Point(0, 21);
         lblUserRole.Name = "lblUserRole";
         lblUserRole.Size = new Size(0, 23);
         lblUserRole.TabIndex = 2;
@@ -123,7 +124,7 @@ partial class HeaderBar
         btnHelp.FlatStyle = FlatStyle.Flat;
         btnHelp.ForeColor = Color.FromArgb(91, 65, 57);
         btnHelp.Location = new Point(198, 12);
-        btnHelp.Margin = new Padding(6, 2, 6, 2);
+        btnHelp.Margin = new Padding(6, 3, 6, 3);
         btnHelp.Name = "btnHelp";
         btnHelp.Size = new Size(36, 36);
         btnHelp.TabIndex = 1;
@@ -138,7 +139,7 @@ partial class HeaderBar
         btnNotify.FlatStyle = FlatStyle.Flat;
         btnNotify.ForeColor = Color.FromArgb(91, 65, 57);
         btnNotify.Location = new Point(150, 12);
-        btnNotify.Margin = new Padding(6, 2, 6, 2);
+        btnNotify.Margin = new Padding(6, 3, 6, 3);
         btnNotify.Name = "btnNotify";
         btnNotify.Size = new Size(36, 36);
         btnNotify.TabIndex = 2;
@@ -161,7 +162,7 @@ partial class HeaderBar
         // 
         panelDivider.BackColor = Color.FromArgb(224, 224, 224);
         panelDivider.Dock = DockStyle.Bottom;
-        panelDivider.Location = new Point(0, 63);
+        panelDivider.Location = new Point(0, 76);
         panelDivider.Name = "panelDivider";
         panelDivider.Size = new Size(1709, 1);
         panelDivider.TabIndex = 2;
@@ -173,7 +174,7 @@ partial class HeaderBar
         Controls.Add(flowRight);
         Controls.Add(panelDivider);
         Name = "HeaderBar";
-        Size = new Size(1709, 64);
+        Size = new Size(1709, 77);
         flowRight.ResumeLayout(false);
         panelUserInfo.ResumeLayout(false);
         panelUserInfo.PerformLayout();

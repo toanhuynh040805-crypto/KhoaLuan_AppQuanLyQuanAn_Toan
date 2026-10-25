@@ -47,6 +47,21 @@ public partial class HeaderBar : UserControl
         lblUserRole.Text = roleDisplayName;
         lblAvatarInitial.Text = fullName.Length > 0 ? fullName[0].ToString().ToUpper() : "?";
         _miUserInfo.Text = $"{fullName} · {roleDisplayName}";
+        LayoutUserInfo();
+    }
+
+    // Tính lại bề rộng khối tên + avatar theo độ dài tên thật -> tên không bao giờ đè lên avatar.
+    private void LayoutUserInfo()
+    {
+        const int avatarSize = 36, gap = 12;
+        int nameW = TextRenderer.MeasureText(lblUserName.Text, lblUserName.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+        int roleW = TextRenderer.MeasureText(lblUserRole.Text, lblUserRole.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+        int textW = Math.Max(nameW, roleW) + 8;
+
+        lblUserName.Location = new Point(0, 0);
+        lblUserRole.Location = new Point(0, 21);
+        panelAvatar.Location = new Point(textW + gap, 3);
+        panelUserInfo.Width = textW + gap + avatarSize;
     }
 
     // Cham do o goc chuong 🔔 - hien so luong thong bao CHUA DOC. count<=0 -> an di.
@@ -58,6 +73,9 @@ public partial class HeaderBar : UserControl
             return;
         }
         lblNotifyBadge.Text = count > 9 ? "9+" : count.ToString();
+        // "9+" rộng hơn "9" -> nới badge và canh sát mép phải nút chuông để không bị cắt chữ.
+        lblNotifyBadge.Width = lblNotifyBadge.Text.Length > 1 ? 22 : 16;
+        lblNotifyBadge.Left = btnNotify.Width - lblNotifyBadge.Width;
         lblNotifyBadge.Visible = true;
         lblNotifyBadge.BringToFront();
     }

@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
+using QuanAnWinForm.Controls;
 using QuanAnWinForm.Forms;
 
 namespace QuanAnWinForm.UserControls;
@@ -64,19 +65,152 @@ public partial class StaffControl : UserControl
     // hoat event rieng cua no).
     private bool _suppressHistoryReload;
 
+    // =====================================================================
+    // HAM DUNG CHUNG - giao dien khong phu thuoc DPI
+    // May dang de man hinh scale > 100%: chu to len nhung kich thuoc/toa do viet cung
+    // bang pixel thi khong -> chu bi cat, de len nhau. Dp() quy doi pixel thiet ke
+    // (o 96 DPI) sang pixel that; vi tri ben phai/giua deu tinh tu do rong that cua
+    // dong va do rong chu do bang TextRenderer.
+    // =====================================================================
+
+    private int Dp(int px) => (int)Math.Round(px * DeviceDpi / 96.0);
+
+    private static readonly Font FBody = new("Segoe UI", 10F);
+    private static readonly Font FBodyBold = new("Segoe UI", 10F, FontStyle.Bold);
+    private static readonly Font FName = new("Segoe UI", 11F, FontStyle.Bold);
+    private static readonly Font FSmall = new("Segoe UI", 9F);
+    private static readonly Font FSmallBold = new("Segoe UI", 9F, FontStyle.Bold);
+    private static readonly Font FLink = new("Segoe UI", 9F, FontStyle.Bold);
+    private static readonly Font FLinkHover = new("Segoe UI", 9F, FontStyle.Bold | FontStyle.Underline);
+    private static readonly Font FEmpty = new("Segoe UI", 10F, FontStyle.Italic);
+    private static readonly Font FAvatar = new("Segoe UI", 14F, FontStyle.Bold);
+    private static readonly Font FPlus = new("Segoe UI", 26F);
+
+    private static int TextW(string text, Font font) =>
+        TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + 2;
+
+    // ellipsis = true -> do rong co dinh (tu dat Size), chu dai bi cat "..." thay vi de len nhau.
+    private static Label MakeLabel(string text, Font font, Color color, bool ellipsis = false) => new()
+    {
+        Text = text,
+        Font = font,
+        ForeColor = color,
+        BackColor = Color.Transparent,
+        AutoSize = !ellipsis,
+        AutoEllipsis = ellipsis,
+    };
+
+    private static Label MakeLink(string text, Color color)
+    {
+        var link = new Label
+        {
+            Text = text,
+            Font = FLink,
+            ForeColor = color,
+            BackColor = Color.Transparent,
+            AutoSize = true,
+            Cursor = Cursors.Hand,
+        };
+        link.MouseEnter += (s, e) => link.Font = FLinkHover;
+        link.MouseLeave += (s, e) => link.Font = FLink;
+        return link;
+    }
+
+    private static GraphicsPath RoundedPath(int w, int h, int r)
+    {
+        var d = Math.Max(1, r * 2);
+        var p = new GraphicsPath();
+        p.AddArc(0, 0, d, d, 180, 90);
+        p.AddArc(w - d, 0, d, d, 270, 90);
+        p.AddArc(w - d, h - d, d, d, 0, 90);
+        p.AddArc(0, h - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    // Nhan bo tron (pill) mau nen nhat - dung cho vai tro / trang thai.
+    private Label MakePill(string text, Color fg, Color bg, int maxWidth = int.MaxValue)
+    {
+        var font = FSmallBold;
+        var h = font.Height + Dp(6);
+        var w = Math.Min(TextW(text, font) + Dp(18), maxWidth);
+        var pill = new Label
+        {
+            Text = text,
+            Font = font,
+            ForeColor = fg,
+            BackColor = bg,
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Size = new Size(w, h),
+        };
+        using var path = RoundedPath(w, h, h / 2);
+        pill.Region = new Region(path);
+        return pill;
+    }
+
+    private Button MakeOutlineButton(string text, Color fg, int width, int height)
+    {
+        var btn = new Button
+        {
+            Text = text,
+            Font = FSmallBold,
+            ForeColor = fg,
+            BackColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            Size = new Size(width, height),
+            UseVisualStyleBackColor = false,
+        };
+        btn.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+        btn.FlatAppearance.BorderSize = 1;
+        btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(253, 245, 242);
+        return btn;
+    }
+
+    // Moi dong trong flow doc gian het chieu rong khung (tru le), khi khung doi kich thuoc.
+    private static void StretchRows(FlowLayoutPanel flow)
+    {
+        var avail = flow.ClientSize.Width;
+        flow.SuspendLayout();
+        foreach (Control c in flow.Controls)
+        {
+            if (c is not CardPanel) continue;
+            var w = avail - c.Margin.Horizontal;
+            if (w > 0 && c.Width != w) c.Width = w;
+        }
+        flow.ResumeLayout();
+    }
+
+    private static int RowWidth(FlowLayoutPanel flow, Padding margin) =>
+        Math.Max(300, flow.ClientSize.Width - margin.Horizontal);
+
+    // Ve vien mong quanh thanh loc (FlowLayoutPanel khong tu ve vien).
+    private static void StyleFilterBar(FlowLayoutPanel bar)
+    {
+        bar.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawRectangle(pen, 0, 0, bar.Width - 1, bar.Height - 1);
+        };
+        bar.Resize += (s, e) => bar.Invalidate();
+    }
+
     public StaffControl()
     {
         InitializeComponent();
 
-        // ----- Tab "Ca làm": bo Anchor cua Designer (neo theo 1200x760), tu can lai theo cua so that;
-        // dong thoi tat han thanh cuon NGANG cua danh sach nhan vien theo ngay.
-        foreach (Control c in new Control[] { flowAssignments, flowShiftDefs, dividerShifts, btnAddAssignment })
-            c.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-        DisableHorizontalScroll(flowAssignments);
-        DisableHorizontalScroll(flowShiftDefs);
-        tabShifts.Resize += (s, e) => FitShiftsTab();
-        tabsMain.SelectedIndexChanged += (s, e) => FitShiftsTab();
-        Load += (s, e) => FitShiftsTab();
+        // Cac danh sach cuon doc: tat thanh cuon ngang + dong tu gian theo chieu rong.
+        foreach (var flow in new[] { flowShiftDefs, flowAssignments, flowTasks, flowHistory })
+        {
+            var f = flow;
+            DisableHorizontalScroll(f);
+            f.ClientSizeChanged += (s, e) => StretchRows(f);
+        }
+        StyleFilterBar(flowTaskFilter);
+        StyleFilterBar(flowHistoryFilter);
 
         Load += async (s, e) => await LoadEverythingAsync();
         btnAddNew.Click += (s, e) => OpenAddEmployeeDialog();
@@ -103,39 +237,6 @@ public partial class StaffControl : UserControl
         flow.HorizontalScroll.Visible = false;
         flow.HorizontalScroll.Maximum = 0;
         flow.AutoScroll = true;
-    }
-
-    // Can lai bo cuc tab Ca lam theo kich thuoc that cua tab.
-    private void FitShiftsTab()
-    {
-        var cw = tabShifts.ClientSize.Width;
-        var ch = tabShifts.ClientSize.Height;
-        if (cw <= 0 || ch <= 0) return;
-
-        const int left = 336;        // cot phai bat dau (cot trai = dinh nghia ca + duong ke)
-        const int rightMargin = 16;
-        const int top = 82;          // ngang hang voi danh sach ca ben trai
-        const int bottomMargin = 16;
-        var listHeight = Math.Max(100, ch - top - bottomMargin);
-
-        // Hang "Ngay: [dd/MM/yyyy]   ..........   [+ Phan cong]" nam duoi tieu de, khong de len nhau.
-        lblAssignDate.Location = new Point(left, 42);
-        dtpAssignDate.Location = new Point(lblAssignDate.Right + 8, 38);
-        btnAddAssignment.Location = new Point(cw - rightMargin - btnAddAssignment.Width, 36);
-
-        flowAssignments.SetBounds(left, top, Math.Max(400, cw - left - rightMargin), listHeight);
-        flowShiftDefs.Height = listHeight;
-        dividerShifts.Height = ch;
-
-        FitRosterRows();
-    }
-
-    // Moi dong nhan vien gian vua chieu rong khung (cac nut ben phai da neo Right nen tu dich theo).
-    private void FitRosterRows()
-    {
-        var w = Math.Max(700, flowAssignments.ClientSize.Width - 4);
-        foreach (var p in flowAssignments.Controls.OfType<Panel>())
-            if (p.Width != w) p.Width = w;
     }
 
     private async Task LoadEverythingAsync()
@@ -221,22 +322,16 @@ public partial class StaffControl : UserControl
         flowStaffCards.Controls.Add(BuildAddNewTile());
     }
 
-    // Kich thuoc the nhan vien dung chung cho BuildStaffCard + BuildAddNewTile.
-    private const int StaffCardWidth = 244;
-    private const int StaffCardHeight = 228;
-    private const int StaffCardPad = 14;
-
-    // Avatar tron + chu cai dau, mau theo vai tro - thay cho khoi vuong xam
-    // truoc day khong the hien duoc thong tin gi.
-    private static Label BuildAvatarLabel(string initials, Color bg)
+    // Avatar tron + chu cai dau.
+    private static Label BuildAvatarLabel(string initials, Color bg, int size)
     {
         var lbl = new Label
         {
             Text = initials,
-            Font = new Font("Segoe UI", 14, FontStyle.Bold),
+            Font = FAvatar,
             ForeColor = Color.White,
             BackColor = bg,
-            Size = new Size(52, 52),
+            Size = new Size(size, size),
             TextAlign = ContentAlignment.MiddleCenter,
         };
         using var path = new GraphicsPath();
@@ -253,93 +348,97 @@ public partial class StaffControl : UserControl
         return (parts[0][0].ToString() + parts[^1][0].ToString()).ToUpper();
     }
 
-    private Panel BuildStaffCard(EmployeeDto s)
+    private void AddInfoRow(Panel card, string icon, string text, int y, int pad, int width)
     {
-        var card = new Panel { Size = new Size(StaffCardWidth, StaffCardHeight), BackColor = Color.White, Margin = new Padding(8) };
-        var (badgeBg, badgeFg) = RoleBadgeColors(s.RoleName);
-        var isSelf = s.UserId == SessionContext.UserId;
+        var lblIcon = MakeLabel(icon, FBody, AppColors.Outline, ellipsis: true);
+        lblIcon.SetBounds(pad, y, Dp(24), FBody.Height + Dp(2));
+        var lblText = MakeLabel(text, FBody, AppColors.OnSurfaceVariant, ellipsis: true);
+        lblText.SetBounds(pad + Dp(26), y, width - pad * 2 - Dp(26), FBody.Height + Dp(2));
+        card.Controls.Add(lblIcon);
+        card.Controls.Add(lblText);
+    }
 
-        var avatar = BuildAvatarLabel(InitialsOf(s.FullName), badgeFg);
-        avatar.Location = new Point(StaffCardPad, StaffCardPad);
+    private CardPanel BuildStaffCard(EmployeeDto emp)
+    {
+        var w = Dp(292);
+        var h = Dp(272);
+        var pad = Dp(16);
+        var (badgeBg, badgeFg) = RoleBadgeColors(emp.RoleName);
+        var isSelf = emp.UserId == SessionContext.UserId;
+        var accent = emp.IsActive ? badgeFg : AppColors.Outline; // tai khoan khoa -> xam
+
+        var card = new CardPanel
+        {
+            Size = new Size(w, h),
+            Margin = new Padding(0, 0, Dp(16), Dp(16)),
+            StripeColor = accent,
+            StripeWidth = Dp(4),
+            StripeOnTop = true,
+        };
+
+        // --- Dau the: avatar + ten + vai tro ---
+        var avatarSize = Dp(54);
+        var avatar = BuildAvatarLabel(InitialsOf(emp.FullName), accent, avatarSize);
+        avatar.Location = new Point(pad, Dp(20));
         card.Controls.Add(avatar);
 
-        var lblName = new Label
-        {
-            Text = isSelf ? s.FullName + " (Bạn)" : s.FullName,
-            Font = AppFonts.LabelLg,
-            ForeColor = AppColors.OnSurface,
-            Location = new Point(StaffCardPad + 62, StaffCardPad),
-            Size = new Size(StaffCardWidth - StaffCardPad * 2 - 62, 20),
-            AutoEllipsis = true,
-        };
+        var textX = pad + avatarSize + Dp(12);
+        var lblName = MakeLabel(isSelf ? emp.FullName + " (Bạn)" : emp.FullName, FName,
+            emp.IsActive ? AppColors.OnSurface : AppColors.OnSurfaceVariant, ellipsis: true);
+        lblName.SetBounds(textX, Dp(20), w - textX - pad, FName.Height + Dp(2));
         card.Controls.Add(lblName);
 
-        var badge = new Label
-        {
-            Text = s.RoleName == "Bep"
-                ? $"{DisplayRoleName(s.RoleName)} · {DisplayStationName(s.StationName)}"
-                : DisplayRoleName(s.RoleName),
-            Font = AppFonts.LabelMd,
-            ForeColor = badgeFg,
-            BackColor = badgeBg,
-            AutoSize = true,
-            Padding = new Padding(8, 3, 8, 3),
-            Location = new Point(StaffCardPad + 62, StaffCardPad + 24),
-        };
-        card.Controls.Add(badge);
+        var roleText = emp.RoleName == "Bep"
+            ? $"{DisplayRoleName(emp.RoleName)} · {DisplayStationName(emp.StationName)}"
+            : DisplayRoleName(emp.RoleName);
+        var rolePill = MakePill(roleText, emp.IsActive ? badgeFg : AppColors.OnSurfaceVariant,
+            emp.IsActive ? badgeBg : AppColors.SurfaceContainer, w - textX - pad);
+        rolePill.Location = new Point(textX, lblName.Bottom + Dp(6));
+        card.Controls.Add(rolePill);
 
-        var divider = new Panel { Size = new Size(StaffCardWidth - StaffCardPad * 2, 1), Location = new Point(StaffCardPad, 76), BackColor = AppColors.OutlineVariant };
-        card.Controls.Add(divider);
+        card.Controls.Add(new Panel { BackColor = AppColors.SurfaceContainer, Location = new Point(pad, Dp(90)), Size = new Size(w - pad * 2, 1) });
 
-        var lblPhone = new Label { Text = "☎  " + (string.IsNullOrEmpty(s.Phone) ? "Chưa cập nhật" : s.Phone), Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(StaffCardPad, 88), AutoSize = true };
-        var lblEmail = new Label
-        {
-            Text = "✉  " + (string.IsNullOrEmpty(s.Email) ? "Chưa cập nhật" : s.Email),
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(StaffCardPad, 110),
-            Size = new Size(StaffCardWidth - StaffCardPad * 2, 18),
-            AutoEllipsis = true,
-        };
-        var lblCode = new Label { Text = "🪪  " + s.EmployeeCode, Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(StaffCardPad, 132), AutoSize = true };
-        card.Controls.Add(lblPhone);
-        card.Controls.Add(lblEmail);
-        card.Controls.Add(lblCode);
+        // --- Thong tin lien he ---
+        AddInfoRow(card, "☎", string.IsNullOrEmpty(emp.Phone) ? "Chưa cập nhật" : emp.Phone, Dp(100), pad, w);
+        AddInfoRow(card, "✉", string.IsNullOrEmpty(emp.Email) ? "Chưa cập nhật" : emp.Email, Dp(126), pad, w);
+        AddInfoRow(card, "🪪", emp.EmployeeCode, Dp(152), pad, w);
 
-        // Hàng thao tác: Sửa | Đặt lại mật khẩu
-        var lblEdit = new Label { Text = "Sửa", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, AutoSize = true, Cursor = Cursors.Hand, Location = new Point(StaffCardPad, 160) };
-        lblEdit.Click += async (sender, e) => await OpenEditEmployeeDialogAsync(s);
-        var editWidth = TextRenderer.MeasureText(lblEdit.Text, AppFonts.LabelMd).Width;
-        var lblReset = new Label { Text = "Đặt lại mật khẩu", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, AutoSize = true, Cursor = Cursors.Hand, Location = new Point(StaffCardPad + editWidth + 18, 160) };
-        lblReset.Click += (sender, e) => OpenResetPasswordDialog(s);
-        card.Controls.Add(lblEdit);
-        card.Controls.Add(lblReset);
+        card.Controls.Add(new Panel { BackColor = AppColors.SurfaceContainer, Location = new Point(pad, Dp(184)), Size = new Size(w - pad * 2, 1) });
 
-        var dot = new Panel { Size = new Size(8, 8), Location = new Point(StaffCardPad, StaffCardHeight - 30), BackColor = s.IsActive ? AppColors.Success : AppColors.Outline };
-        var lblStatus = new Label { Text = s.IsActive ? "Đang làm việc" : "Đã khóa", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(StaffCardPad + 14, StaffCardHeight - 34), AutoSize = true };
-        card.Controls.Add(dot);
-        card.Controls.Add(lblStatus);
+        // --- Trang thai + Khoa/Kich hoat ---
+        var statusY = Dp(194);
+        var statusPill = emp.IsActive
+            ? MakePill("Đang làm việc", AppColors.Success, Color.FromArgb(232, 245, 233))
+            : MakePill("Đã khóa", AppColors.OnSurfaceVariant, AppColors.SurfaceContainer);
+        statusPill.Location = new Point(pad, statusY);
+        card.Controls.Add(statusPill);
 
-        // Không cho tự khóa chính mình (Backend cũng chặn)
+        // Khong cho tu khoa chinh minh (Backend cung chan)
         if (!isSelf)
         {
-            var toggleText = s.IsActive ? "Tạm khóa" : "Kích hoạt";
-            var toggleWidth = TextRenderer.MeasureText(toggleText, AppFonts.LabelMd).Width;
-            var lblToggle = new Label
-            {
-                Text = toggleText,
-                Font = AppFonts.LabelMd,
-                ForeColor = AppColors.Primary,
-                AutoSize = true,
-                Cursor = Cursors.Hand,
-                Location = new Point(StaffCardWidth - StaffCardPad - toggleWidth, StaffCardHeight - 34),
-            };
-            lblToggle.Click += async (sender, e) => await ToggleActiveAsync(s);
+            var toggleText = emp.IsActive ? "Tạm khóa" : "Kích hoạt";
+            var lblToggle = MakeLink(toggleText, emp.IsActive ? AppColors.Error : AppColors.Success);
+            lblToggle.Location = new Point(w - pad - TextW(toggleText, FLink), statusY + (statusPill.Height - FLink.Height) / 2);
+            lblToggle.Click += async (sender, e) => await ToggleActiveAsync(emp);
             card.Controls.Add(lblToggle);
         }
 
-        card.Paint += (sender, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, card.Width - 1, card.Height - 1);
+        // --- Nut thao tac ---
+        var btnH = Dp(32);
+        var gap = Dp(8);
+        var btnW = (w - pad * 2 - gap) / 2;
+        var btnY = h - pad - btnH;
 
+        var btnEdit = MakeOutlineButton("Sửa", AppColors.Primary, btnW, btnH);
+        btnEdit.Location = new Point(pad, btnY);
+        btnEdit.Click += async (sender, e) => await OpenEditEmployeeDialogAsync(emp);
+
+        var btnReset = MakeOutlineButton("Đặt lại mật khẩu", AppColors.Primary, btnW, btnH);
+        btnReset.Location = new Point(pad + btnW + gap, btnY);
+        btnReset.Click += (sender, e) => OpenResetPasswordDialog(emp);
+
+        card.Controls.Add(btnEdit);
+        card.Controls.Add(btnReset);
         return card;
     }
 
@@ -360,16 +459,35 @@ public partial class StaffControl : UserControl
         }
     }
 
-    private Panel BuildAddNewTile()
+    private CardPanel BuildAddNewTile()
     {
-        var tile = new Panel { Size = new Size(StaffCardWidth, StaffCardHeight), BackColor = Color.FromArgb(253, 245, 242), Margin = new Padding(8), Cursor = Cursors.Hand };
-        var lblPlus = new Label { Text = "+", Font = new Font("Segoe UI", 22), ForeColor = AppColors.Primary, AutoSize = true };
-        var lblText = new Label { Text = "Thêm nhân sự mới", Font = AppFonts.LabelLg, ForeColor = AppColors.Primary, AutoSize = true };
-        tile.Controls.Add(lblPlus);
-        tile.Controls.Add(lblText);
-        lblPlus.Location = new Point((StaffCardWidth - lblPlus.Width) / 2, 68);
-        lblText.Location = new Point((StaffCardWidth - lblText.Width) / 2, 112);
+        var w = Dp(292);
+        var h = Dp(272);
+        var tile = new CardPanel
+        {
+            Size = new Size(w, h),
+            Margin = new Padding(0, 0, Dp(16), Dp(16)),
+            BackColor = Color.FromArgb(253, 245, 242),
+            BorderColor = AppColors.Primary,
+            Dashed = true,
+            Cursor = Cursors.Hand,
+        };
+
+        const string caption = "Thêm nhân sự mới";
+        var plus = MakeLabel("+", FPlus, AppColors.Primary);
+        var text = MakeLabel(caption, FBodyBold, AppColors.Primary);
+        plus.Cursor = text.Cursor = Cursors.Hand;
+
+        var blockH = FPlus.Height + Dp(4) + FBodyBold.Height;
+        var y = (h - blockH) / 2;
+        plus.Location = new Point((w - TextW("+", FPlus)) / 2, y);
+        text.Location = new Point((w - TextW(caption, FBodyBold)) / 2, y + FPlus.Height + Dp(4));
+
+        tile.Controls.Add(plus);
+        tile.Controls.Add(text);
         tile.Click += (s, e) => OpenAddEmployeeDialog();
+        plus.Click += (s, e) => OpenAddEmployeeDialog();
+        text.Click += (s, e) => OpenAddEmployeeDialog();
         return tile;
     }
 
@@ -655,23 +773,22 @@ public partial class StaffControl : UserControl
             flowShiftDefs.Controls.Add(BuildShiftDefRow(shift));
     }
 
-    private Panel BuildShiftDefRow(ShiftDto shift)
+    private CardPanel BuildShiftDefRow(ShiftDto shift)
     {
-        var row = new Panel { Size = new Size(280, 76), BackColor = Color.White, Margin = new Padding(0, 0, 0, 8) };
-        row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
-
-        var lblName = new Label { Text = shift.Name, Font = AppFonts.LabelLg, Location = new Point(12, 10), AutoSize = true };
-        var lblTime = new Label
+        var margin = new Padding(0, 0, 0, Dp(10));
+        var pad = Dp(16);
+        var row = new CardPanel
         {
-            Text = $"{shift.StartTime:hh\\:mm} - {shift.EndTime:hh\\:mm}",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(12, 32),
-            AutoSize = true,
+            Margin = margin,
+            Size = new Size(RowWidth(flowShiftDefs, margin), Dp(88)),
+            StripeColor = AppColors.Primary,
+            StripeWidth = Dp(4),
         };
-        var lblEdit = new Label { Text = "Sửa", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, Location = new Point(190, 50), AutoSize = true, Cursor = Cursors.Hand };
-        var lblDelete = new Label { Text = "Xóa", Font = AppFonts.LabelMd, ForeColor = AppColors.Error, Location = new Point(240, 50), AutoSize = true, Cursor = Cursors.Hand };
 
+        var lblName = MakeLabel(shift.Name, FBodyBold, AppColors.OnSurface, ellipsis: true);
+        var lblTime = MakeLabel($"🕒  {shift.StartTime:hh\\:mm} – {shift.EndTime:hh\\:mm}", FBody, AppColors.OnSurfaceVariant, ellipsis: true);
+        var lblEdit = MakeLink("Sửa", AppColors.Primary);
+        var lblDelete = MakeLink("Xóa", AppColors.Error);
         lblEdit.Click += (s, e) => OpenAddOrEditShiftDialog(shift);
         lblDelete.Click += async (s, e) => await DeleteShiftAsync(shift);
 
@@ -679,6 +796,18 @@ public partial class StaffControl : UserControl
         row.Controls.Add(lblTime);
         row.Controls.Add(lblEdit);
         row.Controls.Add(lblDelete);
+
+        void LayoutRow()
+        {
+            var w = row.Width;
+            lblName.SetBounds(pad, Dp(12), w - pad * 2, FBodyBold.Height + Dp(2));
+            lblTime.SetBounds(pad, lblName.Bottom + Dp(2), w - pad * 2, FBody.Height + Dp(2));
+            var y = row.Height - FLink.Height - Dp(10);
+            lblDelete.Location = new Point(w - pad - TextW("Xóa", FLink), y);
+            lblEdit.Location = new Point(lblDelete.Left - Dp(16) - TextW("Sửa", FLink), y);
+        }
+        row.Resize += (s, e) => LayoutRow();
+        LayoutRow();
         return row;
     }
 
@@ -790,7 +919,7 @@ public partial class StaffControl : UserControl
             var empAssignments = _assignments.Where(a => a.UserId == emp.UserId).OrderBy(a => a.ShiftStart).ToList();
             flowAssignments.Controls.Add(BuildRosterRow(emp, empAssignments));
         }
-        FitRosterRows();
+        StretchRows(flowAssignments);
     }
 
     // Chuoi hien thi gio vao/ra thuc te cua 1 ca (khop voi man hinh Diem danh tren mobile).
@@ -804,78 +933,76 @@ public partial class StaffControl : UserControl
         return text;
     }
 
-    private Panel BuildRosterRow(EmployeeDto emp, List<ShiftAssignmentDto> empAssignments)
+    private CardPanel BuildRosterRow(EmployeeDto emp, List<ShiftAssignmentDto> empAssignments)
     {
-        // Chieu cao tang dan theo so ca trong ngay cua nhan vien nay: phan dau (ten +
-        // vai tro) + 52px cho MOI ca lam (1 dong thong tin ca + 1 dong gio vao/ra thuc
-        // te lay tu mobile). Chua co ca nao -> 1 dong "Chua xep ca" (68px).
-        var rowHeight = empAssignments.Count == 0 ? 68 : 34 + empAssignments.Count * 52;
-        var row = new Panel { Size = new Size(840, rowHeight), BackColor = Color.White, Margin = new Padding(0, 0, 0, 8) };
-        row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
-        row.Resize += (s, e) => row.Invalidate(); // ve lai vien khi dong gian rong ra
-
+        var margin = new Padding(0, 0, 0, Dp(10));
+        var pad = Dp(18);
+        var headH = Dp(46);
+        var subH = Dp(60);
+        var rowHeight = empAssignments.Count == 0 ? headH + Dp(40) : headH + empAssignments.Count * subH + Dp(6);
         var (badgeBg, badgeFg) = RoleBadgeColors(emp.RoleName);
-        var dot = new Panel { Size = new Size(8, 8), Location = new Point(14, 15), BackColor = badgeFg };
-        var lblName = new Label { Text = emp.FullName, Font = AppFonts.LabelLg, Location = new Point(30, 4), AutoSize = true };
-        var lblRole = new Label { Text = DisplayRoleName(emp.RoleName), Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(150, 6), AutoSize = true };
 
-        row.Controls.Add(dot);
+        var row = new CardPanel
+        {
+            Margin = margin,
+            Size = new Size(RowWidth(flowAssignments, margin), rowHeight),
+            StripeColor = badgeFg,
+            StripeWidth = Dp(4),
+        };
+
+        // Dong dau: ten + vai tro
+        var lblName = MakeLabel(emp.FullName, FBodyBold, AppColors.OnSurface);
+        lblName.Location = new Point(pad, Dp(12));
+        var rolePill = MakePill(DisplayRoleName(emp.RoleName), badgeFg, badgeBg);
+        rolePill.Location = new Point(pad + TextW(emp.FullName, FBodyBold) + Dp(10), Dp(12) + (FBodyBold.Height - rolePill.Height) / 2);
         row.Controls.Add(lblName);
-        row.Controls.Add(lblRole);
+        row.Controls.Add(rolePill);
 
+        // ----- Chua co ca nao -----
         if (empAssignments.Count == 0)
         {
-            var lblEmpty = new Label { Text = "Chưa xếp ca", Font = AppFonts.BodyMd, ForeColor = AppColors.Outline, Location = new Point(30, 34), AutoSize = true };
-            row.Controls.Add(lblEmpty);
-
-            var lblAssignNow = new Label { Text = "+ Phân công ngay", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, Location = new Point(700, 34), AutoSize = true, Cursor = Cursors.Hand, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            var lblEmpty = MakeLabel("Chưa xếp ca", FEmpty, AppColors.Outline);
+            lblEmpty.Location = new Point(pad, headH + Dp(4));
+            var lblAssignNow = MakeLink("+ Phân công ngay", AppColors.Primary);
             lblAssignNow.Click += (s, e) => OpenAssignDialog(emp);
+            row.Controls.Add(lblEmpty);
             row.Controls.Add(lblAssignNow);
+
+            void LayoutEmpty() =>
+                lblAssignNow.Location = new Point(row.Width - pad - TextW(lblAssignNow.Text, FLink), headH + Dp(6));
+            row.Resize += (s, e) => LayoutEmpty();
+            LayoutEmpty();
             return row;
         }
 
-        var y = 32;
+        // ----- Co (nhieu) ca -----
+        var lblAddMore = MakeLink("+ Thêm ca khác", AppColors.Primary);
+        lblAddMore.Click += (s, e) => OpenAssignDialog(emp);
+        row.Controls.Add(lblAddMore);
+
+        var subs = new List<(Panel sep, Label shift, Label actual, Label area, ComboBox status, Label del)>();
+
         foreach (var assignment in empAssignments)
         {
-            var lblShift = new Label
-            {
-                Text = $"🕒 {assignment.ShiftName} ({assignment.ShiftStart:hh\\:mm}-{assignment.ShiftEnd:hh\\:mm})",
-                Font = AppFonts.LabelMd,
-                ForeColor = AppColors.Primary,
-                Location = new Point(30, y + 4),
-                AutoSize = true,
-            };
-            row.Controls.Add(lblShift);
+            var sep = new Panel { BackColor = AppColors.SurfaceContainer, Height = 1 };
+
+            var lblShift = MakeLabel(
+                $"🕒 {assignment.ShiftName} ({assignment.ShiftStart:hh\\:mm}-{assignment.ShiftEnd:hh\\:mm})",
+                FSmallBold, AppColors.Primary, ellipsis: true);
 
             // Gio vao/ra THUC TE (nhan vien diem danh tren mobile, hoac backend tu dong bo
             // khi quan ly doi trang thai) - de WinForm va mobile nhin cung 1 du lieu.
-            var lblActual = new Label
-            {
-                Text = FormatActualTimes(assignment),
-                Font = AppFonts.BodyMd,
-                ForeColor = assignment.Status == 2 ? AppColors.Error : AppColors.OnSurfaceVariant,
-                Location = new Point(48, y + 26),
-                AutoSize = true,
-            };
-            row.Controls.Add(lblActual);
+            var lblActual = MakeLabel(FormatActualTimes(assignment), FSmall,
+                assignment.Status == 2 ? AppColors.Error : AppColors.OnSurfaceVariant, ellipsis: true);
 
-            // Khu vuc phu trach CUA DUNG ca nay (neu co) - bam vao de doi/gan khu
-            // vuc khac. Chi hien duoc o day vi assignment (ban ghi ca lam that su
-            // cua nhan vien hom nay) da chac chan ton tai -> khong the bao gio gan
-            // nham khu vuc cho 1 khung gio nhan vien khong lam.
-            var lblArea = new Label
-            {
-                Text = string.IsNullOrEmpty(assignment.AreaName) ? "📍 Chưa gán khu vực" : $"📍 {assignment.AreaName}",
-                Font = AppFonts.BodyMd,
-                ForeColor = string.IsNullOrEmpty(assignment.AreaName) ? AppColors.Outline : AppColors.Tertiary,
-                Location = new Point(280, y + 6),
-                AutoSize = true,
-                Cursor = Cursors.Hand,
-            };
+            // Khu vuc phu trach CUA DUNG ca nay (neu co) - bam vao de doi/gan khu vuc khac.
+            var hasArea = !string.IsNullOrEmpty(assignment.AreaName);
+            var lblArea = MakeLabel(hasArea ? $"📍 {assignment.AreaName}" : "📍 Chưa gán khu vực",
+                FBody, hasArea ? AppColors.Tertiary : AppColors.Outline, ellipsis: true);
+            lblArea.Cursor = Cursors.Hand;
             lblArea.Click += (s, e) => OpenChangeAreaDialog(assignment);
-            row.Controls.Add(lblArea);
 
-            var cbStatus = new ComboBox { Location = new Point(480, y), Width = 150, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            var cbStatus = new ComboBox { Width = Dp(150), DropDownStyle = ComboBoxStyle.DropDownList, Font = FBody };
             cbStatus.Items.AddRange(AssignmentStatusLabels);
             cbStatus.SelectedIndex = Math.Clamp(assignment.Status, 0, AssignmentStatusLabels.Length - 1);
             cbStatus.SelectedIndexChanged += async (s, e) =>
@@ -896,19 +1023,45 @@ public partial class StaffControl : UserControl
                     cbStatus.SelectedIndex = assignment.Status;
                 }
             };
-            row.Controls.Add(cbStatus);
 
-            var lblDelete = new Label { Text = "Xóa", Font = AppFonts.LabelMd, ForeColor = AppColors.Error, Location = new Point(650, y + 6), AutoSize = true, Cursor = Cursors.Hand, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            var lblDelete = MakeLink("Xóa", AppColors.Error);
             lblDelete.Click += async (s, e) => await DeleteAssignmentAsync(assignment);
-            row.Controls.Add(lblDelete);
 
-            y += 52;
+            row.Controls.Add(sep);
+            row.Controls.Add(lblShift);
+            row.Controls.Add(lblActual);
+            row.Controls.Add(lblArea);
+            row.Controls.Add(cbStatus);
+            row.Controls.Add(lblDelete);
+            subs.Add((sep, lblShift, lblActual, lblArea, cbStatus, lblDelete));
         }
 
-        var lblAddMore = new Label { Text = "+ Thêm ca khác", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, Location = new Point(700, 34), AutoSize = true, Cursor = Cursors.Hand, Anchor = AnchorStyles.Top | AnchorStyles.Right };
-        lblAddMore.Click += (s, e) => OpenAssignDialog(emp);
-        row.Controls.Add(lblAddMore);
+        void LayoutRow()
+        {
+            var w = row.Width;
+            lblAddMore.Location = new Point(w - pad - TextW(lblAddMore.Text, FLink), Dp(14));
 
+            var y = headH;
+            foreach (var (sep, shift, actual, area, status, del) in subs)
+            {
+                sep.SetBounds(pad, y, w - pad * 2, 1);
+
+                del.Location = new Point(w - pad - TextW("Xóa", FLink), y + (subH - FLink.Height) / 2);
+                status.Location = new Point(del.Left - Dp(16) - status.Width, y + (subH - status.Height) / 2);
+
+                var areaLeft = Math.Max(Dp(320), (int)(w * 0.40));
+                area.SetBounds(areaLeft, y + (subH - (FBody.Height + Dp(2))) / 2,
+                    Math.Max(Dp(60), status.Left - Dp(16) - areaLeft), FBody.Height + Dp(2));
+
+                var textW = Math.Max(Dp(60), areaLeft - pad - Dp(12));
+                shift.SetBounds(pad, y + Dp(10), textW, FSmallBold.Height + Dp(2));
+                actual.SetBounds(pad + Dp(18), shift.Bottom + Dp(2), textW - Dp(18), FSmall.Height + Dp(2));
+
+                y += subH;
+            }
+        }
+        row.Resize += (s, e) => LayoutRow();
+        LayoutRow();
         return row;
     }
 
@@ -1147,34 +1300,33 @@ public partial class StaffControl : UserControl
             flowTasks.Controls.Add(BuildTaskRow(t));
     }
 
-    private Panel BuildTaskRow(StaffTaskDto t)
+    private CardPanel BuildTaskRow(StaffTaskDto t)
     {
-        var row = new Panel { Size = new Size(1140, 78), BackColor = Color.White, Margin = new Padding(0, 0, 0, 8) };
+        var margin = new Padding(0, 0, 0, Dp(10));
+        var pad = Dp(18);
         var statusIndex = Math.Clamp(t.Status, 0, TaskStatusLabels.Length - 1);
-        row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
+        var h = Dp(90);
 
-        var dot = new Panel { Size = new Size(8, 8), Location = new Point(12, 14), BackColor = TaskStatusColors[statusIndex] };
-        var lblTitle = new Label { Text = t.Title, Font = AppFonts.LabelLg, Location = new Point(26, 8), Size = new Size(370, 20), AutoEllipsis = true };
-        var lblDesc = new Label
+        var row = new CardPanel
         {
-            Text = string.IsNullOrWhiteSpace(t.Description) ? "" : t.Description,
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(12, 30),
-            Size = new Size(380, 40),
-            AutoEllipsis = true,
-        };
-        var lblAssignee = new Label { Text = "👤 " + t.AssignedToName, Font = AppFonts.BodyMd, Location = new Point(420, 12), AutoSize = true };
-        var lblDue = new Label
-        {
-            Text = t.DueAt.HasValue ? "⏰ Hạn: " + t.DueAt.Value.ToString("dd/MM/yyyy") : "Không có hạn",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(420, 32),
-            AutoSize = true,
+            Margin = margin,
+            Size = new Size(RowWidth(flowTasks, margin), h),
+            StripeColor = TaskStatusColors[statusIndex],
+            StripeWidth = Dp(4),
         };
 
-        var cbStatus = new ComboBox { Location = new Point(650, 20), Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
+        var lblTitle = MakeLabel(t.Title, FBodyBold, AppColors.OnSurface, ellipsis: true);
+        var lblDesc = MakeLabel(string.IsNullOrWhiteSpace(t.Description) ? "" : t.Description, FSmall, AppColors.OnSurfaceVariant, ellipsis: true);
+        var lblAssignee = MakeLabel("👤 " + t.AssignedToName, FBody, AppColors.OnSurface, ellipsis: true);
+
+        // Qua han (chua hoan thanh) -> to do de quan ly de nhin thay.
+        var overdue = t.DueAt.HasValue && t.DueAt.Value.Date < DateTime.Today && t.Status != 2;
+        var dueText = t.DueAt.HasValue
+            ? (overdue ? "⏰ Quá hạn: " : "⏰ Hạn: ") + t.DueAt.Value.ToString("dd/MM/yyyy")
+            : "Không có hạn";
+        var lblDue = MakeLabel(dueText, FSmall, overdue ? AppColors.Error : AppColors.OnSurfaceVariant, ellipsis: true);
+
+        var cbStatus = new ComboBox { Width = Dp(150), DropDownStyle = ComboBoxStyle.DropDownList, Font = FBody };
         cbStatus.Items.AddRange(TaskStatusLabels);
         cbStatus.SelectedIndex = statusIndex;
         cbStatus.SelectedIndexChanged += async (s, e) =>
@@ -1184,6 +1336,8 @@ public partial class StaffControl : UserControl
             {
                 await _api.UpdateTaskStatusAsync(t.Id, cbStatus.SelectedIndex);
                 t.Status = cbStatus.SelectedIndex;
+                row.StripeColor = TaskStatusColors[Math.Clamp(t.Status, 0, TaskStatusColors.Length - 1)];
+                row.Invalidate();
             }
             catch (Exception ex)
             {
@@ -1192,12 +1346,11 @@ public partial class StaffControl : UserControl
             }
         };
 
-        var lblEdit = new Label { Text = "Sửa", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, Location = new Point(920, 26), AutoSize = true, Cursor = Cursors.Hand };
-        var lblDelete = new Label { Text = "Xóa", Font = AppFonts.LabelMd, ForeColor = AppColors.Error, Location = new Point(970, 26), AutoSize = true, Cursor = Cursors.Hand };
+        var lblEdit = MakeLink("Sửa", AppColors.Primary);
+        var lblDelete = MakeLink("Xóa", AppColors.Error);
         lblEdit.Click += (s, e) => OpenAddOrEditTaskDialog(t);
         lblDelete.Click += async (s, e) => await DeleteTaskAsync(t);
 
-        row.Controls.Add(dot);
         row.Controls.Add(lblTitle);
         row.Controls.Add(lblDesc);
         row.Controls.Add(lblAssignee);
@@ -1205,6 +1358,26 @@ public partial class StaffControl : UserControl
         row.Controls.Add(cbStatus);
         row.Controls.Add(lblEdit);
         row.Controls.Add(lblDelete);
+
+        void LayoutRow()
+        {
+            var w = row.Width;
+
+            lblDelete.Location = new Point(w - pad - TextW("Xóa", FLink), (h - FLink.Height) / 2);
+            lblEdit.Location = new Point(lblDelete.Left - Dp(16) - TextW("Sửa", FLink), lblDelete.Top);
+            cbStatus.Location = new Point(lblEdit.Left - Dp(24) - cbStatus.Width, (h - cbStatus.Height) / 2);
+
+            var leftW = (int)(w * 0.40);
+            lblTitle.SetBounds(pad, Dp(12), leftW - pad, FBodyBold.Height + Dp(2));
+            lblDesc.SetBounds(pad, lblTitle.Bottom + Dp(4), leftW - pad, FSmall.Height * 2 + Dp(2));
+
+            var midX = leftW + Dp(16);
+            var midW = Math.Max(Dp(80), cbStatus.Left - Dp(16) - midX);
+            lblAssignee.SetBounds(midX, Dp(14), midW, FBody.Height + Dp(2));
+            lblDue.SetBounds(midX, lblAssignee.Bottom + Dp(6), midW, FSmall.Height + Dp(2));
+        }
+        row.Resize += (s, e) => LayoutRow();
+        LayoutRow();
         return row;
     }
 
@@ -1424,7 +1597,7 @@ public partial class StaffControl : UserControl
         foreach (var dayItems in groups)
         {
             var date = dayItems[0].WorkDate.Date;
-            flowHistory.Controls.Add(BuildHistoryDateHeader(date, today));
+            flowHistory.Controls.Add(BuildHistoryDateHeader(date, today, dayItems.Count));
             foreach (var item in dayItems)
                 flowHistory.Controls.Add(BuildHistoryRow(item));
         }
@@ -1433,7 +1606,7 @@ public partial class StaffControl : UserControl
     private static readonly string[] VietnameseWeekdays =
         { "Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy" };
 
-    private Label BuildHistoryDateHeader(DateTime date, DateTime today)
+    private Label BuildHistoryDateHeader(DateTime date, DateTime today, int count)
     {
         string dateLabel;
         if (date == today) dateLabel = $"Hôm nay · {date:dd/MM/yyyy}";
@@ -1443,11 +1616,11 @@ public partial class StaffControl : UserControl
 
         return new Label
         {
-            Text = dateLabel,
-            Font = AppFonts.LabelLg,
-            ForeColor = AppColors.OnSurface,
+            Text = $"{dateLabel}   ({count} ca)",
+            Font = FBodyBold,
+            ForeColor = date == today ? AppColors.Primary : AppColors.OnSurface,
             AutoSize = true,
-            Margin = new Padding(4, 14, 0, 6),
+            Margin = new Padding(Dp(2), Dp(14), 0, Dp(8)),
         };
     }
 
@@ -1460,72 +1633,72 @@ public partial class StaffControl : UserControl
     };
 
     // 1 dong = 1 ca lam cu the cua 1 nhan vien trong ngay: gio ca, ten NV (an khi
-    // dang loc theo dung 1 nhan vien do de do rip), khu vuc phu trach (neu co) va
-    // trang thai (mau sac hoa giong the chip cua cac app hien dai).
-    private Panel BuildHistoryRow(ShiftAssignmentDto item)
+    // dang loc theo dung 1 nhan vien do), khu vuc phu trach, gio vao/ra va trang thai.
+    private CardPanel BuildHistoryRow(ShiftAssignmentDto item)
     {
-        var row = new Panel { Size = new Size(820, 54), BackColor = Color.White, Margin = new Padding(16, 0, 0, 6) };
-        row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
-
+        var margin = new Padding(0, 0, 0, Dp(8));
+        var pad = Dp(18);
+        var h = Dp(64);
         var statusColor = HistoryStatusColor(item.Status);
-        var stripe = new Panel { Size = new Size(4, 54), Location = new Point(0, 0), BackColor = statusColor };
 
-        var lblTime = new Label
+        var row = new CardPanel
         {
-            Text = $"{item.ShiftStart:hh\\:mm}-{item.ShiftEnd:hh\\:mm}",
-            Font = AppFonts.LabelLg,
-            Location = new Point(16, 8),
-            Size = new Size(90, 20),
-        };
-        var lblShiftName = new Label { Text = item.ShiftName, Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(16, 30), AutoSize = true };
-
-        bool showEmployeeName = cbHistoryEmployee.SelectedIndex == 0; // dang xem "Tat ca nhan vien"
-        var lblEmployee = new Label
-        {
-            Text = showEmployeeName ? "👤 " + item.UserName : "",
-            Font = AppFonts.LabelMd,
-            Location = new Point(120, 8),
-            Size = new Size(200, 20),
-            AutoEllipsis = true,
+            Margin = margin,
+            Size = new Size(RowWidth(flowHistory, margin), h),
+            StripeColor = statusColor,
+            StripeWidth = Dp(4),
         };
 
-        var lblArea = new Label
-        {
-            Text = string.IsNullOrEmpty(item.AreaName) ? "" : $"📍 {item.AreaName}",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.Tertiary,
-            Location = new Point(120, 30),
-            AutoSize = true,
-        };
+        var timeText = $"{item.ShiftStart:hh\\:mm}-{item.ShiftEnd:hh\\:mm}";
+        var lblTime = MakeLabel(timeText, FBodyBold, AppColors.OnSurface);
+        var lblShiftName = MakeLabel(item.ShiftName, FSmall, AppColors.OnSurfaceVariant, ellipsis: true);
 
-        var lblActual = new Label
-        {
-            Text = FormatActualTimes(item),
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(340, 18),
-            AutoSize = true,
-        };
+        var showEmployeeName = cbHistoryEmployee.SelectedIndex == 0; // dang xem "Tat ca nhan vien"
+        var lblEmployee = MakeLabel("👤 " + item.UserName, FBodyBold, AppColors.OnSurface, ellipsis: true);
+        lblEmployee.Visible = showEmployeeName;
+
+        var lblArea = MakeLabel(string.IsNullOrEmpty(item.AreaName) ? "" : $"📍 {item.AreaName}", FSmall, AppColors.Tertiary, ellipsis: true);
+
+        var actualText = FormatActualTimes(item);
+        var lblActual = MakeLabel(actualText, FSmall, item.Status == 2 ? AppColors.Error : AppColors.OnSurfaceVariant, ellipsis: true);
 
         var statusIndex = Math.Clamp(item.Status, 0, AssignmentStatusLabels.Length - 1);
-        var lblStatus = new Label
-        {
-            Text = AssignmentStatusLabels[statusIndex],
-            Font = AppFonts.LabelMd,
-            ForeColor = Color.White,
-            BackColor = statusColor,
-            AutoSize = true,
-            Padding = new Padding(8, 3, 8, 3),
-            Location = new Point(660, 16),
-        };
+        var statusPill = MakePill(AssignmentStatusLabels[statusIndex], Color.White, statusColor);
 
-        row.Controls.Add(stripe);
         row.Controls.Add(lblTime);
         row.Controls.Add(lblShiftName);
         row.Controls.Add(lblEmployee);
         row.Controls.Add(lblArea);
         row.Controls.Add(lblActual);
-        row.Controls.Add(lblStatus);
+        row.Controls.Add(statusPill);
+
+        var timeColW = Math.Max(TextW(timeText, FBodyBold), TextW(item.ShiftName, FSmall)) + Dp(8);
+        var actualW = TextW(actualText, FSmall) + Dp(8);
+
+        void LayoutRow()
+        {
+            var w = row.Width;
+
+            statusPill.Location = new Point(w - pad - statusPill.Width, (h - statusPill.Height) / 2);
+            lblActual.SetBounds(statusPill.Left - Dp(20) - actualW, (h - FSmall.Height) / 2, actualW, FSmall.Height + Dp(2));
+
+            lblTime.Location = new Point(pad, Dp(10));
+            lblShiftName.SetBounds(pad, lblTime.Bottom + Dp(2), timeColW, FSmall.Height + Dp(2));
+
+            var colX = pad + timeColW + Dp(24);
+            var colW = Math.Max(Dp(100), lblActual.Left - Dp(16) - colX);
+            if (showEmployeeName)
+            {
+                lblEmployee.SetBounds(colX, Dp(10), colW, FBodyBold.Height + Dp(2));
+                lblArea.SetBounds(colX, lblEmployee.Bottom + Dp(2), colW, FSmall.Height + Dp(2));
+            }
+            else
+            {
+                lblArea.SetBounds(colX, (h - FSmall.Height) / 2, colW, FSmall.Height + Dp(2));
+            }
+        }
+        row.Resize += (s, e) => LayoutRow();
+        LayoutRow();
         return row;
     }
 }

@@ -122,7 +122,12 @@ public class ReportsController : ControllerBase
             .Select(i => new { i.InvoiceDate, i.TotalAmount })
             .ToListAsync();
 
-        var buckets = new[] { 8, 10, 12, 14, 16, 18, 20 };
+        // Mặc định 08:00-20:00; tự mở rộng nếu có hóa đơn ngoài giờ (sáng sớm/đêm khuya)
+        var firstHour = invoices.Count > 0 ? Math.Min(8, invoices.Min(i => i.InvoiceDate.Hour) / 2 * 2) : 8;
+        var lastHour = invoices.Count > 0 ? Math.Max(20, invoices.Max(i => i.InvoiceDate.Hour) / 2 * 2) : 20;
+        var buckets = Enumerable.Range(0, (lastHour - firstHour) / 2 + 1)
+                                .Select(k => firstHour + k * 2)
+                                .ToArray();
         var points = buckets.Select(startHour =>
         {
             var endHour = startHour + 2;

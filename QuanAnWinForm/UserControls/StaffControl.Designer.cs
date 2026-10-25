@@ -1,5 +1,4 @@
 using QuanAnWinForm.Controls;
-using QuanAnWinForm.Theme;
 
 namespace QuanAnWinForm.UserControls;
 
@@ -13,36 +12,47 @@ partial class StaffControl
     private TabPage tabTasks;
     private TabPage tabHistory;
 
-    // -- Tab Nhân viên --
+    // -- Tab Nhan vien --
+    private TableLayoutPanel tlEmployees;
+    private TableLayoutPanel tlEmpHeader;
+    private FlowLayoutPanel flowEmpTitles;
     private Label lblTitle;
     private Label lblSubtitle;
     private Button btnAddNew;
+    private FlowLayoutPanel flowStats;
     private StatCard cardTotalStaff;
     private StatCard cardWorking;
     private FlowLayoutPanel flowStaffCards;
 
-    // -- Tab Ca làm: cột trái = định nghĩa ca, cột phải = 1 danh sách toàn bộ
-    // nhân viên cho ngày đang chọn (ai đã có ca / ai chưa có ca đều nằm chung) --
+    // -- Tab Ca lam: cot trai = dinh nghia ca, cot phai = danh sach nhan vien theo ngay --
+    private TableLayoutPanel tlShifts;
+    private TableLayoutPanel tlShiftLeft;
     private Label lblShiftsTitle;
     private Button btnAddShift;
     private FlowLayoutPanel flowShiftDefs;
-    private Panel dividerShifts;
+    private TableLayoutPanel tlShiftRight;
+    private TableLayoutPanel tlRosterHeader;
     private Label lblRosterTitle;
+    private FlowLayoutPanel flowAssignDate;
     private Label lblAssignDate;
     private DateTimePicker dtpAssignDate;
     private Button btnAddAssignment;
     private FlowLayoutPanel flowAssignments;
 
-    // -- Tab Nhiệm vụ --
+    // -- Tab Nhiem vu --
+    private TableLayoutPanel tlTasks;
+    private TableLayoutPanel tlTasksHeader;
     private Label lblTasksTitle;
     private Button btnAddTask;
+    private FlowLayoutPanel flowTaskFilter;
     private Label lblTaskFilter;
     private ComboBox cbTaskFilter;
     private FlowLayoutPanel flowTasks;
 
-    // -- Tab Lịch sử ca làm: lọc theo nhân viên + khoảng ngày, hiển thị dạng
-    // timeline (nhóm theo từng ngày, ngày gần nhất lên trên) giống các app hiện đại --
+    // -- Tab Lich su ca lam --
+    private TableLayoutPanel tlHistory;
     private Label lblHistoryTitle;
+    private FlowLayoutPanel flowHistoryFilter;
     private Label lblHistoryEmpLabel;
     private ComboBox cbHistoryEmployee;
     private Label lblHistoryFromLabel;
@@ -63,462 +73,637 @@ partial class StaffControl
     {
         tabsMain = new TabControl();
         tabEmployees = new TabPage();
-        flowStaffCards = new FlowLayoutPanel();
-        cardWorking = new StatCard();
-        cardTotalStaff = new StatCard();
-        btnAddNew = new Button();
-        lblSubtitle = new Label();
-        lblTitle = new Label();
         tabShifts = new TabPage();
-        flowAssignments = new FlowLayoutPanel();
-        btnAddAssignment = new Button();
-        dtpAssignDate = new DateTimePicker();
-        lblAssignDate = new Label();
-        lblRosterTitle = new Label();
-        dividerShifts = new Panel();
-        flowShiftDefs = new FlowLayoutPanel();
-        btnAddShift = new Button();
-        lblShiftsTitle = new Label();
         tabTasks = new TabPage();
-        flowTasks = new FlowLayoutPanel();
-        cbTaskFilter = new ComboBox();
-        lblTaskFilter = new Label();
-        btnAddTask = new Button();
-        lblTasksTitle = new Label();
         tabHistory = new TabPage();
-        flowHistory = new FlowLayoutPanel();
-        btnHistoryQuick30 = new Button();
-        btnHistoryQuick7 = new Button();
-        dtpHistoryTo = new DateTimePicker();
-        lblHistoryToLabel = new Label();
-        dtpHistoryFrom = new DateTimePicker();
-        lblHistoryFromLabel = new Label();
-        cbHistoryEmployee = new ComboBox();
-        lblHistoryEmpLabel = new Label();
+
+        tlEmployees = new TableLayoutPanel();
+        tlEmpHeader = new TableLayoutPanel();
+        flowEmpTitles = new FlowLayoutPanel();
+        lblTitle = new Label();
+        lblSubtitle = new Label();
+        btnAddNew = new Button();
+        flowStats = new FlowLayoutPanel();
+        cardTotalStaff = new StatCard();
+        cardWorking = new StatCard();
+        flowStaffCards = new FlowLayoutPanel();
+
+        tlShifts = new TableLayoutPanel();
+        tlShiftLeft = new TableLayoutPanel();
+        lblShiftsTitle = new Label();
+        btnAddShift = new Button();
+        flowShiftDefs = new FlowLayoutPanel();
+        tlShiftRight = new TableLayoutPanel();
+        tlRosterHeader = new TableLayoutPanel();
+        lblRosterTitle = new Label();
+        flowAssignDate = new FlowLayoutPanel();
+        lblAssignDate = new Label();
+        dtpAssignDate = new DateTimePicker();
+        btnAddAssignment = new Button();
+        flowAssignments = new FlowLayoutPanel();
+
+        tlTasks = new TableLayoutPanel();
+        tlTasksHeader = new TableLayoutPanel();
+        lblTasksTitle = new Label();
+        btnAddTask = new Button();
+        flowTaskFilter = new FlowLayoutPanel();
+        lblTaskFilter = new Label();
+        cbTaskFilter = new ComboBox();
+        flowTasks = new FlowLayoutPanel();
+
+        tlHistory = new TableLayoutPanel();
         lblHistoryTitle = new Label();
+        flowHistoryFilter = new FlowLayoutPanel();
+        lblHistoryEmpLabel = new Label();
+        cbHistoryEmployee = new ComboBox();
+        lblHistoryFromLabel = new Label();
+        dtpHistoryFrom = new DateTimePicker();
+        lblHistoryToLabel = new Label();
+        dtpHistoryTo = new DateTimePicker();
+        btnHistoryQuick7 = new Button();
+        btnHistoryQuick30 = new Button();
+        flowHistory = new FlowLayoutPanel();
+
         tabsMain.SuspendLayout();
         tabEmployees.SuspendLayout();
+        tlEmployees.SuspendLayout();
+        tlEmpHeader.SuspendLayout();
+        flowEmpTitles.SuspendLayout();
+        flowStats.SuspendLayout();
         tabShifts.SuspendLayout();
+        tlShifts.SuspendLayout();
+        tlShiftLeft.SuspendLayout();
+        tlShiftRight.SuspendLayout();
+        tlRosterHeader.SuspendLayout();
+        flowAssignDate.SuspendLayout();
         tabTasks.SuspendLayout();
+        tlTasks.SuspendLayout();
+        tlTasksHeader.SuspendLayout();
+        flowTaskFilter.SuspendLayout();
         tabHistory.SuspendLayout();
+        tlHistory.SuspendLayout();
+        flowHistoryFilter.SuspendLayout();
         SuspendLayout();
-        // 
+
+        // =============================================================
         // tabsMain
-        // 
+        // =============================================================
         tabsMain.Controls.Add(tabEmployees);
         tabsMain.Controls.Add(tabShifts);
         tabsMain.Controls.Add(tabTasks);
         tabsMain.Controls.Add(tabHistory);
         tabsMain.Dock = DockStyle.Fill;
         tabsMain.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-        tabsMain.Location = new Point(0, 0);
         tabsMain.Name = "tabsMain";
+        tabsMain.Padding = new Point(16, 6);
         tabsMain.SelectedIndex = 0;
-        tabsMain.Size = new Size(1200, 760);
         tabsMain.TabIndex = 0;
-        // 
-        // tabEmployees
-        // 
+
+        // =============================================================
+        // TAB 1: NHAN VIEN
+        // =============================================================
         tabEmployees.BackColor = Color.FromArgb(249, 249, 249);
-        tabEmployees.Controls.Add(flowStaffCards);
-        tabEmployees.Controls.Add(cardWorking);
-        tabEmployees.Controls.Add(cardTotalStaff);
-        tabEmployees.Controls.Add(btnAddNew);
-        tabEmployees.Controls.Add(lblSubtitle);
-        tabEmployees.Controls.Add(lblTitle);
-        tabEmployees.Location = new Point(4, 32);
+        tabEmployees.Controls.Add(tlEmployees);
         tabEmployees.Name = "tabEmployees";
-        tabEmployees.Padding = new Padding(20, 16, 20, 16);
-        tabEmployees.Size = new Size(1192, 724);
+        tabEmployees.Padding = new Padding(24, 16, 24, 16);
         tabEmployees.TabIndex = 0;
         tabEmployees.Text = "Nhân viên";
-        // 
-        // flowStaffCards
-        // 
-        flowStaffCards.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        flowStaffCards.AutoScroll = true;
-        flowStaffCards.Location = new Point(0, 246);
-        flowStaffCards.Name = "flowStaffCards";
-        flowStaffCards.Size = new Size(1160, 438);
-        flowStaffCards.TabIndex = 0;
-        // 
-        // cardWorking
-        // 
-        cardWorking.BackColor = Color.White;
-        cardWorking.Location = new Point(248, 110);
-        cardWorking.Name = "cardWorking";
-        cardWorking.Padding = new Padding(16);
-        cardWorking.Size = new Size(220, 130);
-        cardWorking.TabIndex = 1;
-        // 
-        // cardTotalStaff
-        // 
-        cardTotalStaff.BackColor = Color.White;
-        cardTotalStaff.Location = new Point(13, 110);
-        cardTotalStaff.Name = "cardTotalStaff";
-        cardTotalStaff.Padding = new Padding(16);
-        cardTotalStaff.Size = new Size(220, 130);
-        cardTotalStaff.TabIndex = 2;
-        // 
-        // btnAddNew
-        // 
-        btnAddNew.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnAddNew.BackColor = Color.FromArgb(172, 45, 0);
-        btnAddNew.FlatAppearance.BorderSize = 0;
-        btnAddNew.FlatStyle = FlatStyle.Flat;
-        btnAddNew.ForeColor = Color.White;
-        btnAddNew.Location = new Point(960, 8);
-        btnAddNew.Name = "btnAddNew";
-        btnAddNew.Size = new Size(200, 40);
-        btnAddNew.TabIndex = 3;
-        btnAddNew.Text = "+  Thêm nhân viên mới";
-        btnAddNew.UseVisualStyleBackColor = false;
-        // 
-        // lblSubtitle
-        // 
+
+        tlEmployees.ColumnCount = 1;
+        tlEmployees.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlEmployees.RowCount = 3;
+        tlEmployees.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlEmployees.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlEmployees.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlEmployees.Controls.Add(tlEmpHeader, 0, 0);
+        tlEmployees.Controls.Add(flowStats, 0, 1);
+        tlEmployees.Controls.Add(flowStaffCards, 0, 2);
+        tlEmployees.Dock = DockStyle.Fill;
+        tlEmployees.Name = "tlEmployees";
+        tlEmployees.TabIndex = 0;
+
+        tlEmpHeader.AutoSize = true;
+        tlEmpHeader.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        tlEmpHeader.ColumnCount = 2;
+        tlEmpHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlEmpHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        tlEmpHeader.RowCount = 1;
+        tlEmpHeader.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlEmpHeader.Controls.Add(flowEmpTitles, 0, 0);
+        tlEmpHeader.Controls.Add(btnAddNew, 1, 0);
+        tlEmpHeader.Dock = DockStyle.Fill;
+        tlEmpHeader.Margin = new Padding(0);
+        tlEmpHeader.Name = "tlEmpHeader";
+        tlEmpHeader.TabIndex = 0;
+
+        flowEmpTitles.AutoSize = true;
+        flowEmpTitles.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        flowEmpTitles.Controls.Add(lblTitle);
+        flowEmpTitles.Controls.Add(lblSubtitle);
+        flowEmpTitles.FlowDirection = FlowDirection.TopDown;
+        flowEmpTitles.Margin = new Padding(0);
+        flowEmpTitles.Name = "flowEmpTitles";
+        flowEmpTitles.TabIndex = 0;
+        flowEmpTitles.WrapContents = false;
+
+        lblTitle.AutoSize = true;
+        lblTitle.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
+        lblTitle.ForeColor = Color.FromArgb(26, 28, 28);
+        lblTitle.Margin = new Padding(0);
+        lblTitle.Name = "lblTitle";
+        lblTitle.TabIndex = 0;
+        lblTitle.Text = "Quản lý Nhân viên";
+
         lblSubtitle.AutoSize = true;
         lblSubtitle.Font = new Font("Segoe UI", 10F);
         lblSubtitle.ForeColor = Color.FromArgb(91, 65, 57);
-        lblSubtitle.Location = new Point(13, 67);
+        lblSubtitle.Margin = new Padding(3, 0, 0, 0);
         lblSubtitle.Name = "lblSubtitle";
-        lblSubtitle.Size = new Size(402, 23);
-        lblSubtitle.TabIndex = 4;
+        lblSubtitle.TabIndex = 1;
         lblSubtitle.Text = "Quản lý danh sách, vai trò và phân quyền hệ thống";
-        // 
-        // lblTitle
-        // 
-        lblTitle.AutoSize = true;
-        lblTitle.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
-        lblTitle.Location = new Point(13, 8);
-        lblTitle.Name = "lblTitle";
-        lblTitle.Size = new Size(341, 50);
-        lblTitle.TabIndex = 5;
-        lblTitle.Text = "Quản lý Nhân viên";
-        // 
-        // tabShifts
-        // 
+
+        btnAddNew.Anchor = AnchorStyles.Right;
+        btnAddNew.AutoSize = true;
+        btnAddNew.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnAddNew.BackColor = Color.FromArgb(172, 45, 0);
+        btnAddNew.Cursor = Cursors.Hand;
+        btnAddNew.FlatAppearance.BorderSize = 0;
+        btnAddNew.FlatStyle = FlatStyle.Flat;
+        btnAddNew.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        btnAddNew.ForeColor = Color.White;
+        btnAddNew.Margin = new Padding(0);
+        btnAddNew.Name = "btnAddNew";
+        btnAddNew.Padding = new Padding(14, 6, 14, 6);
+        btnAddNew.TabIndex = 1;
+        btnAddNew.Text = "+  Thêm nhân viên mới";
+        btnAddNew.UseVisualStyleBackColor = false;
+
+        flowStats.AutoSize = true;
+        flowStats.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        flowStats.Controls.Add(cardTotalStaff);
+        flowStats.Controls.Add(cardWorking);
+        flowStats.Dock = DockStyle.Fill;
+        flowStats.Margin = new Padding(0, 16, 0, 16);
+        flowStats.Name = "flowStats";
+        flowStats.TabIndex = 1;
+        flowStats.WrapContents = false;
+
+        cardTotalStaff.BackColor = Color.White;
+        cardTotalStaff.Margin = new Padding(0, 0, 16, 0);
+        cardTotalStaff.Name = "cardTotalStaff";
+        cardTotalStaff.Size = new Size(240, 140);
+        cardTotalStaff.TabIndex = 0;
+
+        cardWorking.BackColor = Color.White;
+        cardWorking.Margin = new Padding(0);
+        cardWorking.Name = "cardWorking";
+        cardWorking.Size = new Size(240, 140);
+        cardWorking.TabIndex = 1;
+
+        flowStaffCards.AutoScroll = true;
+        flowStaffCards.Dock = DockStyle.Fill;
+        flowStaffCards.Margin = new Padding(0);
+        flowStaffCards.Name = "flowStaffCards";
+        flowStaffCards.TabIndex = 2;
+
+        // =============================================================
+        // TAB 2: CA LAM
+        // =============================================================
         tabShifts.BackColor = Color.FromArgb(249, 249, 249);
-        tabShifts.Controls.Add(flowAssignments);
-        tabShifts.Controls.Add(btnAddAssignment);
-        tabShifts.Controls.Add(dtpAssignDate);
-        tabShifts.Controls.Add(lblAssignDate);
-        tabShifts.Controls.Add(lblRosterTitle);
-        tabShifts.Controls.Add(dividerShifts);
-        tabShifts.Controls.Add(flowShiftDefs);
-        tabShifts.Controls.Add(btnAddShift);
-        tabShifts.Controls.Add(lblShiftsTitle);
-        tabShifts.Location = new Point(4, 32);
+        tabShifts.Controls.Add(tlShifts);
         tabShifts.Name = "tabShifts";
-        tabShifts.Padding = new Padding(20, 16, 20, 16);
-        tabShifts.Size = new Size(1192, 724);
+        tabShifts.Padding = new Padding(24, 16, 24, 16);
         tabShifts.TabIndex = 1;
         tabShifts.Text = "Ca làm";
-        // 
-        // flowAssignments
-        // 
-        flowAssignments.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        flowAssignments.AutoScroll = true;
-        flowAssignments.FlowDirection = FlowDirection.TopDown;
-        flowAssignments.Location = new Point(336, 68);
-        flowAssignments.Name = "flowAssignments";
-        flowAssignments.Size = new Size(856, 614);
-        flowAssignments.TabIndex = 0;
-        flowAssignments.WrapContents = false;
-        // 
-        // btnAddAssignment
-        // 
-        btnAddAssignment.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnAddAssignment.BackColor = Color.FromArgb(0, 104, 92);
-        btnAddAssignment.FlatAppearance.BorderSize = 0;
-        btnAddAssignment.FlatStyle = FlatStyle.Flat;
-        btnAddAssignment.ForeColor = Color.White;
-        btnAddAssignment.Location = new Point(1040, 22);
-        btnAddAssignment.Name = "btnAddAssignment";
-        btnAddAssignment.Size = new Size(152, 34);
-        btnAddAssignment.TabIndex = 1;
-        btnAddAssignment.Text = "+  Phân công";
-        btnAddAssignment.UseVisualStyleBackColor = false;
-        // 
-        // dtpAssignDate
-        // 
-        dtpAssignDate.Format = DateTimePickerFormat.Short;
-        dtpAssignDate.Location = new Point(378, 24);
-        dtpAssignDate.Name = "dtpAssignDate";
-        dtpAssignDate.Size = new Size(150, 30);
-        dtpAssignDate.TabIndex = 2;
-        // 
-        // lblAssignDate
-        // 
+
+        tlShifts.ColumnCount = 2;
+        tlShifts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30F));
+        tlShifts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70F));
+        tlShifts.RowCount = 1;
+        tlShifts.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlShifts.Controls.Add(tlShiftLeft, 0, 0);
+        tlShifts.Controls.Add(tlShiftRight, 1, 0);
+        tlShifts.Dock = DockStyle.Fill;
+        tlShifts.Name = "tlShifts";
+        tlShifts.TabIndex = 0;
+
+        // --- cot trai ---
+        tlShiftLeft.ColumnCount = 1;
+        tlShiftLeft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlShiftLeft.RowCount = 3;
+        tlShiftLeft.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlShiftLeft.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlShiftLeft.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlShiftLeft.Controls.Add(lblShiftsTitle, 0, 0);
+        tlShiftLeft.Controls.Add(btnAddShift, 0, 1);
+        tlShiftLeft.Controls.Add(flowShiftDefs, 0, 2);
+        tlShiftLeft.Dock = DockStyle.Fill;
+        tlShiftLeft.Margin = new Padding(0, 0, 16, 0);
+        tlShiftLeft.Name = "tlShiftLeft";
+        tlShiftLeft.TabIndex = 0;
+
+        lblShiftsTitle.AutoSize = true;
+        lblShiftsTitle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        lblShiftsTitle.ForeColor = Color.FromArgb(26, 28, 28);
+        lblShiftsTitle.Margin = new Padding(0, 0, 0, 10);
+        lblShiftsTitle.Name = "lblShiftsTitle";
+        lblShiftsTitle.TabIndex = 0;
+        lblShiftsTitle.Text = "Các ca làm trong ngày";
+
+        btnAddShift.AutoSize = true;
+        btnAddShift.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnAddShift.BackColor = Color.FromArgb(172, 45, 0);
+        btnAddShift.Cursor = Cursors.Hand;
+        btnAddShift.Dock = DockStyle.Fill;
+        btnAddShift.FlatAppearance.BorderSize = 0;
+        btnAddShift.FlatStyle = FlatStyle.Flat;
+        btnAddShift.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        btnAddShift.ForeColor = Color.White;
+        btnAddShift.Margin = new Padding(0, 0, 0, 12);
+        btnAddShift.Name = "btnAddShift";
+        btnAddShift.Padding = new Padding(0, 6, 0, 6);
+        btnAddShift.TabIndex = 1;
+        btnAddShift.Text = "+  Thêm ca làm";
+        btnAddShift.UseVisualStyleBackColor = false;
+
+        flowShiftDefs.AutoScroll = true;
+        flowShiftDefs.Dock = DockStyle.Fill;
+        flowShiftDefs.FlowDirection = FlowDirection.TopDown;
+        flowShiftDefs.Margin = new Padding(0);
+        flowShiftDefs.Name = "flowShiftDefs";
+        flowShiftDefs.TabIndex = 2;
+        flowShiftDefs.WrapContents = false;
+
+        // --- cot phai ---
+        tlShiftRight.ColumnCount = 1;
+        tlShiftRight.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlShiftRight.RowCount = 2;
+        tlShiftRight.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlShiftRight.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlShiftRight.Controls.Add(tlRosterHeader, 0, 0);
+        tlShiftRight.Controls.Add(flowAssignments, 0, 1);
+        tlShiftRight.Dock = DockStyle.Fill;
+        tlShiftRight.Margin = new Padding(0);
+        tlShiftRight.Name = "tlShiftRight";
+        tlShiftRight.TabIndex = 1;
+
+        tlRosterHeader.AutoSize = true;
+        tlRosterHeader.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        tlRosterHeader.ColumnCount = 2;
+        tlRosterHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlRosterHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        tlRosterHeader.RowCount = 2;
+        tlRosterHeader.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlRosterHeader.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlRosterHeader.Controls.Add(lblRosterTitle, 0, 0);
+        tlRosterHeader.SetColumnSpan(lblRosterTitle, 2);
+        tlRosterHeader.Controls.Add(flowAssignDate, 0, 1);
+        tlRosterHeader.Controls.Add(btnAddAssignment, 1, 1);
+        tlRosterHeader.Dock = DockStyle.Fill;
+        tlRosterHeader.Margin = new Padding(0);
+        tlRosterHeader.Name = "tlRosterHeader";
+        tlRosterHeader.TabIndex = 0;
+
+        lblRosterTitle.AutoSize = true;
+        lblRosterTitle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+        lblRosterTitle.ForeColor = Color.FromArgb(26, 28, 28);
+        lblRosterTitle.Margin = new Padding(0, 0, 0, 10);
+        lblRosterTitle.Name = "lblRosterTitle";
+        lblRosterTitle.TabIndex = 0;
+        lblRosterTitle.Text = "Danh sách nhân viên theo ngày";
+
+        flowAssignDate.Anchor = AnchorStyles.Left;
+        flowAssignDate.AutoSize = true;
+        flowAssignDate.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        flowAssignDate.Controls.Add(lblAssignDate);
+        flowAssignDate.Controls.Add(dtpAssignDate);
+        flowAssignDate.Margin = new Padding(0, 0, 0, 12);
+        flowAssignDate.Name = "flowAssignDate";
+        flowAssignDate.TabIndex = 1;
+        flowAssignDate.WrapContents = false;
+
+        lblAssignDate.Anchor = AnchorStyles.Left;
         lblAssignDate.AutoSize = true;
         lblAssignDate.Font = new Font("Segoe UI", 10F);
         lblAssignDate.ForeColor = Color.FromArgb(91, 65, 57);
-        lblAssignDate.Location = new Point(336, 28);
+        lblAssignDate.Margin = new Padding(0, 0, 8, 0);
         lblAssignDate.Name = "lblAssignDate";
-        lblAssignDate.Size = new Size(54, 23);
-        lblAssignDate.TabIndex = 3;
+        lblAssignDate.TabIndex = 0;
         lblAssignDate.Text = "Ngày:";
-        // 
-        // lblRosterTitle
-        // 
-        lblRosterTitle.AutoSize = true;
-        lblRosterTitle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
-        lblRosterTitle.Location = new Point(336, 0);
-        lblRosterTitle.Name = "lblRosterTitle";
-        lblRosterTitle.Size = new Size(335, 30);
-        lblRosterTitle.TabIndex = 8;
-        lblRosterTitle.Text = "Danh sách nhân viên theo ngày";
-        // 
-        // dividerShifts
-        // 
-        dividerShifts.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-        dividerShifts.BackColor = Color.FromArgb(224, 224, 224);
-        dividerShifts.Location = new Point(312, 0);
-        dividerShifts.Name = "dividerShifts";
-        dividerShifts.Size = new Size(1, 682);
-        dividerShifts.TabIndex = 7;
-        // 
-        // flowShiftDefs
-        // 
-        flowShiftDefs.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-        flowShiftDefs.AutoScroll = true;
-        flowShiftDefs.FlowDirection = FlowDirection.TopDown;
-        flowShiftDefs.Location = new Point(0, 82);
-        flowShiftDefs.Name = "flowShiftDefs";
-        flowShiftDefs.Size = new Size(280, 600);
-        flowShiftDefs.TabIndex = 4;
-        flowShiftDefs.WrapContents = false;
-        // 
-        // btnAddShift
-        // 
-        btnAddShift.BackColor = Color.FromArgb(172, 45, 0);
-        btnAddShift.FlatAppearance.BorderSize = 0;
-        btnAddShift.FlatStyle = FlatStyle.Flat;
-        btnAddShift.ForeColor = Color.White;
-        btnAddShift.Location = new Point(0, 34);
-        btnAddShift.Name = "btnAddShift";
-        btnAddShift.Size = new Size(280, 36);
-        btnAddShift.TabIndex = 5;
-        btnAddShift.Text = "+  Thêm ca làm";
-        btnAddShift.UseVisualStyleBackColor = false;
-        // 
-        // lblShiftsTitle
-        // 
-        lblShiftsTitle.AutoSize = true;
-        lblShiftsTitle.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
-        lblShiftsTitle.Location = new Point(0, 0);
-        lblShiftsTitle.Name = "lblShiftsTitle";
-        lblShiftsTitle.Size = new Size(244, 30);
-        lblShiftsTitle.TabIndex = 6;
-        lblShiftsTitle.Text = "Các ca làm trong ngày";
-        // 
-        // tabTasks
-        // 
+
+        dtpAssignDate.Anchor = AnchorStyles.Left;
+        dtpAssignDate.CustomFormat = "dd/MM/yyyy";
+        dtpAssignDate.Font = new Font("Segoe UI", 10F);
+        dtpAssignDate.Format = DateTimePickerFormat.Custom;
+        dtpAssignDate.Margin = new Padding(0);
+        dtpAssignDate.Name = "dtpAssignDate";
+        dtpAssignDate.Size = new Size(150, 30);
+        dtpAssignDate.TabIndex = 1;
+
+        btnAddAssignment.Anchor = AnchorStyles.Right;
+        btnAddAssignment.AutoSize = true;
+        btnAddAssignment.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnAddAssignment.BackColor = Color.FromArgb(0, 104, 92);
+        btnAddAssignment.Cursor = Cursors.Hand;
+        btnAddAssignment.FlatAppearance.BorderSize = 0;
+        btnAddAssignment.FlatStyle = FlatStyle.Flat;
+        btnAddAssignment.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        btnAddAssignment.ForeColor = Color.White;
+        btnAddAssignment.Margin = new Padding(0, 0, 0, 12);
+        btnAddAssignment.Name = "btnAddAssignment";
+        btnAddAssignment.Padding = new Padding(14, 6, 14, 6);
+        btnAddAssignment.TabIndex = 2;
+        btnAddAssignment.Text = "+  Phân công";
+        btnAddAssignment.UseVisualStyleBackColor = false;
+
+        flowAssignments.AutoScroll = true;
+        flowAssignments.Dock = DockStyle.Fill;
+        flowAssignments.FlowDirection = FlowDirection.TopDown;
+        flowAssignments.Margin = new Padding(0);
+        flowAssignments.Name = "flowAssignments";
+        flowAssignments.TabIndex = 1;
+        flowAssignments.WrapContents = false;
+
+        // =============================================================
+        // TAB 3: NHIEM VU
+        // =============================================================
         tabTasks.BackColor = Color.FromArgb(249, 249, 249);
-        tabTasks.Controls.Add(flowTasks);
-        tabTasks.Controls.Add(cbTaskFilter);
-        tabTasks.Controls.Add(lblTaskFilter);
-        tabTasks.Controls.Add(btnAddTask);
-        tabTasks.Controls.Add(lblTasksTitle);
-        tabTasks.Location = new Point(4, 32);
+        tabTasks.Controls.Add(tlTasks);
         tabTasks.Name = "tabTasks";
-        tabTasks.Padding = new Padding(20, 16, 20, 16);
-        tabTasks.Size = new Size(1192, 724);
+        tabTasks.Padding = new Padding(24, 16, 24, 16);
         tabTasks.TabIndex = 2;
         tabTasks.Text = "Nhiệm vụ";
-        // 
-        // flowTasks
-        // 
-        flowTasks.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-        flowTasks.AutoScroll = true;
-        flowTasks.FlowDirection = FlowDirection.TopDown;
-        flowTasks.Location = new Point(0, 88);
-        flowTasks.Name = "flowTasks";
-        flowTasks.Size = new Size(1160, 600);
-        flowTasks.TabIndex = 0;
-        flowTasks.WrapContents = false;
-        // 
-        // cbTaskFilter
-        // 
-        cbTaskFilter.DropDownStyle = ComboBoxStyle.DropDownList;
-        cbTaskFilter.Location = new Point(140, 40);
-        cbTaskFilter.Name = "cbTaskFilter";
-        cbTaskFilter.Size = new Size(260, 31);
-        cbTaskFilter.TabIndex = 1;
-        // 
-        // lblTaskFilter
-        // 
+
+        tlTasks.ColumnCount = 1;
+        tlTasks.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlTasks.RowCount = 3;
+        tlTasks.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlTasks.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlTasks.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlTasks.Controls.Add(tlTasksHeader, 0, 0);
+        tlTasks.Controls.Add(flowTaskFilter, 0, 1);
+        tlTasks.Controls.Add(flowTasks, 0, 2);
+        tlTasks.Dock = DockStyle.Fill;
+        tlTasks.Name = "tlTasks";
+        tlTasks.TabIndex = 0;
+
+        tlTasksHeader.AutoSize = true;
+        tlTasksHeader.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        tlTasksHeader.ColumnCount = 2;
+        tlTasksHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlTasksHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        tlTasksHeader.RowCount = 1;
+        tlTasksHeader.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlTasksHeader.Controls.Add(lblTasksTitle, 0, 0);
+        tlTasksHeader.Controls.Add(btnAddTask, 1, 0);
+        tlTasksHeader.Dock = DockStyle.Fill;
+        tlTasksHeader.Margin = new Padding(0);
+        tlTasksHeader.Name = "tlTasksHeader";
+        tlTasksHeader.TabIndex = 0;
+
+        lblTasksTitle.Anchor = AnchorStyles.Left;
+        lblTasksTitle.AutoSize = true;
+        lblTasksTitle.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
+        lblTasksTitle.ForeColor = Color.FromArgb(26, 28, 28);
+        lblTasksTitle.Margin = new Padding(0);
+        lblTasksTitle.Name = "lblTasksTitle";
+        lblTasksTitle.TabIndex = 0;
+        lblTasksTitle.Text = "Nhiệm vụ nhân viên";
+
+        btnAddTask.Anchor = AnchorStyles.Right;
+        btnAddTask.AutoSize = true;
+        btnAddTask.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnAddTask.BackColor = Color.FromArgb(172, 45, 0);
+        btnAddTask.Cursor = Cursors.Hand;
+        btnAddTask.FlatAppearance.BorderSize = 0;
+        btnAddTask.FlatStyle = FlatStyle.Flat;
+        btnAddTask.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        btnAddTask.ForeColor = Color.White;
+        btnAddTask.Margin = new Padding(0);
+        btnAddTask.Name = "btnAddTask";
+        btnAddTask.Padding = new Padding(14, 6, 14, 6);
+        btnAddTask.TabIndex = 1;
+        btnAddTask.Text = "+  Giao việc mới";
+        btnAddTask.UseVisualStyleBackColor = false;
+
+        flowTaskFilter.AutoSize = true;
+        flowTaskFilter.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        flowTaskFilter.BackColor = Color.White;
+        flowTaskFilter.Controls.Add(lblTaskFilter);
+        flowTaskFilter.Controls.Add(cbTaskFilter);
+        flowTaskFilter.Dock = DockStyle.Fill;
+        flowTaskFilter.Margin = new Padding(0, 14, 0, 14);
+        flowTaskFilter.Name = "flowTaskFilter";
+        flowTaskFilter.Padding = new Padding(14, 10, 14, 10);
+        flowTaskFilter.TabIndex = 1;
+        flowTaskFilter.WrapContents = false;
+
+        lblTaskFilter.Anchor = AnchorStyles.Left;
         lblTaskFilter.AutoSize = true;
         lblTaskFilter.Font = new Font("Segoe UI", 10F);
         lblTaskFilter.ForeColor = Color.FromArgb(91, 65, 57);
-        lblTaskFilter.Location = new Point(0, 44);
+        lblTaskFilter.Margin = new Padding(0, 0, 8, 0);
         lblTaskFilter.Name = "lblTaskFilter";
-        lblTaskFilter.Size = new Size(160, 23);
-        lblTaskFilter.TabIndex = 4;
+        lblTaskFilter.TabIndex = 0;
         lblTaskFilter.Text = "Lọc theo nhân viên:";
-        // 
-        // btnAddTask
-        // 
-        btnAddTask.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        btnAddTask.BackColor = Color.FromArgb(172, 45, 0);
-        btnAddTask.FlatAppearance.BorderSize = 0;
-        btnAddTask.FlatStyle = FlatStyle.Flat;
-        btnAddTask.ForeColor = Color.White;
-        btnAddTask.Location = new Point(980, 4);
-        btnAddTask.Name = "btnAddTask";
-        btnAddTask.Size = new Size(180, 36);
-        btnAddTask.TabIndex = 2;
-        btnAddTask.Text = "+  Giao việc mới";
-        btnAddTask.UseVisualStyleBackColor = false;
-        // 
-        // lblTasksTitle
-        // 
-        lblTasksTitle.AutoSize = true;
-        lblTasksTitle.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
-        lblTasksTitle.Location = new Point(0, 0);
-        lblTasksTitle.Name = "lblTasksTitle";
-        lblTasksTitle.Size = new Size(271, 37);
-        lblTasksTitle.TabIndex = 3;
-        lblTasksTitle.Text = "Nhiệm vụ nhân viên";
-        // 
-        // tabHistory
-        // 
+
+        cbTaskFilter.Anchor = AnchorStyles.Left;
+        cbTaskFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+        cbTaskFilter.Font = new Font("Segoe UI", 10F);
+        cbTaskFilter.Margin = new Padding(0);
+        cbTaskFilter.Name = "cbTaskFilter";
+        cbTaskFilter.Size = new Size(300, 31);
+        cbTaskFilter.TabIndex = 1;
+
+        flowTasks.AutoScroll = true;
+        flowTasks.Dock = DockStyle.Fill;
+        flowTasks.FlowDirection = FlowDirection.TopDown;
+        flowTasks.Margin = new Padding(0);
+        flowTasks.Name = "flowTasks";
+        flowTasks.TabIndex = 2;
+        flowTasks.WrapContents = false;
+
+        // =============================================================
+        // TAB 4: LICH SU CA LAM
+        // =============================================================
         tabHistory.BackColor = Color.FromArgb(249, 249, 249);
-        tabHistory.Controls.Add(flowHistory);
-        tabHistory.Controls.Add(btnHistoryQuick30);
-        tabHistory.Controls.Add(btnHistoryQuick7);
-        tabHistory.Controls.Add(dtpHistoryTo);
-        tabHistory.Controls.Add(lblHistoryToLabel);
-        tabHistory.Controls.Add(dtpHistoryFrom);
-        tabHistory.Controls.Add(lblHistoryFromLabel);
-        tabHistory.Controls.Add(cbHistoryEmployee);
-        tabHistory.Controls.Add(lblHistoryEmpLabel);
-        tabHistory.Controls.Add(lblHistoryTitle);
-        tabHistory.Location = new Point(4, 32);
+        tabHistory.Controls.Add(tlHistory);
         tabHistory.Name = "tabHistory";
-        tabHistory.Padding = new Padding(20, 16, 20, 16);
-        tabHistory.Size = new Size(1192, 724);
+        tabHistory.Padding = new Padding(24, 16, 24, 16);
         tabHistory.TabIndex = 3;
         tabHistory.Text = "Lịch sử ca làm";
-        // 
-        // lblHistoryTitle
-        // 
+
+        tlHistory.ColumnCount = 1;
+        tlHistory.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        tlHistory.RowCount = 3;
+        tlHistory.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlHistory.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        tlHistory.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        tlHistory.Controls.Add(lblHistoryTitle, 0, 0);
+        tlHistory.Controls.Add(flowHistoryFilter, 0, 1);
+        tlHistory.Controls.Add(flowHistory, 0, 2);
+        tlHistory.Dock = DockStyle.Fill;
+        tlHistory.Name = "tlHistory";
+        tlHistory.TabIndex = 0;
+
         lblHistoryTitle.AutoSize = true;
         lblHistoryTitle.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
-        lblHistoryTitle.Location = new Point(0, 0);
+        lblHistoryTitle.ForeColor = Color.FromArgb(26, 28, 28);
+        lblHistoryTitle.Margin = new Padding(0);
         lblHistoryTitle.Name = "lblHistoryTitle";
-        lblHistoryTitle.Size = new Size(300, 37);
         lblHistoryTitle.TabIndex = 0;
         lblHistoryTitle.Text = "Lịch sử ca làm";
-        // 
-        // lblHistoryEmpLabel
-        // 
+
+        flowHistoryFilter.AutoSize = true;
+        flowHistoryFilter.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        flowHistoryFilter.BackColor = Color.White;
+        flowHistoryFilter.Controls.Add(lblHistoryEmpLabel);
+        flowHistoryFilter.Controls.Add(cbHistoryEmployee);
+        flowHistoryFilter.Controls.Add(lblHistoryFromLabel);
+        flowHistoryFilter.Controls.Add(dtpHistoryFrom);
+        flowHistoryFilter.Controls.Add(lblHistoryToLabel);
+        flowHistoryFilter.Controls.Add(dtpHistoryTo);
+        flowHistoryFilter.Controls.Add(btnHistoryQuick7);
+        flowHistoryFilter.Controls.Add(btnHistoryQuick30);
+        flowHistoryFilter.Dock = DockStyle.Fill;
+        flowHistoryFilter.Margin = new Padding(0, 14, 0, 14);
+        flowHistoryFilter.Name = "flowHistoryFilter";
+        flowHistoryFilter.Padding = new Padding(14, 10, 14, 10);
+        flowHistoryFilter.TabIndex = 1;
+        flowHistoryFilter.WrapContents = false;
+
+        lblHistoryEmpLabel.Anchor = AnchorStyles.Left;
         lblHistoryEmpLabel.AutoSize = true;
         lblHistoryEmpLabel.Font = new Font("Segoe UI", 10F);
         lblHistoryEmpLabel.ForeColor = Color.FromArgb(91, 65, 57);
-        lblHistoryEmpLabel.Location = new Point(0, 46);
+        lblHistoryEmpLabel.Margin = new Padding(0, 0, 8, 0);
         lblHistoryEmpLabel.Name = "lblHistoryEmpLabel";
-        lblHistoryEmpLabel.Size = new Size(90, 23);
-        lblHistoryEmpLabel.TabIndex = 1;
+        lblHistoryEmpLabel.TabIndex = 0;
         lblHistoryEmpLabel.Text = "Nhân viên:";
-        // 
-        // cbHistoryEmployee
-        // 
+
+        cbHistoryEmployee.Anchor = AnchorStyles.Left;
         cbHistoryEmployee.DropDownStyle = ComboBoxStyle.DropDownList;
-        cbHistoryEmployee.Location = new Point(96, 42);
+        cbHistoryEmployee.Font = new Font("Segoe UI", 10F);
+        cbHistoryEmployee.Margin = new Padding(0, 0, 20, 0);
         cbHistoryEmployee.Name = "cbHistoryEmployee";
-        cbHistoryEmployee.Size = new Size(230, 31);
-        cbHistoryEmployee.TabIndex = 2;
-        // 
-        // lblHistoryFromLabel
-        // 
+        cbHistoryEmployee.Size = new Size(250, 31);
+        cbHistoryEmployee.TabIndex = 1;
+
+        lblHistoryFromLabel.Anchor = AnchorStyles.Left;
         lblHistoryFromLabel.AutoSize = true;
         lblHistoryFromLabel.Font = new Font("Segoe UI", 10F);
         lblHistoryFromLabel.ForeColor = Color.FromArgb(91, 65, 57);
-        lblHistoryFromLabel.Location = new Point(340, 46);
+        lblHistoryFromLabel.Margin = new Padding(0, 0, 8, 0);
         lblHistoryFromLabel.Name = "lblHistoryFromLabel";
-        lblHistoryFromLabel.Size = new Size(70, 23);
-        lblHistoryFromLabel.TabIndex = 3;
+        lblHistoryFromLabel.TabIndex = 2;
         lblHistoryFromLabel.Text = "Từ ngày:";
-        // 
-        // dtpHistoryFrom
-        // 
-        dtpHistoryFrom.Format = DateTimePickerFormat.Short;
-        dtpHistoryFrom.Location = new Point(416, 42);
+
+        dtpHistoryFrom.Anchor = AnchorStyles.Left;
+        dtpHistoryFrom.CustomFormat = "dd/MM/yyyy";
+        dtpHistoryFrom.Font = new Font("Segoe UI", 10F);
+        dtpHistoryFrom.Format = DateTimePickerFormat.Custom;
+        dtpHistoryFrom.Margin = new Padding(0, 0, 20, 0);
         dtpHistoryFrom.Name = "dtpHistoryFrom";
-        dtpHistoryFrom.Size = new Size(130, 30);
-        dtpHistoryFrom.TabIndex = 4;
-        // 
-        // lblHistoryToLabel
-        // 
+        dtpHistoryFrom.Size = new Size(140, 30);
+        dtpHistoryFrom.TabIndex = 3;
+
+        lblHistoryToLabel.Anchor = AnchorStyles.Left;
         lblHistoryToLabel.AutoSize = true;
         lblHistoryToLabel.Font = new Font("Segoe UI", 10F);
         lblHistoryToLabel.ForeColor = Color.FromArgb(91, 65, 57);
-        lblHistoryToLabel.Location = new Point(560, 46);
+        lblHistoryToLabel.Margin = new Padding(0, 0, 8, 0);
         lblHistoryToLabel.Name = "lblHistoryToLabel";
-        lblHistoryToLabel.Size = new Size(80, 23);
-        lblHistoryToLabel.TabIndex = 5;
+        lblHistoryToLabel.TabIndex = 4;
         lblHistoryToLabel.Text = "Đến ngày:";
-        // 
-        // dtpHistoryTo
-        // 
-        dtpHistoryTo.Format = DateTimePickerFormat.Short;
-        dtpHistoryTo.Location = new Point(646, 42);
+
+        dtpHistoryTo.Anchor = AnchorStyles.Left;
+        dtpHistoryTo.CustomFormat = "dd/MM/yyyy";
+        dtpHistoryTo.Font = new Font("Segoe UI", 10F);
+        dtpHistoryTo.Format = DateTimePickerFormat.Custom;
+        dtpHistoryTo.Margin = new Padding(0, 0, 20, 0);
         dtpHistoryTo.Name = "dtpHistoryTo";
-        dtpHistoryTo.Size = new Size(130, 30);
-        dtpHistoryTo.TabIndex = 6;
-        // 
-        // btnHistoryQuick7
-        // 
+        dtpHistoryTo.Size = new Size(140, 30);
+        dtpHistoryTo.TabIndex = 5;
+
+        btnHistoryQuick7.Anchor = AnchorStyles.Left;
+        btnHistoryQuick7.AutoSize = true;
+        btnHistoryQuick7.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnHistoryQuick7.BackColor = Color.White;
+        btnHistoryQuick7.Cursor = Cursors.Hand;
         btnHistoryQuick7.FlatAppearance.BorderColor = Color.FromArgb(224, 224, 224);
         btnHistoryQuick7.FlatStyle = FlatStyle.Flat;
-        btnHistoryQuick7.Font = new Font("Segoe UI", 9F);
+        btnHistoryQuick7.Font = new Font("Segoe UI", 9.5F);
         btnHistoryQuick7.ForeColor = Color.FromArgb(91, 65, 57);
-        btnHistoryQuick7.Location = new Point(796, 40);
+        btnHistoryQuick7.Margin = new Padding(0, 0, 8, 0);
         btnHistoryQuick7.Name = "btnHistoryQuick7";
-        btnHistoryQuick7.Size = new Size(100, 34);
-        btnHistoryQuick7.TabIndex = 7;
+        btnHistoryQuick7.Padding = new Padding(10, 4, 10, 4);
+        btnHistoryQuick7.TabIndex = 6;
         btnHistoryQuick7.Text = "7 ngày qua";
-        btnHistoryQuick7.UseVisualStyleBackColor = true;
-        // 
-        // btnHistoryQuick30
-        // 
+        btnHistoryQuick7.UseVisualStyleBackColor = false;
+
+        btnHistoryQuick30.Anchor = AnchorStyles.Left;
+        btnHistoryQuick30.AutoSize = true;
+        btnHistoryQuick30.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btnHistoryQuick30.BackColor = Color.White;
+        btnHistoryQuick30.Cursor = Cursors.Hand;
         btnHistoryQuick30.FlatAppearance.BorderColor = Color.FromArgb(224, 224, 224);
         btnHistoryQuick30.FlatStyle = FlatStyle.Flat;
-        btnHistoryQuick30.Font = new Font("Segoe UI", 9F);
+        btnHistoryQuick30.Font = new Font("Segoe UI", 9.5F);
         btnHistoryQuick30.ForeColor = Color.FromArgb(91, 65, 57);
-        btnHistoryQuick30.Location = new Point(904, 40);
+        btnHistoryQuick30.Margin = new Padding(0);
         btnHistoryQuick30.Name = "btnHistoryQuick30";
-        btnHistoryQuick30.Size = new Size(100, 34);
-        btnHistoryQuick30.TabIndex = 8;
+        btnHistoryQuick30.Padding = new Padding(10, 4, 10, 4);
+        btnHistoryQuick30.TabIndex = 7;
         btnHistoryQuick30.Text = "30 ngày qua";
-        btnHistoryQuick30.UseVisualStyleBackColor = true;
-        // 
-        // flowHistory
-        // 
-        flowHistory.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        btnHistoryQuick30.UseVisualStyleBackColor = false;
+
         flowHistory.AutoScroll = true;
+        flowHistory.Dock = DockStyle.Fill;
         flowHistory.FlowDirection = FlowDirection.TopDown;
-        flowHistory.Location = new Point(0, 92);
+        flowHistory.Margin = new Padding(0);
         flowHistory.Name = "flowHistory";
-        flowHistory.Size = new Size(1160, 596);
-        flowHistory.TabIndex = 9;
+        flowHistory.TabIndex = 2;
         flowHistory.WrapContents = false;
-        // 
+
+        // =============================================================
         // StaffControl
-        // 
+        // =============================================================
         BackColor = Color.FromArgb(249, 249, 249);
         Controls.Add(tabsMain);
         Name = "StaffControl";
         Size = new Size(1200, 760);
+
         tabsMain.ResumeLayout(false);
         tabEmployees.ResumeLayout(false);
-        tabEmployees.PerformLayout();
+        tlEmployees.ResumeLayout(false);
+        tlEmployees.PerformLayout();
+        tlEmpHeader.ResumeLayout(false);
+        tlEmpHeader.PerformLayout();
+        flowEmpTitles.ResumeLayout(false);
+        flowEmpTitles.PerformLayout();
+        flowStats.ResumeLayout(false);
         tabShifts.ResumeLayout(false);
-        tabShifts.PerformLayout();
+        tlShifts.ResumeLayout(false);
+        tlShiftLeft.ResumeLayout(false);
+        tlShiftLeft.PerformLayout();
+        tlShiftRight.ResumeLayout(false);
+        tlShiftRight.PerformLayout();
+        tlRosterHeader.ResumeLayout(false);
+        tlRosterHeader.PerformLayout();
+        flowAssignDate.ResumeLayout(false);
+        flowAssignDate.PerformLayout();
         tabTasks.ResumeLayout(false);
-        tabTasks.PerformLayout();
+        tlTasks.ResumeLayout(false);
+        tlTasks.PerformLayout();
+        tlTasksHeader.ResumeLayout(false);
+        tlTasksHeader.PerformLayout();
+        flowTaskFilter.ResumeLayout(false);
+        flowTaskFilter.PerformLayout();
         tabHistory.ResumeLayout(false);
-        tabHistory.PerformLayout();
+        tlHistory.ResumeLayout(false);
+        tlHistory.PerformLayout();
+        flowHistoryFilter.ResumeLayout(false);
+        flowHistoryFilter.PerformLayout();
         ResumeLayout(false);
     }
 }

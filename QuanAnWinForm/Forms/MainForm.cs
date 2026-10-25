@@ -136,7 +136,8 @@ public partial class MainForm : Form
         }
 
         var anchor = headerBar.GetNotifyButtonScreenLocation();
-        var location = new Point(anchor.X - 340, anchor.Y + 4);
+        // Canh mép phải popup thẳng hàng với mép phải nút chuông (nút rộng 36px).
+        var location = new Point(anchor.X + 36 - _notificationPopup.Width, anchor.Y + 4);
         _notificationPopup.ShowAt(location, _notifications);
     }
 

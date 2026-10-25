@@ -39,17 +39,17 @@ partial class MainForm
         headerBar.Dock = DockStyle.Top;
         headerBar.Location = new Point(224, 0);
         headerBar.Name = "headerBar";
-        headerBar.Size = new Size(1176, 64);
+        headerBar.Size = new Size(1176, 77);
         headerBar.TabIndex = 1;
         // 
         // panelContent
         // 
         panelContent.BackColor = Color.FromArgb(249, 249, 249);
         panelContent.Dock = DockStyle.Fill;
-        panelContent.Location = new Point(224, 64);
+        panelContent.Location = new Point(224, 77);
         panelContent.Name = "panelContent";
         panelContent.Padding = new Padding(32, 24, 32, 24);
-        panelContent.Size = new Size(1176, 786);
+        panelContent.Size = new Size(1176, 773);
         panelContent.TabIndex = 0;
         // 
         // MainForm

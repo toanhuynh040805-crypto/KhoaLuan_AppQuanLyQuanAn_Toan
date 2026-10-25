@@ -1,45 +1,86 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using QuanAnWinForm.Models;
+﻿using QuanAnWinForm.Models;
 using QuanAnWinForm.Theme;
 
 namespace QuanAnWinForm.Forms
 {
+    // Popup thông báo: danh sách vẽ tay (owner-draw) -> không bao giờ bị chồng chữ / thanh cuộn ngang,
+    // có tab "Tất cả | Chưa đọc", hover, chấm báo chưa đọc, nội dung tối đa 2 dòng.
     public partial class NotificationPopupForm : Form
     {
         public event Action<NotificationDto>? NotificationItemClicked;
         public event Action? MarkAllReadClicked;
 
-        private readonly FlowLayoutPanel _flowList;
+        private const int PopupWidth = 420;
+        private const int HeaderHeight = 96;
+        private const int RowHeight = 84;
+        private const int MaxVisibleRows = 5;
+
+        private readonly Panel _header;
+        private readonly Label _lblMarkAllRead;
+        private readonly Label _tabAll;
+        private readonly Label _tabUnread;
+        private readonly BufferedListBox _list;
         private readonly Label _lblEmpty;
 
-        private static readonly string[] TypeIcons = { "🍽️", "📅", "🕒", "⚙️", "🏷️" }; // DonHang, DatBan, CaLam, HeThong, KhuyenMai
+        private List<NotificationDto> _items = new();
+        private List<NotificationDto> _visible = new();
+        private bool _unreadOnly;
+        private int _hoverIndex = -1;
+
+        // DonHang, DatBan, CaLam, HeThong, KhuyenMai
+        private static readonly string[] TypeGlyphs = { "🍽", "📅", "🕒", "⚙", "🏷" };
+        private static readonly Color[] TypeColors =
+        {
+            Color.FromArgb(172, 45, 0),
+            Color.FromArgb(0, 104, 92),
+            Color.FromArgb(84, 96, 103),
+            Color.FromArgb(214, 138, 0),
+            Color.FromArgb(123, 31, 162),
+        };
+        private static readonly Color[] TypeTints =
+        {
+            Color.FromArgb(253, 236, 231),
+            Color.FromArgb(224, 242, 241),
+            Color.FromArgb(232, 238, 242),
+            Color.FromArgb(255, 243, 224),
+            Color.FromArgb(243, 229, 245),
+        };
+
+        private static readonly Font FTitleBold = new("Segoe UI", 10F, FontStyle.Bold);
+        private static readonly Font FTitle = new("Segoe UI", 10F, FontStyle.Regular);
+        private static readonly Font FBody = new("Segoe UI", 9F, FontStyle.Regular);
+        private static readonly Font FSmall = new("Segoe UI", 8.5F, FontStyle.Regular);
+        private static readonly Font FEmoji = new("Segoe UI Emoji", 13F, FontStyle.Regular);
+
+        private static readonly Color UnreadBg = Color.FromArgb(255, 247, 240);
+        private static readonly Color MutedText = Color.FromArgb(96, 104, 110);
 
         public NotificationPopupForm()
         {
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            Size = new Size(380, 440);
             Padding = new Padding(1);
-            BackColor = AppColors.OutlineVariant; // tao vien mong 1px nho Padding
-                                                  // Dung Hide() thay vi Close() - Close() tren 1 Form hien bang Show() (khong
-                                                  // phai ShowDialog()) se TU DONG Dispose luon, trong khi MainForm dang giu
-                                                  // 1 instance DUY NHAT (_notificationPopup) de dung lai nhieu lan xuyen suot
-                                                  // phien lam viec -> dung Close() se gay ObjectDisposedException o lan mo tiep theo.
+            BackColor = AppColors.OutlineVariant; // viền mỏng 1px nhờ Padding
+            Size = new Size(PopupWidth, HeaderHeight + RowHeight * MaxVisibleRows + 2);
+
+            // Dùng Hide() thay vì Close(): MainForm giữ 1 instance duy nhất và mở lại nhiều lần.
             Deactivate += (s, e) => Hide();
 
             var inner = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
 
-            var lblTitle = new Label { Text = "Thông báo", Font = AppFonts.HeadlineSm, Location = new Point(16, 12), AutoSize = true };
-            var lblMarkAllRead = new Label
+            // ---------- Header ----------
+            _header = new Panel { Dock = DockStyle.Top, Height = HeaderHeight, BackColor = Color.White };
+
+            var lblTitle = new Label
+            {
+                Text = "Thông báo",
+                Font = AppFonts.HeadlineMd,
+                Location = new Point(20, 12),
+                AutoSize = true,
+            };
+
+            _lblMarkAllRead = new Label
             {
                 Text = "Đánh dấu đã đọc tất cả",
                 Font = AppFonts.BodyMd,
@@ -47,24 +88,54 @@ namespace QuanAnWinForm.Forms
                 Cursor = Cursors.Hand,
                 AutoSize = true,
             };
-            lblMarkAllRead.Location = new Point(Width - 20 - lblMarkAllRead.PreferredWidth, 18);
-            lblMarkAllRead.Click += (s, e) => MarkAllReadClicked?.Invoke();
+            _lblMarkAllRead.Location = new Point(PopupWidth - 2 - 20 - _lblMarkAllRead.PreferredWidth, 20);
+            _lblMarkAllRead.Click += (s, e) => MarkAllReadClicked?.Invoke();
 
-            _flowList = new FlowLayoutPanel
+            _tabAll = MakeTab("Tất cả", 12, 100);
+            _tabUnread = MakeTab("Chưa đọc", _tabAll.Right + 4, 120);
+            _tabAll.Click += (s, e) => SetFilter(false);
+            _tabUnread.Click += (s, e) => SetFilter(true);
+
+            _header.Controls.Add(lblTitle);
+            _header.Controls.Add(_lblMarkAllRead);
+            _header.Controls.Add(_tabAll);
+            _header.Controls.Add(_tabUnread);
+            _header.Paint += Header_Paint;
+
+            // ---------- Danh sách ----------
+            _list = new BufferedListBox
             {
-                Location = new Point(0, 48),
-                Size = new Size(Width - 2, Height - 50),
-                AutoScroll = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                DrawMode = DrawMode.OwnerDrawFixed,
+                ItemHeight = RowHeight,
+                IntegralHeight = false,
+                SelectionMode = SelectionMode.None,
+                HorizontalScrollbar = false,
+                BackColor = Color.White,
+            };
+            _list.DrawItem += List_DrawItem;
+            _list.MouseMove += List_MouseMove;
+            _list.MouseLeave += (s, e) => SetHover(-1);
+            _list.MouseUp += List_MouseUp;
+            _list.MouseEnter += (s, e) => _list.Focus(); // để lăn chuột cuộn được ngay
+
+            _lblEmpty = new Label
+            {
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = AppFonts.BodyMd,
+                ForeColor = MutedText,
+                BackColor = Color.White,
+                Visible = false,
             };
 
-            _lblEmpty = new Label { Text = "Chưa có thông báo nào.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(16, 16), AutoSize = true };
-
-            inner.Controls.Add(lblTitle);
-            inner.Controls.Add(lblMarkAllRead);
-            inner.Controls.Add(_flowList);
+            inner.Controls.Add(_list);
+            inner.Controls.Add(_lblEmpty);
+            inner.Controls.Add(_header);
             Controls.Add(inner);
+
+            UpdateTabStyles();
         }
 
         public void ShowAt(Point screenLocation, List<NotificationDto> items)
@@ -77,38 +148,163 @@ namespace QuanAnWinForm.Forms
 
         public void Render(List<NotificationDto> items)
         {
-            _flowList.Controls.Clear();
-            if (items.Count == 0)
-            {
-                _flowList.Controls.Add(_lblEmpty);
-                return;
-            }
-
-            foreach (var n in items) _flowList.Controls.Add(BuildRow(n));
+            _items = items;
+            ApplyFilter();
         }
 
-        private Panel BuildRow(NotificationDto n)
+        // ------------------------------------------------------------------
+        private Label MakeTab(string text, int left, int width)
         {
-            var row = new Panel { Size = new Size(360, 64), Cursor = Cursors.Hand, BackColor = n.IsRead ? Color.White : Color.FromArgb(255, 247, 240) };
-            row.Paint += (s, e) => e.Graphics.DrawLine(new Pen(AppColors.OutlineVariant), 0, row.Height - 1, row.Width, row.Height - 1);
+            return new Label
+            {
+                Text = text,
+                AutoSize = false,
+                Size = new Size(width, 32),
+                Location = new Point(left, 54),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Cursor = Cursors.Hand,
+                Font = AppFonts.LabelLg,
+            };
+        }
 
-            var icon = TypeIcons[Math.Clamp(n.NotificationType, 0, TypeIcons.Length - 1)];
-            var lblIcon = new Label { Text = icon, Font = new Font("Segoe UI Emoji", 14F), Location = new Point(12, 14), Size = new Size(30, 30), TextAlign = ContentAlignment.MiddleCenter };
-            var lblTitle = new Label { Text = n.Title, Font = n.IsRead ? AppFonts.BodyMd : AppFonts.LabelLg, Location = new Point(48, 8), Size = new Size(300, 20), AutoEllipsis = true };
-            var lblContent = new Label { Text = n.Content, Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(48, 28), Size = new Size(300, 18), AutoEllipsis = true };
-            var lblTime = new Label { Text = TimeAgo(n.CreatedAt), Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(48, 46), AutoSize = true };
+        private void SetFilter(bool unreadOnly)
+        {
+            if (_unreadOnly == unreadOnly) return;
+            _unreadOnly = unreadOnly;
+            ApplyFilter();
+        }
 
-            row.Controls.Add(lblIcon);
-            row.Controls.Add(lblTitle);
-            row.Controls.Add(lblContent);
-            row.Controls.Add(lblTime);
+        private void ApplyFilter()
+        {
+            int unread = _items.Count(n => !n.IsRead);
+            _tabUnread.Text = unread > 0 ? $"Chưa đọc ({unread})" : "Chưa đọc";
+            _lblMarkAllRead.Visible = unread > 0;
+            UpdateTabStyles();
 
-            void Fire(object? s, EventArgs e) => NotificationItemClicked?.Invoke(n);
-            row.Click += Fire;
-            lblTitle.Click += Fire;
-            lblContent.Click += Fire;
+            _visible = _unreadOnly ? _items.Where(n => !n.IsRead).ToList() : _items.ToList();
+            _hoverIndex = -1;
 
-            return row;
+            _list.BeginUpdate();
+            _list.Items.Clear();
+            foreach (var n in _visible) _list.Items.Add(n);
+            _list.EndUpdate();
+
+            bool empty = _visible.Count == 0;
+            _lblEmpty.Visible = empty;
+            _list.Visible = !empty;
+            if (empty)
+                _lblEmpty.Text = _unreadOnly ? "Bạn đã đọc hết thông báo 🎉" : "Chưa có thông báo nào.";
+
+            // Popup co giãn theo số dòng (tối đa 5 dòng, nhiều hơn thì cuộn).
+            int bodyHeight = empty ? 150 : Math.Min(_visible.Count, MaxVisibleRows) * RowHeight;
+            Height = HeaderHeight + bodyHeight + 2;
+        }
+
+        private void UpdateTabStyles()
+        {
+            foreach (var (tab, selected) in new[] { (_tabAll, !_unreadOnly), (_tabUnread, _unreadOnly) })
+            {
+                tab.ForeColor = selected ? AppColors.Primary : MutedText;
+            }
+            _header.Invalidate();
+        }
+
+        private void Header_Paint(object? sender, PaintEventArgs e)
+        {
+            // đường kẻ dưới header
+            using var line = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawLine(line, 0, _header.Height - 1, _header.Width, _header.Height - 1);
+
+            // gạch chân tab đang chọn
+            var tab = _unreadOnly ? _tabUnread : _tabAll;
+            using var brush = new SolidBrush(AppColors.Primary);
+            e.Graphics.FillRectangle(brush, tab.Left + 10, _header.Height - 3, tab.Width - 20, 3);
+        }
+
+        // ------------------------------------------------------------------
+        private void SetHover(int index)
+        {
+            if (_hoverIndex == index) return;
+            int old = _hoverIndex;
+            _hoverIndex = index;
+            if (old >= 0 && old < _list.Items.Count) _list.Invalidate(_list.GetItemRectangle(old));
+            if (index >= 0 && index < _list.Items.Count) _list.Invalidate(_list.GetItemRectangle(index));
+            _list.Cursor = index >= 0 ? Cursors.Hand : Cursors.Default;
+        }
+
+        private void List_MouseMove(object? sender, MouseEventArgs e)
+        {
+            int idx = _list.IndexFromPoint(e.Location);
+            SetHover(idx >= 0 && idx < _visible.Count ? idx : -1);
+        }
+
+        private void List_MouseUp(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            int idx = _list.IndexFromPoint(e.Location);
+            if (idx >= 0 && idx < _visible.Count)
+                NotificationItemClicked?.Invoke(_visible[idx]);
+        }
+
+        private void List_DrawItem(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= _visible.Count) return;
+
+            var n = _visible[e.Index];
+            var g = e.Graphics;
+            var r = e.Bounds;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+            bool hover = e.Index == _hoverIndex;
+            var bg = hover ? AppColors.SurfaceLow : (n.IsRead ? Color.White : UnreadBg);
+            using (var bgBrush = new SolidBrush(bg)) g.FillRectangle(bgBrush, r);
+
+            // vạch màu bên trái cho thông báo chưa đọc
+            if (!n.IsRead)
+            {
+                using var stripe = new SolidBrush(AppColors.Primary);
+                g.FillRectangle(stripe, r.X, r.Y, 3, r.Height);
+            }
+
+            // icon tròn theo loại
+            int t = Math.Clamp(n.NotificationType, 0, TypeGlyphs.Length - 1);
+            var iconRect = new Rectangle(r.X + 18, r.Y + 18, 40, 40);
+            using (var tint = new SolidBrush(TypeTints[t])) g.FillEllipse(tint, iconRect);
+            TextRenderer.DrawText(g, TypeGlyphs[t], FEmoji, iconRect, TypeColors[t],
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+            const int textLeft = 70;
+            int rightEdge = r.Right - 16;
+
+            // thời gian (góc phải dòng tiêu đề)
+            string time = TimeAgo(n.CreatedAt);
+            int timeW = TextRenderer.MeasureText(g, time, FSmall, Size.Empty, TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, time, FSmall,
+                new Rectangle(rightEdge - timeW, r.Y + 14, timeW, 18),
+                n.IsRead ? MutedText : AppColors.Primary,
+                TextFormatFlags.Left | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+
+            // tiêu đề (1 dòng, cắt "...")
+            var titleRect = new Rectangle(r.X + textLeft, r.Y + 12, rightEdge - timeW - 10 - (r.X + textLeft), 22);
+            TextRenderer.DrawText(g, n.Title, n.IsRead ? FTitle : FTitleBold, titleRect, AppColors.OnSurface,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+
+            // nội dung (tối đa 2 dòng, cắt "...")
+            int contentRight = rightEdge - (n.IsRead ? 0 : 16);
+            var contentRect = new Rectangle(r.X + textLeft, r.Y + 36, contentRight - (r.X + textLeft), 38);
+            TextRenderer.DrawText(g, n.Content, FBody, contentRect, MutedText,
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+
+            // chấm chưa đọc
+            if (!n.IsRead)
+            {
+                using var dot = new SolidBrush(AppColors.Primary);
+                g.FillEllipse(dot, rightEdge - 8, r.Y + 50, 8, 8);
+            }
+
+            // đường phân cách
+            using var sep = new Pen(AppColors.OutlineVariant);
+            g.DrawLine(sep, r.X + textLeft, r.Bottom - 1, r.Right, r.Bottom - 1);
         }
 
         private static string TimeAgo(DateTime createdAt)
@@ -118,6 +314,16 @@ namespace QuanAnWinForm.Forms
             if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} phút trước";
             if (span.TotalHours < 24) return $"{(int)span.TotalHours} giờ trước";
             return createdAt.ToString("HH:mm dd/MM");
+        }
+
+        // ListBox chống nhấp nháy khi vẽ tay + hover.
+        private sealed class BufferedListBox : ListBox
+        {
+            public BufferedListBox()
+            {
+                DoubleBuffered = true;
+                SetStyle(ControlStyles.ResizeRedraw, true);
+            }
         }
     }
 }

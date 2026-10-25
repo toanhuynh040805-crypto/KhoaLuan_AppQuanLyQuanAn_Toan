@@ -284,14 +284,34 @@ public class ShiftsController : ControllerBase
         });
     }
 
-    [HttpDelete("assignments/{id}")]
+        [HttpDelete("assignments/{id}")]
     public async Task<IActionResult> DeleteAssignment(int id)
     {
-        var assignment = await _db.ShiftAssignments.FindAsync(id);
+        var assignment = await _db.ShiftAssignments
+            .Include(a => a.Employee)
+            .Include(a => a.Shift)
+            .FirstOrDefaultAsync(a => a.ShiftAssignmentId == id);
         if (assignment is null) return NotFound();
+
+        var targetUserId = assignment.Employee?.UserId;
+        var shiftName = assignment.Shift?.ShiftName ?? "";
+        var workDate = assignment.WorkDate;
+        var removedId = assignment.ShiftAssignmentId;
 
         _db.ShiftAssignments.Remove(assignment);
         await _db.SaveChangesAsync();
+
+        if (targetUserId.HasValue && workDate >= DateOnly.FromDateTime(DateTime.Today))
+        {
+            await _notifications.CreateAsync(
+                "Ca làm của bạn đã bị hủy",
+                $"Ca {shiftName} - ngày {workDate:dd/MM/yyyy} đã được gỡ khỏi lịch của bạn",
+                NotificationType.CaLam,
+                targetUserId: targetUserId.Value,
+                relatedEntityType: "ShiftAssignment",
+                relatedEntityId: removedId);
+        }
+
         return NoContent();
     }
 

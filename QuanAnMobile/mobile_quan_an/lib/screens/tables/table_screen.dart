@@ -329,8 +329,19 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     return true;
   }
 
+  // Quản lý vừa phân ca / đổi hoặc gỡ khu vực -> backend gửi thông báo loại CaLam.
+  bool _isShiftAssignmentNotification(AppNotification n) =>
+      n.relatedEntityType == 'ShiftAssignment' || n.notificationType == 'CaLam';
+
   void _handleRealtimeNotification(AppNotification notification) {
-    if (!mounted || !_notificationEnabled(notification)) {
+        if (!mounted) return;
+
+    // Tải lại bàn để cập nhật khu vực được phân công, kể cả khi đã tắt âm báo.
+    if (_isShiftAssignmentNotification(notification)) {
+      _requestRealtimeRefresh();
+    }
+
+    if (!_notificationEnabled(notification)) {
       return;
     }
 

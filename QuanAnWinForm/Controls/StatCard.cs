@@ -4,6 +4,8 @@ namespace QuanAnWinForm.Controls;
 
 public class StatCard : Panel
 {
+    private const int PadX = 18;
+
     private readonly Panel _iconBox;
     private readonly Label _lblIcon;
     private readonly Label _lblTrend;
@@ -12,40 +14,46 @@ public class StatCard : Panel
 
     public StatCard()
     {
-        Size = new Size(200, 100);
+        Size = new Size(240, 140);
+        MinimumSize = new Size(170, 110);
         BackColor = Color.White;
-        Padding = new Padding(12);
+        DoubleBuffered = true;
 
-        // Icon Box (Thu nhỏ vừa vặn)
-        _iconBox = new Panel { Size = new Size(32, 32), Location = new Point(12, 10) };
-        _lblIcon = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 11) };
+        _iconBox = new Panel { Size = new Size(38, 38), Location = new Point(PadX, 16) };
+        _lblIcon = new Label
+        {
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Segoe UI Emoji", 12),
+        };
         _iconBox.Controls.Add(_lblIcon);
 
-        // Trend Label
         _lblTrend = new Label
         {
             AutoSize = true,
             Font = AppFonts.LabelMd,
-            Location = new Point(110, 14),
-            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(4, 2, 4, 2),
+            Visible = false,
         };
 
-        // Title Label (TỔNG KHÁCH HÀNG)
         _lblTitle = new Label
         {
-            AutoSize = true,
+            AutoSize = false,
+            AutoEllipsis = true,
+            Height = 22,
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(12, 46),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
 
-        // Value Label (Chữ số hiển thị rõ ràng)
         _lblValue = new Label
         {
-            AutoSize = true,
-            Font = new Font("Segoe UI", 16F, FontStyle.Bold), // Hạ cỡ chữ vừa đủ không vỡ khung
+            AutoSize = false,
+            AutoEllipsis = true,
+            Height = 40,
+            Font = new Font("Segoe UI", 20F, FontStyle.Bold),
             ForeColor = AppColors.OnSurface,
-            Location = new Point(12, 66),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
 
         Controls.Add(_iconBox);
@@ -53,11 +61,30 @@ public class StatCard : Panel
         Controls.Add(_lblTitle);
         Controls.Add(_lblValue);
 
+        Resize += (s, e) => DoLayout();
         Paint += (s, e) =>
         {
             using var pen = new Pen(AppColors.OutlineVariant);
             e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
         };
+
+        DoLayout();
+    }
+
+    private void DoLayout()
+    {
+        int innerWidth = Math.Max(10, Width - PadX * 2);
+
+        _lblTitle.SetBounds(PadX, 62, innerWidth, 22);
+        _lblValue.SetBounds(PadX, 84, innerWidth, 40);
+
+        if (_lblTrend.Visible)
+        {
+            // Nhãn xu hướng canh sát mép phải, không bao giờ đè lên icon.
+            int maxLeft = _iconBox.Right + 8;
+            int left = Math.Max(maxLeft, Width - PadX - _lblTrend.PreferredWidth);
+            _lblTrend.Location = new Point(left, 22);
+        }
     }
 
     public void Configure(string icon, Color iconColor, Color iconBg, string title, string value, string? trendText = null, bool trendUp = true)
@@ -79,5 +106,7 @@ public class StatCard : Panel
         {
             _lblTrend.Visible = false;
         }
+
+        DoLayout();
     }
 }

@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using System.Media;
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
@@ -226,18 +227,30 @@ public partial class KitchenBoardControl : UserControl
         var earliestCreatedAt = card.Rows.Count > 0 ? card.Rows.Min(r => r.CreatedAt) : DateTime.Now;
         var minutes = Math.Max(0, (int)(DateTime.Now - earliestCreatedAt).TotalMinutes);
 
-        var (bg, fg) = minutes switch
+        var (bg, fg, pillFg) = minutes switch
         {
-            < 5 => (AppColors.Success, Color.White),
-            < 10 => (AppColors.Warning, AppColors.OnSurface),
-            _ => (AppColors.Error, Color.White),
+            < 5 => (AppColors.Success, Color.White, AppColors.Success),
+            < 10 => (AppColors.Warning, AppColors.OnSurface, Color.FromArgb(146, 64, 14)),
+            _ => (AppColors.Error, Color.White, AppColors.Error),
         };
 
         var elapsed = FormatElapsed(minutes);
-        card.ElapsedBadge.Text = minutes >= 10 ? $"{elapsed} · TRỄ" : elapsed;
+        var badge = card.ElapsedBadge;
+        badge.Text = minutes >= 10 ? $"{elapsed} · TRỄ" : elapsed;
+
+        // Badge dạng viên thuốc: nền trắng, chữ theo màu mức độ khẩn.
+        using (var f = AppFonts.LabelLg)
+        {
+            var w = TextRenderer.MeasureText(badge.Text, f).Width + 28;
+            badge.Size = new Size(w, 28);
+            badge.Location = new Point(CardWidth - w - 14, 12);
+        }
+        badge.BackColor = Color.White;
+        badge.ForeColor = pillFg;
+        RoundCorners(badge, 14);
 
         card.Header.BackColor = bg;
-        foreach (var lbl in new[] { card.LblTable, card.LblOrder, card.ElapsedBadge })
+        foreach (var lbl in new[] { card.LblTable, card.LblOrder })
         {
             lbl.BackColor = bg;
             lbl.ForeColor = fg;
@@ -251,28 +264,68 @@ public partial class KitchenBoardControl : UserControl
         _ => $"{minutes / (24 * 60)} ngày {minutes % (24 * 60) / 60} giờ",
     };
 
-    private const int CardWidth = 320;
-    private const int HeaderHeight = 64;
-    private const int MaxVisibleRows = 5;
+    private const int CardWidth = 380;
+    private const int HeaderHeight = 68;
+    private const int MaxVisibleRows = 6;
+    private const int ActionBtnWidth = 104;
+    private const int ActionBtnHeight = 34;
+    private const int NameX = 60;
+    private const int RowPadX = 14;
 
-    private static int RowHeightFor(TicketItem item)
-        => 50 + (string.IsNullOrEmpty(item.Note) ? 0 : 16) + (item.IsTakeaway ? 18 : 0);
+    private static int NameWidth(int rowWidth) => rowWidth - NameX - ActionBtnWidth - RowPadX - 8;
+
+    // Tên món dài được xuống dòng (tối đa 2 dòng) thay vì bị cắt "...".
+    private static int NameLines(TicketItem item, int rowWidth)
+    {
+        using var font = AppFonts.LabelLg;
+        var size = TextRenderer.MeasureText(
+            item.MenuItemName ?? string.Empty, font,
+            new Size(NameWidth(rowWidth), 0), TextFormatFlags.WordBreak);
+        return Math.Clamp((int)Math.Round(size.Height / (double)font.Height), 1, 2);
+    }
+
+    private static int RowHeightFor(TicketItem item, int rowWidth)
+    {
+        var h = 10 + NameLines(item, rowWidth) * 20 + 10;
+        if (item.IsTakeaway) h += 22;
+        if (!string.IsNullOrEmpty(item.Note)) h += 20;
+        return Math.Max(56, h);
+    }
+
+    private static void RoundCorners(Control c, int radius)
+    {
+        if (c.Width <= 0 || c.Height <= 0) return;
+        var d = radius * 2;
+        using var path = new GraphicsPath();
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(c.Width - d, 0, d, d, 270, 90);
+        path.AddArc(c.Width - d, c.Height - d, d, d, 0, 90);
+        path.AddArc(0, c.Height - d, d, d, 90, 90);
+        path.CloseFigure();
+        c.Region = new Region(path);
+    }
 
     private TicketCard BuildTicketCard(NewTicketPayload payload)
     {
         var card = new TicketCard { OrderId = payload.OrderId, TableName = payload.TableName };
 
-        var column = new Panel { Width = CardWidth, Margin = new Padding(8), BackColor = Color.White, Tag = payload.OrderId };
+        var column = new Panel { Width = CardWidth, Margin = new Padding(10), BackColor = Color.White, Tag = payload.OrderId };
+        column.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawRectangle(pen, 0, 0, column.Width - 1, column.Height - 1);
+        };
 
         var header = new Panel { Size = new Size(CardWidth, HeaderHeight), Location = new Point(0, 0), BackColor = AppColors.Success };
-        var lblTable = new Label { Text = payload.TableName, Font = AppFonts.HeadlineSm, Location = new Point(12, 8), AutoSize = true };
-        var lblOrderId = new Label { Text = $"Đơn #{payload.OrderId}", Font = AppFonts.BodyMd, Location = new Point(12, 34), AutoSize = true };
+        var lblTable = new Label { Text = payload.TableName, Font = AppFonts.HeadlineSm, Location = new Point(14, 10), AutoSize = true };
+        var lblOrderId = new Label { Text = $"Đơn #{payload.OrderId}  ·  {payload.Items.Count} món", Font = AppFonts.BodyMd, Location = new Point(14, 38), AutoSize = true };
         var elapsedBadge = new Label
         {
             Font = AppFonts.LabelLg,
-            TextAlign = ContentAlignment.MiddleRight,
-            Size = new Size(170, 26),
-            Location = new Point(CardWidth - 170 - 12, 10),
+            TextAlign = ContentAlignment.MiddleCenter,
+            AutoSize = false,
+            Size = new Size(110, 28),
+            Location = new Point(CardWidth - 110 - 14, 12),
         };
         header.Controls.Add(lblTable);
         header.Controls.Add(lblOrderId);
@@ -283,17 +336,23 @@ public partial class KitchenBoardControl : UserControl
         card.LblOrder = lblOrderId;
         card.ElapsedBadge = elapsedBadge;
 
-        var itemsHeight = payload.Items.Take(MaxVisibleRows).Sum(RowHeightFor);
+        var scrolling = payload.Items.Count > MaxVisibleRows;
+        // Chừa chỗ cho thanh cuộn dọc để không bị thanh cuộn ngang.
+        var rowWidth = CardWidth - (scrolling ? SystemInformation.VerticalScrollBarWidth : 0);
+
+        var itemsHeight = payload.Items.Take(MaxVisibleRows).Sum(i => RowHeightFor(i, rowWidth));
         var itemsPanel = new FlowLayoutPanel
         {
             Location = new Point(0, HeaderHeight),
-            Size = new Size(CardWidth, Math.Max(50, itemsHeight)),
+            Size = new Size(CardWidth, Math.Max(56, itemsHeight)),
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            AutoScroll = payload.Items.Count > MaxVisibleRows,
+            AutoScroll = scrolling,
+            BackColor = Color.White,
+            Padding = new Padding(0),
         };
         foreach (var item in payload.Items)
-            itemsPanel.Controls.Add(BuildItemRow(item, card));
+            itemsPanel.Controls.Add(BuildItemRow(item, card, rowWidth));
         column.Controls.Add(itemsPanel);
 
         var footerY = HeaderHeight + itemsPanel.Height;
@@ -302,13 +361,14 @@ public partial class KitchenBoardControl : UserControl
         {
             var btnDoneAll = new Button
             {
-                Location = new Point(10, footerY + 8),
-                Size = new Size(CardWidth - 20, 38),
+                Location = new Point(14, footerY + 10),
+                Size = new Size(CardWidth - 28, 42),
                 FlatStyle = FlatStyle.Flat,
-                Font = AppFonts.LabelMd,
+                Font = AppFonts.LabelLg,
                 Cursor = Cursors.Hand,
             };
             btnDoneAll.FlatAppearance.BorderSize = 0;
+            RoundCorners(btnDoneAll, 8);
             card.BulkActionButton = btnDoneAll;
             ApplyBulkActionUI(card);
 
@@ -375,11 +435,11 @@ public partial class KitchenBoardControl : UserControl
                 }
             };
             column.Controls.Add(btnDoneAll);
-            column.Height = footerY + 8 + 38 + 10;
+            column.Height = footerY + 10 + 42 + 14;
         }
         else
         {
-            column.Height = footerY + 4;
+            column.Height = footerY + 2;
         }
 
         card.Column = column;
@@ -387,44 +447,67 @@ public partial class KitchenBoardControl : UserControl
         return card;
     }
 
-    private Panel BuildItemRow(TicketItem item, TicketCard card)
+    private Panel BuildItemRow(TicketItem item, TicketCard card, int rowWidth)
     {
         var hasNote = !string.IsNullOrEmpty(item.Note);
-        var rowHeight = RowHeightFor(item);
-        var row = new Panel { Size = new Size(CardWidth, rowHeight), Margin = new Padding(0) };
+        var rowHeight = RowHeightFor(item, rowWidth);
+        var nameLines = NameLines(item, rowWidth);
+        var nameWidth = NameWidth(rowWidth);
+        var row = new Panel { Size = new Size(rowWidth, rowHeight), Margin = new Padding(0), BackColor = Color.White };
 
         row.Paint += (s, e) =>
         {
             using var pen = new Pen(AppColors.OutlineVariant);
-            e.Graphics.DrawLine(pen, 12, row.Height - 1, row.Width - 12, row.Height - 1);
+            e.Graphics.DrawLine(pen, RowPadX, row.Height - 1, row.Width - RowPadX, row.Height - 1);
         };
 
-        var lblQty = new Label { Text = $"{item.Quantity}x", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(12, 9), AutoSize = true };
-        var lblName = new Label { Text = item.MenuItemName, Font = AppFonts.LabelLg, Location = new Point(56, 11), Size = new Size(140, 22), AutoEllipsis = true };
+        var lblQty = new Label { Text = $"{item.Quantity}x", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(RowPadX, 8), AutoSize = true };
+        var lblName = new Label
+        {
+            Text = item.MenuItemName,
+            Font = AppFonts.LabelLg,
+            Location = new Point(NameX, 10),
+            Size = new Size(nameWidth, nameLines * 20),
+            AutoEllipsis = true,
+        };
         var btnAction = new Button
         {
             Text = "Bắt đầu",
-            Size = new Size(104, 32),
-            Location = new Point(CardWidth - 104 - 12, 8),
+            Size = new Size(ActionBtnWidth, ActionBtnHeight),
+            Location = new Point(rowWidth - ActionBtnWidth - RowPadX, (rowHeight - ActionBtnHeight) / 2),
             FlatStyle = FlatStyle.Flat,
             Font = AppFonts.LabelMd,
             Cursor = Cursors.Hand,
         };
+        btnAction.FlatAppearance.BorderSize = 0;
+        RoundCorners(btnAction, 8);
 
         row.Controls.Add(lblQty);
         row.Controls.Add(lblName);
         row.Controls.Add(btnAction);
 
+        var y = 10 + nameLines * 20 + 2;
+
         // Món khách yêu cầu mang về: hiện nhãn để bếp/quầy nước đóng hộp.
         if (item.IsTakeaway)
         {
-            var lblTake = new Label { Text = "MANG VỀ", Font = AppFonts.LabelMd, ForeColor = AppColors.Primary, Location = new Point(56, 35), Size = new Size(160, 18), AutoEllipsis = true };
+            var lblTake = new Label
+            {
+                Text = "MANG VỀ",
+                Font = AppFonts.LabelMd,
+                ForeColor = AppColors.Primary,
+                BackColor = Color.FromArgb(255, 234, 226),
+                Location = new Point(NameX, y),
+                AutoSize = true,
+                Padding = new Padding(6, 1, 6, 1),
+            };
             row.Controls.Add(lblTake);
+            y += 22;
         }
 
         if (hasNote)
         {
-            var lblNote = new Label { Text = "Ghi chú: " + item.Note, Font = AppFonts.BodyMd, ForeColor = AppColors.Error, Location = new Point(56, item.IsTakeaway ? 53 : 35), Size = new Size(160, 20), AutoEllipsis = true };
+            var lblNote = new Label { Text = "Ghi chú: " + item.Note, Font = AppFonts.BodyMd, ForeColor = AppColors.Error, Location = new Point(NameX, y), Size = new Size(nameWidth, 20), AutoEllipsis = true };
             row.Controls.Add(lblNote);
         }
 
@@ -460,6 +543,7 @@ public partial class KitchenBoardControl : UserControl
                 }
 
                 ApplyItemStatusUI(rowState);
+                ApplyBulkActionUI(card);
 
                 if (card.Rows.All(r => r.CurrentStatus is (int)KitchenStatus.DaCheBien or (int)KitchenStatus.DaPhucVu or (int)KitchenStatus.DaHuy))
                     await RemoveTicketAfterDelayAsync(card.OrderId);
@@ -470,7 +554,7 @@ public partial class KitchenBoardControl : UserControl
             }
             finally
             {
-                btnAction.Enabled = true;
+                if (!btnAction.IsDisposed) btnAction.Enabled = true;
             }
         };
 
@@ -516,6 +600,7 @@ public partial class KitchenBoardControl : UserControl
                 row.ActionButton.Text = "Bắt đầu";
                 row.ActionButton.BackColor = AppColors.Warning;
                 row.ActionButton.ForeColor = AppColors.OnSurface;
+                row.ActionButton.Cursor = Cursors.Hand;
                 row.ActionButton.Visible = true;
                 break;
 
@@ -525,6 +610,7 @@ public partial class KitchenBoardControl : UserControl
                 row.ActionButton.Text = "Xác nhận";
                 row.ActionButton.BackColor = AppColors.Primary;
                 row.ActionButton.ForeColor = Color.White;
+                row.ActionButton.Cursor = Cursors.Hand;
                 row.ActionButton.Visible = true;
                 break;
 
@@ -535,11 +621,12 @@ public partial class KitchenBoardControl : UserControl
                 row.ActionButton.Text = "✓ Xong";
                 row.ActionButton.BackColor = AppColors.Success;
                 row.ActionButton.ForeColor = Color.White;
-                row.ActionButton.Enabled = false;
+                row.ActionButton.Cursor = Cursors.Default;
                 break;
 
             case (int)KitchenStatus.DaHuy:
                 row.RowPanel.BackColor = Color.MistyRose;
+                row.NameLabel.BackColor = Color.MistyRose;
                 row.NameLabel.Text = $"{row.NameLabel.Text} (ĐÃ HỦY)";
                 row.NameLabel.ForeColor = Color.Red;
                 row.NameLabel.Font = new Font(AppFonts.LabelLg, FontStyle.Strikeout | FontStyle.Bold);

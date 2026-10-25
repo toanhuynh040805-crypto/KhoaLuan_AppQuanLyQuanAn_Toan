@@ -1,18 +1,62 @@
 ﻿using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
+using System.Drawing.Drawing2D;
 
 namespace QuanAnWinForm.UserControls;
 
+// Màn hình Đơn hàng.
+//  - Trên cùng: tiêu đề + 4 thẻ thống kê của ngày đang xem.
+//  - Thanh lọc: ngày, trạng thái (lọc trạng thái làm ngay trên máy, không gọi lại API).
+//  - Thân trang: bảng danh sách đơn (co giãn theo cửa sổ) + khung chi tiết đơn rộng cố định.
+// Các dòng đơn / dòng món được tự vẽ (OnPaint) nên nhẹ và luôn thẳng cột.
 public partial class OrderManagementControl : UserControl
 {
     private readonly ApiService _api = new();
     private readonly int _userId;
-    private List<OrderSummaryDto> _orders = new();
+
+    private List<OrderSummaryDto> _allOrders = new();   // toàn bộ đơn của ngày
+    private List<OrderSummaryDto> _orders = new();      // sau khi lọc theo trạng thái
+    private readonly List<OrderRowPanel> _orderRows = new();
+    private readonly List<ItemRowPanel> _itemRows = new();
+
     private int? _selectedOrderId;
+    private int _loadVersion;     // chống kết quả cũ ghi đè kết quả mới khi đổi ngày liên tục
+    private int _detailVersion;   // chống chi tiết cũ ghi đè khi bấm nhanh nhiều đơn
+    private int _orderScrollBar;  // bề rộng thanh cuộn đang chiếm ở danh sách (để tiêu đề cột thẳng hàng)
+
+    // Trạng thái nhãn bo tròn ở phần đầu chi tiết
+    private string _pillText = "";
+    private Color _pillFg = Color.Black;
+    private Color _pillBg = Color.White;
 
     private static readonly string[] OrderStatusLabels = { "Đang mở", "Đã thanh toán", "Đã hủy" };
     private static readonly string[] KitchenStatusLabels = { "Mới gọi", "Đang chế biến", "Đã chế biến", "Đã phục vụ", "Đã hủy" };
+
+    // ---- Font dùng chung (AppFonts.* tạo Font mới mỗi lần gọi nên phải cache khi vẽ tay) ----
+    private static readonly Font FontTitle = new("Segoe UI", 11F, FontStyle.Bold);
+    private static readonly Font FontTotal = new("Segoe UI", 12F, FontStyle.Bold);
+    private static readonly Font FontBody = new("Segoe UI", 10F);
+    private static readonly Font FontBodyBold = new("Segoe UI", 10F, FontStyle.Bold);
+    private static readonly Font FontStrike = new("Segoe UI", 10F, FontStyle.Bold | FontStyle.Strikeout);
+    private static readonly Font FontSmall = new("Segoe UI", 9F);
+    private static readonly Font FontCaption = new("Segoe UI", 8.5F, FontStyle.Bold);
+
+    private static readonly Color SelectedBg = Color.FromArgb(253, 236, 231);
+
+    private const TextFormatFlags Tf = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
+        | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+    private const TextFormatFlags TfRight = TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis
+        | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+    private const TextFormatFlags TfCenter = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+        | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+
+    // Hình học các cột trong dòng đơn
+    private const int ColPadL = 22;        // lề trái nội dung (sau dải màu trạng thái)
+    private const int ColPadR = 20;        // lề phải
+    private const int RightBlockW = 150;   // khối "tổng tiền + trạng thái" bên phải
+    private const int LeftColW = 250;      // cột "Đơn #.. / vị trí" ở chế độ rộng
+    private const int WideMin = 900;       // dòng rộng từ mức này mới hiện thêm các cột Nhân viên / Thời gian / Nguồn
 
     public OrderManagementControl() : this(0) { }
 
@@ -20,105 +64,268 @@ public partial class OrderManagementControl : UserControl
     {
         _userId = userId;
         InitializeComponent();
+        StyleControls();
 
         cbFilterStatus.Items.Add("Tất cả trạng thái");
         cbFilterStatus.Items.AddRange(OrderStatusLabels.Cast<object>().ToArray());
         cbFilterStatus.SelectedIndex = 0;
-
         dtpFilterDate.Value = DateTime.Today;
 
+        ShowDetailEmpty();
+        UpdateStats();
+
         Load += async (s, e) => await LoadOrdersAsync();
-        dtpFilterDate.ValueChanged += async (s, e) => await LoadOrdersAsync();
-        cbFilterStatus.SelectedIndexChanged += async (s, e) => await LoadOrdersAsync();
+        dtpFilterDate.ValueChanged += async (s, e) =>
+        {
+            _selectedOrderId = null;
+            ShowDetailEmpty();
+            await LoadOrdersAsync();
+        };
+        cbFilterStatus.SelectedIndexChanged += (s, e) => ApplyFilter();
+        btnToday.Click += (s, e) =>
+        {
+            if (dtpFilterDate.Value.Date == DateTime.Today) _ = LoadOrdersAsync();
+            else dtpFilterDate.Value = DateTime.Today;
+        };
+        btnRefresh.Click += async (s, e) => await LoadOrdersAsync();
+        btnCancelOrder.Click += async (s, e) => await CancelCurrentOrderAsync();
+
+        panelOrderScroll.Resize += (s, e) => LayoutOrderRows(reposition: false);
+        panelItems.Resize += (s, e) => LayoutItemRows(reposition: false);
     }
+
+    // =====================================================================
+    // GIAO DIỆN TĨNH (viền khung, tiêu đề cột, nhãn trạng thái)
+    // =====================================================================
+
+    private void StyleControls()
+    {
+        static void BorderOnPaint(Panel p) => p.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawRectangle(pen, 0, 0, p.Width - 1, p.Height - 1);
+        };
+        BorderOnPaint(panelListCard);
+        BorderOnPaint(panelDetail);
+
+        panelListHeader.Paint += PanelListHeader_Paint;
+
+        panelItemsHeader.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawLine(pen, 0, panelItemsHeader.Height - 1, panelItemsHeader.Width, panelItemsHeader.Height - 1);
+        };
+
+        panelDetailFooter.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawLine(pen, 0, 0, panelDetailFooter.Width, 0);
+        };
+
+        pillDetailStatus.Paint += (s, e) =>
+        {
+            if (_pillText.Length == 0) return;
+            var r = new Rectangle(0, 0, pillDetailStatus.Width - 1, pillDetailStatus.Height - 1);
+            FillPill(e.Graphics, r, _pillBg);
+            TextRenderer.DrawText(e.Graphics, _pillText, FontCaption, pillDetailStatus.ClientRectangle, _pillFg, TfCenter);
+        };
+    }
+
+    // Tiêu đề cột của bảng danh sách (dùng chung hình học với OrderRowPanel nên luôn thẳng cột)
+    private void PanelListHeader_Paint(object? sender, PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        int w = panelListHeader.Width - _orderScrollBar;
+        var (wide, midX, colW) = GetColumns(w);
+        int h = panelListHeader.Height;
+
+        using (var pen = new Pen(AppColors.OutlineVariant))
+            g.DrawLine(pen, 0, h - 1, panelListHeader.Width, h - 1);
+
+        TextRenderer.DrawText(g, "ĐƠN HÀNG", FontCaption, new Rectangle(ColPadL, 0, LeftColW, h), AppColors.OnSurfaceVariant, Tf);
+        if (wide)
+        {
+            TextRenderer.DrawText(g, "NHÂN VIÊN", FontCaption, new Rectangle(midX, 0, colW - 8, h), AppColors.OnSurfaceVariant, Tf);
+            TextRenderer.DrawText(g, "THỜI GIAN", FontCaption, new Rectangle(midX + colW, 0, colW - 8, h), AppColors.OnSurfaceVariant, Tf);
+            TextRenderer.DrawText(g, "NGUỒN", FontCaption, new Rectangle(midX + colW * 2, 0, colW - 8, h), AppColors.OnSurfaceVariant, Tf);
+        }
+        TextRenderer.DrawText(g, "TỔNG TIỀN / TRẠNG THÁI", FontCaption,
+            new Rectangle(w - ColPadR - RightBlockW - 30, 0, RightBlockW + 30, h), AppColors.OnSurfaceVariant, TfRight);
+    }
+
+    // =====================================================================
+    // TẢI & LỌC DANH SÁCH
+    // =====================================================================
 
     private async Task LoadOrdersAsync()
     {
+        var version = ++_loadVersion;
+        btnRefresh.Enabled = false;
         try
         {
-            int? status = cbFilterStatus.SelectedIndex > 0 ? cbFilterStatus.SelectedIndex - 1 : null;
-            _orders = await _api.GetOrdersAsync(dtpFilterDate.Value.Date, status);
-            RenderOrderList();
+            // Luôn tải CẢ ngày (không lọc trạng thái trên server) để thẻ thống kê luôn đủ số liệu;
+            // lọc theo trạng thái làm tại chỗ trong ApplyFilter().
+            var list = await _api.GetOrdersAsync(dtpFilterDate.Value.Date, null);
+            if (version != _loadVersion) return;
+
+            _allOrders = list;
+            ApplyFilter();
+
+            // Đơn đang xem còn trong danh sách -> tải lại chi tiết để thấy trạng thái mới nhất
+            if (_selectedOrderId is int selected) await ShowOrderDetailAsync(selected);
         }
         catch (Exception ex)
         {
-            flowOrders.Controls.Clear();
-            flowOrders.Controls.Add(new Label { Text = $"Không tải được danh sách đơn: {ex.Message}", Font = AppFonts.BodyMd, ForeColor = AppColors.Error, AutoSize = true, Margin = new Padding(4, 12, 0, 0) });
+            if (version != _loadVersion) return;
+            _allOrders = new();
+            _orders = new();
+            UpdateStats();
+            RenderOrderList();
+            lblEmptyList.Text = $"Không tải được danh sách đơn: {ex.Message}";
+            lblEmptyList.ForeColor = AppColors.Error;
+            lblEmptyList.Visible = true;
         }
+        finally
+        {
+            if (version == _loadVersion) btnRefresh.Enabled = true;
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        int idx = cbFilterStatus.SelectedIndex;
+        _orders = idx > 0
+            ? _allOrders.Where(o => o.Status == idx - 1).ToList()
+            : _allOrders.ToList();
+
+        UpdateStats();
+        lblCount.Text = $"{_orders.Count} đơn hàng";
+
+        // Đơn đang chọn không còn trong danh sách đã lọc -> bỏ chọn
+        if (_selectedOrderId is int selected && !_orders.Any(o => o.Id == selected))
+        {
+            _selectedOrderId = null;
+            ShowDetailEmpty();
+        }
+
+        RenderOrderList();
+    }
+
+    private void UpdateStats()
+    {
+        int total = _allOrders.Count;
+        int open = _allOrders.Count(o => o.Status == 0);
+        int paid = _allOrders.Count(o => o.Status == 1);
+        decimal revenue = _allOrders.Where(o => o.Status == 1).Sum(o => o.TotalAmount);
+
+        cardTotal.Configure("🧾", AppColors.Primary, AppColors.ErrorContainer, "TỔNG SỐ ĐƠN", total.ToString("N0"));
+        cardOpen.Configure("⏳", Color.FromArgb(166, 106, 0), Color.FromArgb(255, 243, 224), "ĐANG MỞ", open.ToString("N0"));
+        cardPaid.Configure("✅", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "ĐÃ THANH TOÁN", paid.ToString("N0"));
+        cardRevenue.Configure("💰", AppColors.Secondary, AppColors.SecondaryContainer, "DOANH THU", $"{revenue:N0}đ");
     }
 
     private void RenderOrderList()
     {
-        flowOrders.Controls.Clear();
+        panelOrderScroll.SuspendLayout();
+
+        var old = _orderRows.ToList();
+        _orderRows.Clear();
+        panelOrderScroll.Controls.Clear();
+        foreach (var r in old) r.Dispose();
+
+        foreach (var order in _orders)
+        {
+            var id = order.Id;
+            var row = new OrderRowPanel(order) { Selected = id == _selectedOrderId };
+            row.Click += async (s, e) => await SelectOrderAsync(id);
+            _orderRows.Add(row);
+        }
+        panelOrderScroll.Controls.AddRange(_orderRows.ToArray());
 
         if (_orders.Count == 0)
         {
-            flowOrders.Controls.Add(new Label { Text = "Không có đơn hàng nào trong ngày này.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(4, 12, 0, 0) });
-            return;
+            lblEmptyList.Text = _allOrders.Count == 0
+                ? $"Chưa có đơn hàng nào trong ngày {dtpFilterDate.Value:dd/MM/yyyy}."
+                : "Không có đơn hàng nào ở trạng thái này.";
+            lblEmptyList.ForeColor = AppColors.OnSurfaceVariant;
         }
+        lblEmptyList.Visible = _orders.Count == 0;
 
-        foreach (var order in _orders)
-            flowOrders.Controls.Add(BuildOrderRow(order));
+        panelOrderScroll.ResumeLayout(true);
+        LayoutOrderRows(reposition: true);
     }
 
-    private static Color OrderStatusColor(int status) => status switch
+    private void LayoutOrderRows(bool reposition)
     {
-        1 => AppColors.Success,
-        2 => AppColors.Error,
-        _ => AppColors.Tertiary,
-    };
+        _orderScrollBar = LayoutStack(panelOrderScroll, _orderRows, reposition);
+        panelListHeader.Invalidate();
+    }
 
-    private Panel BuildOrderRow(OrderSummaryDto order)
+    private void LayoutItemRows(bool reposition) => LayoutStack(panelItems, _itemRows, reposition);
+
+    // Xếp các dòng nối tiếp nhau, tràn hết bề ngang vùng chứa (trừ thanh cuộn nếu có).
+    // Trả về bề rộng thanh cuộn đang chiếm chỗ.
+    private static int LayoutStack(Panel host, IReadOnlyList<Control> rows, bool reposition)
     {
-        var isSelected = _selectedOrderId == order.Id;
-        var row = new Panel { Size = new Size(720, 64), BackColor = isSelected ? AppColors.SurfaceLow : Color.White, Margin = new Padding(0, 0, 0, 8), Cursor = Cursors.Hand, Tag = order.Id };
-        row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(isSelected ? AppColors.Primary : AppColors.OutlineVariant, isSelected ? 2 : 1), 1, 1, row.Width - 3, row.Height - 3);
+        if (rows.Count == 0) return 0;
 
-        var statusIndex = Math.Clamp(order.Status, 0, OrderStatusLabels.Length - 1);
-        var stripe = new Panel { Size = new Size(4, 64), Location = new Point(0, 0), BackColor = OrderStatusColor(statusIndex) };
+        int totalHeight = rows.Sum(r => r.Height);
+        bool needScroll = totalHeight > host.Height;
+        int scrollBar = needScroll ? SystemInformation.VerticalScrollBarWidth : 0;
+        int width = Math.Max(50, host.Width - scrollBar);
 
-        var lblTable = new Label { Text = $"Đơn #{order.Id} · {order.TableName}", Font = AppFonts.LabelLg, Location = new Point(16, 8), AutoSize = true };
-        var lblMeta = new Label { Text = $"{order.EmployeeName} · {order.OrderTime:HH:mm dd/MM} · {order.ItemCount} món", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(16, 32), AutoSize = true };
-        var lblTotal = new Label { Text = $"{order.TotalAmount:N0}đ", Font = AppFonts.LabelLg, ForeColor = AppColors.Primary, Location = new Point(500, 12), AutoSize = true };
-        var lblStatus = new Label { Text = OrderStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = OrderStatusColor(statusIndex), Location = new Point(500, 34), AutoSize = true };
+        if (reposition) host.AutoScrollPosition = Point.Empty;
 
-        row.Controls.Add(stripe);
-        row.Controls.Add(lblTable);
-        row.Controls.Add(lblMeta);
-        row.Controls.Add(lblTotal);
-        row.Controls.Add(lblStatus);
-        if (order.IsFromWeb)
+        int y = 0;
+        foreach (var r in rows)
         {
-            row.Controls.Add(new Label
-            {
-                Text = "🌐 Web",
-                Font = AppFonts.LabelMd,
-                ForeColor = Color.White,
-                BackColor = AppColors.Secondary,
-                AutoSize = false,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Size = new Size(60, 20),
-                Location = new Point(640, 8)
-            });
+            if (reposition) r.Location = new Point(0, y);
+            r.Width = width;
+            y += r.Height;
         }
-        async void OpenDetail(object? s, EventArgs e) => await ShowOrderDetailAsync(order.Id);
-        row.Click += OpenDetail;
-        lblTable.Click += OpenDetail;
-        lblMeta.Click += OpenDetail;
-        lblTotal.Click += OpenDetail;
-        lblStatus.Click += OpenDetail;
+        return scrollBar;
+    }
 
-        return row;
+    // =====================================================================
+    // CHI TIẾT ĐƠN
+    // =====================================================================
+
+    private async Task SelectOrderAsync(int orderId)
+    {
+        _selectedOrderId = orderId;
+        foreach (var r in _orderRows) r.Selected = r.Order.Id == orderId;
+        await ShowOrderDetailAsync(orderId);
+    }
+
+    private void ShowDetailEmpty()
+    {
+        _detailVersion++;
+        ClearItemRows();
+        panelDetailContent.Visible = false;
+        panelDetailEmpty.Visible = true;
+    }
+
+    private void ClearItemRows()
+    {
+        var old = _itemRows.ToList();
+        _itemRows.Clear();
+        panelItems.Controls.Clear();
+        foreach (var r in old) r.Dispose();
     }
 
     private async Task ShowOrderDetailAsync(int orderId)
     {
-        _selectedOrderId = orderId;
-        RenderOrderList();
+        var version = ++_detailVersion;
+        var summary = _allOrders.FirstOrDefault(o => o.Id == orderId);
 
-        panelDetail.Controls.Clear();
-        panelDetail.Visible = true;
-        panelDetail.Controls.Add(new Label { Text = "Đang tải...", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true });
+        panelDetailEmpty.Visible = false;
+        panelDetailContent.Visible = true;
+
+        // Hiện ngay phần đầu từ dữ liệu danh sách trong lúc chờ tải danh sách món
+        FillDetailHead(orderId, summary, null);
+        ClearItemRows();
+        lblItemsCaption.Text = "ĐANG TẢI MÓN...";
+        SetFooter(summary?.TotalAmount ?? 0, canCancel: false);
 
         OrderDto? order;
         try
@@ -127,137 +334,163 @@ public partial class OrderManagementControl : UserControl
         }
         catch (Exception ex)
         {
-            panelDetail.Controls.Clear();
-            panelDetail.Controls.Add(new Label { Text = $"Không tải được chi tiết đơn: {ex.Message}", Font = AppFonts.BodyMd, ForeColor = AppColors.Error, AutoSize = true });
+            if (version != _detailVersion) return;
+            lblItemsCaption.Text = $"KHÔNG TẢI ĐƯỢC CHI TIẾT: {ex.Message}";
             return;
         }
 
-        panelDetail.Controls.Clear();
+        if (version != _detailVersion) return;
         if (order is null)
         {
-            panelDetail.Controls.Add(new Label { Text = "Không tìm thấy đơn hàng này.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true });
+            lblItemsCaption.Text = "KHÔNG TÌM THẤY ĐƠN HÀNG NÀY";
             return;
         }
 
-        var lblTitle = new Label { Text = $"Đơn #{order.Id} · {order.Table?.TableName}", Font = AppFonts.HeadlineSm, Location = new Point(0, 0), AutoSize = true };
-        var statusIndex = Math.Clamp(order.Status, 0, OrderStatusLabels.Length - 1);
-        var lblStatus = new Label { Text = OrderStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = OrderStatusColor(statusIndex), Location = new Point(0, 32), AutoSize = true };
-        var sourceText = order.Source is null ? "" : $" · Nguồn: {DataSources.Label(order.Source)}";
-        var lblTime = new Label { Text = order.CreatedAt.ToString("HH:mm dd/MM/yyyy") + sourceText, Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 56), AutoSize = true };
-        panelDetail.Controls.Add(lblTitle);
-        panelDetail.Controls.Add(lblStatus);
-        panelDetail.Controls.Add(lblTime);
+        FillDetailHead(orderId, summary, order);
 
-        var flowItems = new FlowLayoutPanel { Location = new Point(0, 92), Size = new Size(370, 440), AutoScroll = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BorderStyle = BorderStyle.FixedSingle };
-        if (order.OrderItems.Count == 0)
-        {
-            flowItems.Controls.Add(new Label { Text = "(Chưa có món nào)", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(6) });
-        }
-        else
-        {
-            foreach (var item in order.OrderItems)
-                flowItems.Controls.Add(BuildOrderItemRow(item, order.Status));
-        }
-        panelDetail.Controls.Add(flowItems);
+        panelItems.SuspendLayout();
+        ClearItemRows();
+        foreach (var item in order.OrderItems)
+            _itemRows.Add(BuildItemRow(item, order.Status));
+        panelItems.Controls.AddRange(_itemRows.ToArray());
+        panelItems.ResumeLayout(true);
 
-        var lblTotal = new Label { Text = $"Tổng cộng: {order.TotalAmount:N0}đ", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(0, 544), AutoSize = true };
-        panelDetail.Controls.Add(lblTotal);
+        lblItemsCaption.Text = order.OrderItems.Count == 0
+            ? "CHƯA CÓ MÓN NÀO"
+            : $"MÓN ĐÃ GỌI ({order.OrderItems.Count})";
+        LayoutItemRows(reposition: true);
 
-        if (order.Status == 0)
+        SetFooter(order.TotalAmount, canCancel: order.Status == 0);
+    }
+
+    private void FillDetailHead(int orderId, OrderSummaryDto? summary, OrderDto? order)
+    {
+        int status = order?.Status ?? summary?.Status ?? 0;
+        int statusIndex = Math.Clamp(status, 0, OrderStatusLabels.Length - 1);
+        var (fg, bg) = OrderStatusPalette(statusIndex);
+
+        lblDetailTitle.Text = $"Đơn #{orderId}";
+        SetDetailPill(OrderStatusLabels[statusIndex], fg, bg);
+
+        // Đơn mang về không có bàn -> lấy tên hiển thị từ danh sách (VD "Mang về MV-003")
+        string place = !string.IsNullOrWhiteSpace(summary?.TableName) ? summary!.TableName
+            : order?.Table?.TableName is { Length: > 0 } t ? t
+            : "Mang về";
+        lblInfoPlace.Text = place;
+        lblInfoStaff.Text = string.IsNullOrWhiteSpace(summary?.EmployeeName) ? "—" : summary!.EmployeeName;
+
+        DateTime? time = order?.CreatedAt ?? summary?.OrderTime;
+        lblInfoTime.Text = time.HasValue ? time.Value.ToString("HH:mm dd/MM/yyyy") : "—";
+
+        string? source = order?.Source ?? summary?.Source;
+        lblInfoSource.Text = DataSources.Label(source);
+        lblInfoSource.ForeColor = string.Equals(source, DataSources.Web, StringComparison.OrdinalIgnoreCase)
+            ? AppColors.Secondary : AppColors.OnSurface;
+    }
+
+    private void SetDetailPill(string text, Color fg, Color bg)
+    {
+        _pillText = text;
+        _pillFg = fg;
+        _pillBg = bg;
+
+        int w = TextRenderer.MeasureText(text, FontCaption, Size.Empty, TextFormatFlags.NoPadding).Width + 26;
+        pillDetailStatus.Size = new Size(w, 24);
+        pillDetailStatus.Left = lblDetailTitle.Left + lblDetailTitle.PreferredWidth + 12;
+        pillDetailStatus.Top = lblDetailTitle.Top + Math.Max(0, (lblDetailTitle.PreferredHeight - 24) / 2);
+        pillDetailStatus.Invalidate();
+    }
+
+    private void SetFooter(decimal total, bool canCancel)
+    {
+        lblTotalValue.Text = $"{total:N0}đ";
+        btnCancelOrder.Visible = canCancel;
+        btnCancelOrder.Enabled = true;
+        panelDetailFooter.Height = canCancel ? 112 : 60;
+    }
+
+    private ItemRowPanel BuildItemRow(OrderItemDto item, int orderStatus)
+    {
+        var statusIndex = Math.Clamp(item.KitchenStatus, 0, KitchenStatusLabels.Length - 1);
+        var cancelled = statusIndex == 4;
+
+        string note = cancelled && !string.IsNullOrWhiteSpace(item.CancelReason) ? $"Lý do hủy: {item.CancelReason}"
+            : !string.IsNullOrWhiteSpace(item.Note) ? $"Ghi chú: {item.Note}"
+            : "";
+
+        var row = new ItemRowPanel
         {
-            var btnCancelOrder = new Button { Text = "Hủy toàn bộ đơn", Location = new Point(0, 584), Size = new Size(370, 40), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Error, ForeColor = Color.White };
-            btnCancelOrder.FlatAppearance.BorderSize = 0;
-            btnCancelOrder.Click += async (s, e) =>
+            ItemName = item.MenuItem?.Name ?? "(Món đã xóa)",
+            Qty = item.Quantity,
+            PriceText = item.MenuItem is null ? "" : $"{item.MenuItem.Price * item.Quantity:N0}đ",
+            StatusText = KitchenStatusLabels[statusIndex],
+            StatusColor = KitchenStatusColor(statusIndex),
+            Takeaway = item.IsTakeaway,
+            Cancelled = cancelled,
+            Note = note,
+        };
+        row.Height = ItemRowPanel.HeightFor(note.Length > 0);
+
+        // Chỉ cho hủy món khi đơn đang mở và món ở trạng thái Mới gọi (MoiGoi = 0)
+        if (orderStatus == 0 && statusIndex == 0)
+        {
+            var btn = new Button
             {
-                string reason = PromptForCancelReason("Hủy toàn bộ đơn", "Nhập lý do hủy đơn hàng:");
-                if (string.IsNullOrWhiteSpace(reason)) return;
-
-                btnCancelOrder.Enabled = false;
-                try
-                {
-                    await _api.CancelOrderAsync(order.Id, _userId, reason);
-                    await LoadOrdersAsync();
-                    await ShowOrderDetailAsync(order.Id);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Không hủy được đơn: {ex.Message}", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    btnCancelOrder.Enabled = true;
-                }
+                Text = "Hủy món",
+                Size = new Size(76, 26),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = AppColors.Error,
+                Font = FontCaption,
+                Cursor = Cursors.Hand,
             };
-            panelDetail.Controls.Add(btnCancelOrder);
+            btn.FlatAppearance.BorderColor = AppColors.Error;
+            btn.Click += async (s, e) => await CancelItemAsync(item, btn);
+            row.AttachCancelButton(btn);
+        }
+        return row;
+    }
+
+    // =====================================================================
+    // HỦY ĐƠN / HỦY MÓN
+    // =====================================================================
+
+    private async Task CancelCurrentOrderAsync()
+    {
+        if (_selectedOrderId is not int orderId) return;
+
+        string reason = PromptForCancelReason("Hủy toàn bộ đơn", "Nhập lý do hủy đơn hàng:");
+        if (string.IsNullOrWhiteSpace(reason)) return;
+
+        btnCancelOrder.Enabled = false;
+        try
+        {
+            await _api.CancelOrderAsync(orderId, _userId, reason);
+            await LoadOrdersAsync(); // tải lại danh sách + chi tiết đơn đang chọn
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Không hủy được đơn: {ex.Message}", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            btnCancelOrder.Enabled = true;
         }
     }
 
-    private static Color KitchenStatusColor(int status) => status switch
+    private async Task CancelItemAsync(OrderItemDto item, Button btn)
     {
-        2 => AppColors.Tertiary,
-        3 => AppColors.Success,
-        4 => AppColors.Outline,
-        _ => AppColors.Warning,
-    };
+        string reason = PromptForCancelReason("Hủy món", $"Nhập lý do hủy món \"{item.MenuItem?.Name}\":");
+        if (string.IsNullOrWhiteSpace(reason)) return;
 
-    private Panel BuildOrderItemRow(OrderItemDto item, int orderStatus)
-    {
-        var row = new Panel { Size = new Size(350, 60), Margin = new Padding(4) };
-
-        var lblName = new Label { Text = $"{item.MenuItem?.Name} x{item.Quantity}", Font = AppFonts.LabelMd, Location = new Point(0, 2), Size = new Size(230, 20), AutoEllipsis = true };
-        var statusIndex = Math.Clamp(item.KitchenStatus, 0, KitchenStatusLabels.Length - 1);
-        var lblStatus = new Label { Text = KitchenStatusLabels[statusIndex], Font = AppFonts.BodyMd, ForeColor = KitchenStatusColor(statusIndex), Location = new Point(0, 22), AutoSize = true };
-        var lblPrice = new Label
+        btn.Enabled = false;
+        try
         {
-            Text = item.MenuItem is null ? "" : $"{item.MenuItem.Price * item.Quantity:N0}đ",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(0, 40),
-            AutoSize = true,
-        };
-
-        row.Controls.Add(lblName);
-        row.Controls.Add(lblStatus);
-        row.Controls.Add(lblPrice);
-
-        // Đánh dấu món khách yêu cầu mang về
-        if (item.IsTakeaway)
-        {
-            var lblTakeaway = new Label
-            {
-                Text = "· Mang về",
-                Font = AppFonts.LabelMd,
-                ForeColor = AppColors.Primary,
-                AutoSize = true
-            };
-            row.Controls.Add(lblTakeaway);
-            lblTakeaway.Location = new Point(lblStatus.PreferredWidth + 6, 22);
+            await _api.CancelOrderItemAsync(item.Id, _userId, reason, item.RowVer);
+            await LoadOrdersAsync();
         }
-
-        // Chỉ cho phép bấm hủy món khi món đang ở trạng thái Mới gọi (MoiGoi = 0)
-        if (orderStatus == 0 && statusIndex == 0)
+        catch (Exception ex)
         {
-            var btnCancelItem = new Button { Text = "Hủy món", Location = new Point(250, 16), Size = new Size(90, 28), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Error, ForeColor = Color.White, Font = AppFonts.LabelMd };
-            btnCancelItem.FlatAppearance.BorderSize = 0;
-            btnCancelItem.Click += async (s, e) =>
-            {
-                string reason = PromptForCancelReason("Hủy món", $"Nhập lý do hủy món \"{item.MenuItem?.Name}\":");
-                if (string.IsNullOrWhiteSpace(reason)) return;
-
-                btnCancelItem.Enabled = false;
-                try
-                {
-                    await _api.CancelOrderItemAsync(item.Id, _userId, reason, item.RowVer);
-                    if (_selectedOrderId.HasValue) await ShowOrderDetailAsync(_selectedOrderId.Value);
-                    await LoadOrdersAsync();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Không hủy được món: {ex.Message}", "Lỗi / Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    btnCancelItem.Enabled = true;
-                }
-            };
-            row.Controls.Add(btnCancelItem);
+            MessageBox.Show($"Không hủy được món: {ex.Message}", "Lỗi / Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            btn.Enabled = true;
         }
-
-        return row;
     }
 
     private string PromptForCancelReason(string title, string prompt)
@@ -265,23 +498,234 @@ public partial class OrderManagementControl : UserControl
         using var dialog = new Form
         {
             Text = title,
-            Width = 360,
-            Height = 180,
+            Width = 380,
+            Height = 190,
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
-            MinimizeBox = false
+            MinimizeBox = false,
+            BackColor = Color.White,
         };
 
-        var lblPrompt = new Label { Text = prompt, Font = AppFonts.BodyMd, Location = new Point(16, 12), AutoSize = true };
-        var txtReason = new TextBox { Location = new Point(16, 36), Width = 310, Font = AppFonts.BodyMd, Text = "Khách đổi ý" };
-        var btnOk = new Button { Text = "Đồng ý", Location = new Point(110, 80), Size = new Size(100, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var lblPrompt = new Label { Text = prompt, Font = AppFonts.BodyMd, Location = new Point(16, 14), AutoSize = true };
+        var txtReason = new TextBox { Location = new Point(16, 42), Width = 330, Font = AppFonts.BodyMd, Text = "Khách đổi ý" };
+        var btnOk = new Button
+        {
+            Text = "Đồng ý",
+            Location = new Point(120, 88),
+            Size = new Size(110, 34),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+            Font = AppFonts.LabelLg,
+            Cursor = Cursors.Hand,
+        };
+        btnOk.FlatAppearance.BorderSize = 0;
 
         dialog.Controls.Add(lblPrompt);
         dialog.Controls.Add(txtReason);
         dialog.Controls.Add(btnOk);
         dialog.AcceptButton = btnOk;
+        txtReason.SelectAll();
 
-        return dialog.ShowDialog() == DialogResult.OK ? txtReason.Text.Trim() : string.Empty;
+        return dialog.ShowDialog(this) == DialogResult.OK ? txtReason.Text.Trim() : string.Empty;
+    }
+
+    // =====================================================================
+    // MÀU SẮC / HÌNH HỌC DÙNG CHUNG
+    // =====================================================================
+
+    // Đang mở = vàng, Đã thanh toán = xanh, Đã hủy = đỏ (trước đây "đang mở" và "đã thanh toán" cùng màu xanh nên khó phân biệt)
+    private static (Color Fg, Color Bg) OrderStatusPalette(int status) => status switch
+    {
+        1 => (AppColors.Tertiary, Color.FromArgb(224, 242, 241)),
+        2 => (AppColors.Error, AppColors.ErrorContainer),
+        _ => (Color.FromArgb(166, 106, 0), Color.FromArgb(255, 243, 205)),
+    };
+
+    private static Color KitchenStatusColor(int status) => status switch
+    {
+        2 => AppColors.Tertiary,
+        3 => AppColors.Success,
+        4 => AppColors.Outline,
+        _ => Color.FromArgb(200, 120, 0),
+    };
+
+    private static (bool Wide, int MidX, int ColW) GetColumns(int width)
+    {
+        bool wide = width >= WideMin;
+        int midX = ColPadL + LeftColW + 16;
+        int midEnd = width - ColPadR - RightBlockW - 16;
+        int colW = wide ? Math.Max(60, (midEnd - midX) / 3) : 0;
+        return (wide, midX, colW);
+    }
+
+    private static void FillPill(Graphics g, Rectangle r, Color back)
+    {
+        var old = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var path = new GraphicsPath())
+        {
+            int d = r.Height;
+            path.AddArc(r.X, r.Y, d, d, 90, 180);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+            path.CloseFigure();
+            using var brush = new SolidBrush(back);
+            g.FillPath(brush, path);
+        }
+        g.SmoothingMode = old;
+    }
+
+    // =====================================================================
+    // DÒNG ĐƠN (tự vẽ)
+    // =====================================================================
+
+    private sealed class OrderRowPanel : Panel
+    {
+        public const int RowHeight = 68;
+
+        public OrderSummaryDto Order { get; }
+        private bool _selected;
+        private bool _hover;
+
+        public bool Selected
+        {
+            get => _selected;
+            set { if (_selected != value) { _selected = value; Invalidate(); } }
+        }
+
+        public OrderRowPanel(OrderSummaryDto order)
+        {
+            Order = order;
+            DoubleBuffered = true;
+            ResizeRedraw = true;
+            Cursor = Cursors.Hand;
+            Height = RowHeight;
+            BackColor = Color.White;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var o = Order;
+            int statusIndex = Math.Clamp(o.Status, 0, OrderStatusLabels.Length - 1);
+            var (fg, bg) = OrderStatusPalette(statusIndex);
+
+            // Nền + đường kẻ dưới + dải màu trạng thái bên trái
+            var back = _selected ? SelectedBg : _hover ? AppColors.SurfaceLow : Color.White;
+            using (var b = new SolidBrush(back)) g.FillRectangle(b, ClientRectangle);
+            using (var pen = new Pen(AppColors.OutlineVariant)) g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
+            using (var b = new SolidBrush(fg)) g.FillRectangle(b, 0, 0, 4, Height - 1);
+
+            string place = string.IsNullOrWhiteSpace(o.TableName) ? "Mang về" : o.TableName;
+            string staff = string.IsNullOrWhiteSpace(o.EmployeeName) ? "—" : o.EmployeeName;
+            var (wide, midX, colW) = GetColumns(Width);
+
+            if (wide)
+            {
+                TextRenderer.DrawText(g, $"Đơn #{o.Id}", FontTitle, new Rectangle(ColPadL, 10, LeftColW, 26), AppColors.OnSurface, Tf);
+                TextRenderer.DrawText(g, $"{place} · {o.ItemCount} món", FontBody, new Rectangle(ColPadL, 36, LeftColW, 22), AppColors.OnSurfaceVariant, Tf);
+
+                TextRenderer.DrawText(g, staff, FontBody, new Rectangle(midX, 0, colW - 8, Height), AppColors.OnSurface, Tf);
+                TextRenderer.DrawText(g, o.OrderTime.ToString("HH:mm dd/MM/yyyy"), FontBody, new Rectangle(midX + colW, 0, colW - 8, Height), AppColors.OnSurface, Tf);
+                TextRenderer.DrawText(g, DataSources.Label(o.Source), o.IsFromWeb ? FontBodyBold : FontBody,
+                    new Rectangle(midX + colW * 2, 0, colW - 8, Height), o.IsFromWeb ? AppColors.Secondary : AppColors.OnSurface, Tf);
+            }
+            else
+            {
+                int leftW = Math.Max(60, Width - ColPadL - ColPadR - RightBlockW - 12);
+                TextRenderer.DrawText(g, $"Đơn #{o.Id} · {place}", FontTitle, new Rectangle(ColPadL, 10, leftW, 26), AppColors.OnSurface, Tf);
+                string meta = $"{staff} · {o.OrderTime:HH:mm dd/MM} · {o.ItemCount} món" + (o.IsFromWeb ? " · Web" : "");
+                TextRenderer.DrawText(g, meta, FontBody, new Rectangle(ColPadL, 36, leftW, 22), AppColors.OnSurfaceVariant, Tf);
+            }
+
+            // Khối bên phải: tổng tiền + nhãn trạng thái
+            int rightX = Width - ColPadR - RightBlockW;
+            TextRenderer.DrawText(g, $"{o.TotalAmount:N0}đ", FontTotal, new Rectangle(rightX, 8, RightBlockW, 26), AppColors.Primary, TfRight);
+
+            string statusText = OrderStatusLabels[statusIndex];
+            int pillW = TextRenderer.MeasureText(g, statusText, FontCaption, Size.Empty, TextFormatFlags.NoPadding).Width + 24;
+            var pill = new Rectangle(Width - ColPadR - pillW, 38, pillW, 22);
+            FillPill(g, pill, bg);
+            TextRenderer.DrawText(g, statusText, FontCaption, pill, fg, TfCenter);
+        }
+    }
+
+    // =====================================================================
+    // DÒNG MÓN TRONG CHI TIẾT (tự vẽ, riêng nút "Hủy món" là Button thật)
+    // =====================================================================
+
+    private sealed class ItemRowPanel : Panel
+    {
+        public string ItemName = "";
+        public int Qty;
+        public string PriceText = "";
+        public string StatusText = "";
+        public Color StatusColor = Color.Gray;
+        public bool Takeaway;
+        public bool Cancelled;
+        public string Note = "";
+        private Button? _cancelButton;
+
+        public static int HeightFor(bool hasNote) => hasNote ? 84 : 64;
+
+        public ItemRowPanel()
+        {
+            DoubleBuffered = true;
+            ResizeRedraw = true;
+            BackColor = Color.White;
+        }
+
+        public void AttachCancelButton(Button btn)
+        {
+            _cancelButton = btn;
+            Controls.Add(btn);
+            PositionButton();
+        }
+
+        private void PositionButton()
+        {
+            if (_cancelButton is not null)
+                _cancelButton.Location = new Point(Math.Max(0, Width - _cancelButton.Width - 2), 32);
+        }
+
+        protected override void OnResize(EventArgs eventargs)
+        {
+            base.OnResize(eventargs);
+            PositionButton();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var g = e.Graphics;
+            const int priceW = 110;
+
+            var nameColor = Cancelled ? AppColors.Outline : AppColors.OnSurface;
+            TextRenderer.DrawText(g, $"{ItemName}  x{Qty}", Cancelled ? FontStrike : FontBodyBold,
+                new Rectangle(0, 6, Math.Max(20, Width - priceW - 8), 24), nameColor, Tf);
+            TextRenderer.DrawText(g, PriceText, FontBodyBold, new Rectangle(Width - priceW, 6, priceW, 24), nameColor, TfRight);
+
+            string st = "● " + StatusText;
+            int sw = TextRenderer.MeasureText(g, st, FontCaption, Size.Empty, TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, st, FontCaption, new Rectangle(0, 34, sw + 6, 22), StatusColor, Tf);
+
+            if (Takeaway)
+            {
+                var chip = new Rectangle(sw + 16, 35, 66, 20);
+                FillPill(g, chip, AppColors.ErrorContainer);
+                TextRenderer.DrawText(g, "Mang về", FontCaption, chip, AppColors.Primary, TfCenter);
+            }
+
+            if (Note.Length > 0)
+                TextRenderer.DrawText(g, Note, FontSmall, new Rectangle(0, 58, Width, 20), AppColors.OnSurfaceVariant, Tf);
+
+            using var pen = new Pen(AppColors.OutlineVariant);
+            g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
+        }
     }
 }

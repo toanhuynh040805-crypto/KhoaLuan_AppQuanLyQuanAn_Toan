@@ -21,6 +21,14 @@ public partial class DashboardControl : UserControl
 
     private void WireUpEvents()
     {
+        // Mỗi dòng món bán chạy luôn rộng bằng khung -> giá tiền không bị cắt.
+        // (Đặt ở đây, không đặt trong InitializeComponent vì Designer không đọc được lambda.)
+        flowTopItems.SizeChanged += (s, e) =>
+        {
+            foreach (Control c in flowTopItems.Controls)
+                if (c is Panel) c.Width = flowTopItems.ClientSize.Width;
+        };
+
         panelChartCard.Paint += (s, e) =>
             e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelChartCard.Width - 1, panelChartCard.Height - 1);
         panelTopItemsCard.Paint += (s, e) =>
@@ -87,8 +95,21 @@ public partial class DashboardControl : UserControl
 
     private async Task LoadTopItemsAsync()
     {
-        flowTopItems.Controls.Clear();
-        var items = await _api.GetTopItemsAsync(DateTime.Today, DateTime.Today, take: 5);
+        foreach (var old in flowTopItems.Controls.Cast<Control>().ToList())
+        {
+            flowTopItems.Controls.Remove(old);
+            old.Dispose();
+        }
+
+        var topTask = _api.GetTopItemsAsync(DateTime.Today, DateTime.Today, take: 5);
+        var menuTask = _api.GetMenuAsync();
+        await Task.WhenAll(topTask, menuTask);
+
+        var items = topTask.Result;
+        // Báo cáo chỉ trả MenuItemId -> tra ImageUrl từ danh sách thực đơn.
+        var imageById = menuTask.Result
+            .Where(m => !string.IsNullOrWhiteSpace(m.ImageUrl))
+            .ToDictionary(m => m.Id, m => m.ImageUrl!);
 
         if (items.Count == 0)
         {
@@ -98,7 +119,36 @@ public partial class DashboardControl : UserControl
 
         foreach (var item in items)
         {
-            BuildTopItemRow(flowTopItems, item.MenuItemName, $"Đã bán: {item.QuantitySold}", $"{item.Revenue:N0}đ");
+            imageById.TryGetValue(item.MenuItemId, out var imageUrl);
+            BuildTopItemRow(flowTopItems, item.MenuItemName, $"Đã bán: {item.QuantitySold}", $"{item.Revenue:N0}đ", imageUrl);
         }
+    }
+
+    private async Task LoadTopItemThumbAsync(Panel thumb, Label placeholder, string imageUrl)
+    {
+        var img = await _api.LoadMenuImageAsync(imageUrl);
+        if (img is null) return;
+        using (img)
+        {
+            if (thumb.IsDisposed) return;
+            var old = thumb.BackgroundImage;
+            thumb.BackgroundImage = CropToFill(img, thumb.Size);
+            thumb.BackgroundImageLayout = ImageLayout.None;
+            old?.Dispose();
+            placeholder.Visible = false;
+        }
+    }
+
+    // Cắt ảnh cho đầy vừa khung (kiểu "cover"), giữ tỷ lệ, không bị méo.
+    private static Bitmap CropToFill(Image src, Size target)
+    {
+        var bmp = new Bitmap(target.Width, target.Height);
+        using var g = Graphics.FromImage(bmp);
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        float scale = Math.Max((float)target.Width / src.Width, (float)target.Height / src.Height);
+        float w = target.Width / scale, h = target.Height / scale;
+        g.DrawImage(src, new Rectangle(Point.Empty, target),
+            (src.Width - w) / 2, (src.Height - h) / 2, w, h, GraphicsUnit.Pixel);
+        return bmp;
     }
 }

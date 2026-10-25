@@ -1,141 +1,532 @@
+using System.Diagnostics;
+using System.Globalization;
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
 
 namespace QuanAnWinForm.UserControls;
 
-// Man hinh "Thong ke & Bao cao" - danh cho QuanLy, ThuNgan. Gom 4 loai bao cao
-// dung yeu cau de cuong (khoan 5): Doanh thu, Mon an ban chay, Theo nhan vien,
-// Khuyen mai - dung CHUNG 1 bo loc thoi gian (cbPeriod) o goc tren ben phai.
+// Man hinh "Thong ke & Bao cao" - QuanLy, ThuNgan.
+// Bo loc: Hom nay / Chon ngay / Theo tuan / Theo thang / Theo quy (+ nut lui/tien ky).
+// Co nut "Xuat Excel" xuat toan bo bao cao cua ky dang xem.
 public partial class RevenueControl : UserControl
 {
+    private const int PeriodToday = 0;
+    private const int PeriodDay = 1;
+    private const int PeriodWeek = 2;
+    private const int PeriodMonth = 3;
+    private const int PeriodQuarter = 4;
+
     private readonly ApiService _api = new();
     private DateTime _from = DateTime.Today;
     private DateTime _to = DateTime.Today;
+    private string _periodLabel = "";
+    private bool _suppress;   // true khi dang set gia tri bo loc bang code -> khong reload
+    private int _version;     // chong ket qua cu ghi de ket qua moi khi bam loc nhanh
+
+    private readonly Label[] _insightCaptions = new Label[4];
+    private readonly Label[] _insightValues = new Label[4];
 
     private static readonly string[] InvoiceStatusLabels = { "Chưa thanh toán", "Đã thanh toán", "Đã hủy" };
+    private static readonly string[] Roman = { "I", "II", "III", "IV" };
 
     public RevenueControl()
     {
         InitializeComponent();
-        WireUpEvents();
+        ArrangeFilterBar();
+        BuildInsightRows();
         SetupGridColumns();
+        ApplyTheme();
+        InitPickers();
+        ApplyModeUI();
+        WireUpEvents();
 
-        cbPeriod.SelectedIndex = 0;
-        cbPeriod.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
-        btnRefresh.Click += async (s, e) => await ReloadAllAsync();
-
-        Load += async (s, e) => await ReloadAllAsync();
+        Load += async (s, e) =>
+        {
+            PositionHeaderButtons();
+            await ReloadAllAsync();
+        };
     }
 
-    // Xem giai thich chi tiet trong DashboardControl.cs: lambda khong duoc dat trong .Designer.cs.
+    // ------------------------------------------------------------------
+    // KHOI TAO
+    // ------------------------------------------------------------------
+
+    // Sap lai thanh loc tu dau (bo qua thu tu Designer): Xem theo | kieu loc | o chon | nam | nhan ky.
+    private void ArrangeFilterBar()
+    {
+        lblFilterCaption.Width = 100; // tranh bi cat chu "Xem theo:"
+
+        flowFilter.SuspendLayout();
+        flowFilter.Controls.Clear();
+        flowFilter.Controls.AddRange(new Control[]
+        {
+            lblFilterCaption, cbPeriod, dtpDate, cbWeek, cbMonth, cbQuarter, nudYear, lblRange
+        });
+        flowFilter.ResumeLayout(true);
+    }
+
+    private void InitPickers()
+    {
+        _suppress = true;
+        var today = DateTime.Today;
+        dtpDate.Value = today;
+        cbMonth.SelectedIndex = today.Month - 1;
+        cbQuarter.SelectedIndex = (today.Month - 1) / 3;
+        nudYear.Value = today.Year;
+        PopulateWeeks(ISOWeek.GetYear(today) == today.Year ? ISOWeek.GetWeekOfYear(today) : 1);
+        cbPeriod.SelectedIndex = PeriodToday;
+        _suppress = false;
+    }
+
     private void WireUpEvents()
     {
-        panelChartCard.Paint += (s, e) =>
-            e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelChartCard.Width - 1, panelChartCard.Height - 1);
-        panelInvoicesCard.Paint += (s, e) =>
-            e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelInvoicesCard.Width - 1, panelInvoicesCard.Height - 1);
+        // Vien cho cac the trang (lambda khong duoc dat trong .Designer.cs).
+        foreach (var ctl in new Control[] { pnlFilter, panelChartCard, panelInvoicesCard, pnlInsightsCard, pnlTop5Card })
+        {
+            var panel = ctl;
+            panel.Paint += (s, e) =>
+            {
+                using var pen = new Pen(AppColors.OutlineVariant);
+                e.Graphics.DrawRectangle(pen, 0, 0, panel.Width - 1, panel.Height - 1);
+            };
+            panel.Resize += (s, e) => panel.Invalidate();
+        }
+
+        pnlHeader.Resize += (s, e) => PositionHeaderButtons();
+
+        cbPeriod.SelectedIndexChanged += async (s, e) =>
+        {
+            ApplyModeUI();
+            if (cbPeriod.SelectedIndex == PeriodWeek) PopulateWeeks();
+            await ReloadAllAsync();
+        };
+        dtpDate.ValueChanged += async (s, e) => await ReloadAllAsync();
+        cbWeek.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
+        cbMonth.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
+        cbQuarter.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
+        nudYear.ValueChanged += async (s, e) =>
+        {
+            if (cbPeriod.SelectedIndex == PeriodWeek) PopulateWeeks();
+            await ReloadAllAsync();
+        };
+        btnRefresh.Click += async (s, e) => await ReloadAllAsync();
+        btnExport.Click += async (s, e) => await ExportExcelAsync();
+
+        // To mau trang thai hoa don.
+        gridInvoices.CellFormatting += (s, e) =>
+        {
+            if (e.ColumnIndex != 4 || e.Value is not string text) return;
+            e.CellStyle.ForeColor = text switch
+            {
+                "Đã thanh toán" => AppColors.Success,
+                "Đã hủy" => AppColors.Error,
+                _ => AppColors.Warning,
+            };
+        };
     }
 
-    // Cau hinh cot cho 3 grid moi (Mon an / Nhan vien / Khuyen mai) bang code thay
-    // vi Designer.cs cho gon - grid "Hoa don gan day" (gridInvoices) van giu khai
-    // bao cot san trong Designer.cs nhu ban goc.
+    // Dat 2 nut Xuat Excel / Lam moi sat mep phai cua dong tieu de.
+    private void PositionHeaderButtons()
+    {
+        var right = pnlHeader.ClientSize.Width;
+        btnRefresh.Location = new Point(right - btnRefresh.Width, 16);
+        btnExport.Location = new Point(btnRefresh.Left - btnExport.Width - 10, 16);
+    }
+
+    private void BuildInsightRows()
+    {
+        tlInsights.RowStyles.Clear();
+        tlInsights.RowCount = 4;
+        for (var i = 0; i < 4; i++)
+        {
+            tlInsights.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+
+            var caption = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 22,
+                AutoEllipsis = true,
+                Font = new Font("Segoe UI", 9.5F),
+                ForeColor = AppColors.OnSurfaceVariant,
+                Text = "—",
+                TextAlign = ContentAlignment.BottomLeft,
+            };
+            var value = new Label
+            {
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                ForeColor = AppColors.OnSurface,
+                Text = "—",
+                TextAlign = ContentAlignment.TopLeft,
+            };
+            var box = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            box.Controls.Add(value);   // Fill them truoc
+            box.Controls.Add(caption); // roi Top
+
+            _insightCaptions[i] = caption;
+            _insightValues[i] = value;
+            tlInsights.Controls.Add(box, 0, i);
+        }
+    }
+
     private void SetupGridColumns()
     {
-        gridTopItems.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        gridTopItems.Columns.Add("colRank", "Hạng");
-        gridTopItems.Columns.Add("colItemName", "Tên món");
-        gridTopItems.Columns.Add("colQty", "Số lượng bán");
-        gridTopItems.Columns.Add("colItemRevenue", "Doanh thu");
-        foreach (DataGridViewColumn c in gridTopItems.Columns) c.ReadOnly = true;
+        // Hoa don gan day
+        AddCol(gridInvoices, "colInvId", "Mã hóa đơn", 22);
+        AddCol(gridInvoices, "colInvTable", "Bàn / Kênh", 22);
+        AddCol(gridInvoices, "colInvTime", "Thời gian", 22);
+        AddCol(gridInvoices, "colInvAmount", "Số tiền", 20, right: true);
+        AddCol(gridInvoices, "colInvStatus", "Trạng thái", 22);
 
-        gridByEmployee.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        gridByEmployee.Columns.Add("colEmpName", "Nhân viên");
-        gridByEmployee.Columns.Add("colEmpInvoiceCount", "Số hóa đơn");
-        gridByEmployee.Columns.Add("colEmpRevenue", "Doanh thu");
-        gridByEmployee.Columns.Add("colEmpAvg", "Giá trị TB/hóa đơn");
-        foreach (DataGridViewColumn c in gridByEmployee.Columns) c.ReadOnly = true;
+        // Top 5 mon (the ben phai)
+        AddCol(gridTop5, "colTop5Rank", "#", 14);
+        AddCol(gridTop5, "colTop5Name", "Món", 66);
+        AddCol(gridTop5, "colTop5Qty", "SL", 20, right: true);
 
-        gridCampaigns.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
-        gridCampaigns.Columns.Add("colCampaignName", "Chiến dịch");
-        gridCampaigns.Columns.Add("colCampaignInvoiceCount", "Số hóa đơn áp dụng");
-        gridCampaigns.Columns.Add("colCampaignDiscount", "Tổng tiền đã giảm");
-        foreach (DataGridViewColumn c in gridCampaigns.Columns) c.ReadOnly = true;
+        // Mon ban chay
+        AddCol(gridTopItems, "colRank", "Hạng", 10);
+        AddCol(gridTopItems, "colItemName", "Tên món", 45);
+        AddCol(gridTopItems, "colQty", "Số lượng bán", 20, right: true);
+        AddCol(gridTopItems, "colItemRevenue", "Doanh thu", 25, right: true);
+
+        // Theo nhan vien
+        AddCol(gridByEmployee, "colEmpName", "Nhân viên", 35);
+        AddCol(gridByEmployee, "colEmpInvoiceCount", "Số hóa đơn", 20, right: true);
+        AddCol(gridByEmployee, "colEmpRevenue", "Doanh thu", 25, right: true);
+        AddCol(gridByEmployee, "colEmpAvg", "Giá trị TB/hóa đơn", 25, right: true);
+
+        // Khuyen mai
+        AddCol(gridCampaigns, "colCampaignName", "Chiến dịch", 50);
+        AddCol(gridCampaigns, "colCampaignInvoiceCount", "Số hóa đơn áp dụng", 25, right: true);
+        AddCol(gridCampaigns, "colCampaignDiscount", "Tổng tiền đã giảm", 25, right: true);
     }
 
-    // Quy doi lua chon trong cbPeriod thanh khoang ngay [_from, _to] (2 dau bao gom).
+    private static void AddCol(DataGridView grid, string name, string header, float weight, bool right = false)
+    {
+        var col = new DataGridViewTextBoxColumn
+        {
+            Name = name,
+            HeaderText = header,
+            FillWeight = weight,
+            SortMode = DataGridViewColumnSortMode.NotSortable,
+        };
+        if (right)
+        {
+            col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
+            col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleRight;
+        }
+        grid.Columns.Add(col);
+    }
+
+    // ------------------------------------------------------------------
+    // GIAO DIEN
+    // ------------------------------------------------------------------
+
+    private void ApplyTheme()
+    {
+        BackColor = AppColors.Background;
+        lblTitle.ForeColor = AppColors.OnSurface;
+        lblSubtitle.ForeColor = AppColors.OnSurfaceVariant;
+        lblFilterCaption.ForeColor = AppColors.OnSurfaceVariant;
+        lblRange.ForeColor = AppColors.Primary;
+        foreach (var l in new[] { lblChartTitle, lblInvoicesTitle, lblInsightsTitle, lblTop5Title })
+            l.ForeColor = AppColors.OnSurface;
+
+        // Nut chinh: Xuat Excel
+        btnExport.FlatStyle = FlatStyle.Flat;
+        btnExport.FlatAppearance.BorderSize = 0;
+        btnExport.BackColor = AppColors.Primary;
+        btnExport.ForeColor = Color.White;
+        btnExport.Cursor = Cursors.Hand;
+
+        // Nut phu
+        foreach (var b in new[] { btnRefresh })
+        {
+            b.FlatStyle = FlatStyle.Flat;
+            b.FlatAppearance.BorderSize = 1;
+            b.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+            b.BackColor = Color.White;
+            b.ForeColor = AppColors.OnSurface;
+            b.Cursor = Cursors.Hand;
+        }
+
+        StyleGrid(gridInvoices, border: false);
+        StyleGrid(gridTop5, border: false);
+        StyleGrid(gridTopItems, border: true);
+        StyleGrid(gridByEmployee, border: true);
+        StyleGrid(gridCampaigns, border: true);
+    }
+
+    private static void StyleGrid(DataGridView g, bool border)
+    {
+        g.AllowUserToAddRows = false;
+        g.AllowUserToDeleteRows = false;
+        g.AllowUserToResizeRows = false;
+        g.ReadOnly = true;
+        g.RowHeadersVisible = false;
+        g.MultiSelect = false;
+        g.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        g.BackgroundColor = Color.White;
+        g.BorderStyle = border ? BorderStyle.FixedSingle : BorderStyle.None;
+        g.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+        g.GridColor = AppColors.SurfaceContainer;
+
+        g.EnableHeadersVisualStyles = false;
+        g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+        g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        g.ColumnHeadersHeight = 38;
+        var h = g.ColumnHeadersDefaultCellStyle;
+        h.BackColor = AppColors.SurfaceLow;
+        h.ForeColor = AppColors.OnSurfaceVariant;
+        h.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+        h.SelectionBackColor = AppColors.SurfaceLow;
+        h.SelectionForeColor = AppColors.OnSurfaceVariant;
+        h.Padding = new Padding(8, 0, 8, 0);
+
+        g.RowTemplate.Height = 36;
+        var selectBg = Color.FromArgb(255, 237, 231);
+        var c = g.DefaultCellStyle;
+        c.Font = new Font("Segoe UI", 10F);
+        c.ForeColor = AppColors.OnSurface;
+        c.BackColor = Color.White;
+        c.SelectionBackColor = selectBg;
+        c.SelectionForeColor = AppColors.OnSurface;
+        c.Padding = new Padding(8, 0, 8, 0);
+
+        var a = g.AlternatingRowsDefaultCellStyle;
+        a.BackColor = Color.FromArgb(250, 250, 250);
+        a.SelectionBackColor = selectBg;
+        a.SelectionForeColor = AppColors.OnSurface;
+    }
+
+    // Hien/an cac o chon theo kieu loc dang chon.
+    private void ApplyModeUI()
+    {
+        var m = cbPeriod.SelectedIndex;
+        dtpDate.Visible = m == PeriodDay;
+        cbWeek.Visible = m == PeriodWeek;
+        cbMonth.Visible = m == PeriodMonth;
+        cbQuarter.Visible = m == PeriodQuarter;
+        nudYear.Visible = m == PeriodWeek || m == PeriodMonth || m == PeriodQuarter;
+    }
+
+    // Nap danh sach tuan ISO (Thu 2 - Chu nhat) cua nam dang chon vao cbWeek, giu nguyen tuan dang chon.
+    private void PopulateWeeks(int? selectWeek = null)
+    {
+        var wasSuppressed = _suppress;
+        _suppress = true;
+        try
+        {
+            var year = (int)nudYear.Value;
+            var count = ISOWeek.GetWeeksInYear(year);
+            var keep = selectWeek ?? Math.Max(1, cbWeek.SelectedIndex + 1);
+
+            cbWeek.BeginUpdate();
+            cbWeek.Items.Clear();
+            for (var w = 1; w <= count; w++)
+            {
+                var start = ISOWeek.ToDateTime(year, w, DayOfWeek.Monday);
+                cbWeek.Items.Add($"Tuần {w}  ({start:dd/MM} – {start.AddDays(6):dd/MM})");
+            }
+            cbWeek.EndUpdate();
+
+            cbWeek.SelectedIndex = Math.Min(keep, count) - 1;
+        }
+        finally
+        {
+            _suppress = wasSuppressed;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // BO LOC THOI GIAN
+    // ------------------------------------------------------------------
+
+    // Quy doi lua chon thanh khoang ngay [_from, _to] (2 dau bao gom) + nhan hien thi.
     private void ResolvePeriod()
     {
         var today = DateTime.Today;
+        DateTime from, to;
+
         switch (cbPeriod.SelectedIndex)
         {
-            case 1: // 7 ngày qua
-                _from = today.AddDays(-6);
-                _to = today;
+            case PeriodDay:
+                from = to = dtpDate.Value.Date;
+                _periodLabel = $"Ngày {from:dd/MM/yyyy}";
                 break;
-            case 2: // 30 ngày qua
-                _from = today.AddDays(-29);
-                _to = today;
-                break;
-            case 3: // Tháng này
-                _from = new DateTime(today.Year, today.Month, 1);
-                _to = today;
-                break;
-            default: // Hôm nay
-                _from = today;
-                _to = today;
+
+            case PeriodWeek:
+                {
+                    var year = (int)nudYear.Value;
+                    var w = Math.Clamp(cbWeek.SelectedIndex + 1, 1, ISOWeek.GetWeeksInYear(year));
+                    from = ISOWeek.ToDateTime(year, w, DayOfWeek.Monday); // Thu 2 dau tuan
+                    to = from.AddDays(6);
+                    _periodLabel = $"Tuần {w}/{year}  ({from:dd/MM} – {to:dd/MM/yyyy})";
+                    break;
+                }
+
+            case PeriodMonth:
+                {
+                    from = new DateTime((int)nudYear.Value, cbMonth.SelectedIndex + 1, 1);
+                    to = from.AddMonths(1).AddDays(-1);
+                    _periodLabel = $"Tháng {from.Month}/{from.Year}  ({from:dd/MM} – {to:dd/MM/yyyy})";
+                    break;
+                }
+
+            case PeriodQuarter:
+                {
+                    var q = Math.Max(0, cbQuarter.SelectedIndex);
+                    from = new DateTime((int)nudYear.Value, q * 3 + 1, 1);
+                    to = from.AddMonths(3).AddDays(-1);
+                    _periodLabel = $"Quý {Roman[q]}/{from.Year}  ({from:dd/MM} – {to:dd/MM/yyyy})";
+                    break;
+                }
+
+            default: // Hom nay
+                from = to = today;
+                _periodLabel = $"Hôm nay  ({today:dd/MM/yyyy})";
                 break;
         }
+
+        // Ky dang dien ra: chi tinh den hom nay (khong ve cac ngay tuong lai).
+        if (from <= today && to > today) to = today;
+
+        _from = from;
+        _to = to;
+        lblRange.Text = _periodLabel;
     }
+
+    // Don vi cua truc bieu do: 1 ngay -> theo gio, <= 31 ngay -> theo ngay, con lai -> theo thang
+    // (khop voi cach ReportsController nhom du lieu).
+    private static string UnitOf(DateTime from, DateTime to)
+    {
+        if (from == to) return "khung giờ";
+        return (to - from).Days + 1 > 31 ? "tháng" : "ngày";
+    }
+
+    private Task<List<RevenuePointDto>> LoadPointsAsync(DateTime from, DateTime to) =>
+        from == to ? _api.GetRevenueByHourAsync(from) : _api.GetRevenueByPeriodAsync(from, to);
+
+    // ------------------------------------------------------------------
+    // TAI DU LIEU
+    // ------------------------------------------------------------------
 
     private async Task ReloadAllAsync()
     {
-        ResolvePeriod();
-        lblSubtitle.Text = _from == _to
-            ? $"Ngày {_from:dd/MM/yyyy}"
-            : $"Từ {_from:dd/MM/yyyy} đến {_to:dd/MM/yyyy}";
+        if (_suppress) return;
 
+        ResolvePeriod();
+        var ver = ++_version;
+        var from = _from;
+        var to = _to;
+
+        lblSubtitle.Text = from == to
+            ? $"Ngày {from:dd/MM/yyyy}"
+            : $"Từ {from:dd/MM/yyyy} đến {to:dd/MM/yyyy}";
+
+        UseWaitCursor = true;
         try
         {
-            await Task.WhenAll(
-                LoadSummaryAsync(),
-                LoadChartAsync(),
-                LoadRecentInvoicesAsync(),
-                LoadTopItemsAsync(),
-                LoadByEmployeeAsync(),
-                LoadCampaignsAsync()
-            );
+            var tSummary = _api.GetReportSummaryAsync(from, to);
+            var tPoints = LoadPointsAsync(from, to);
+            var tInvoices = _api.GetRecentInvoicesReportAsync(from, to, take: 15);
+            var tItems = _api.GetTopItemsAsync(from, to, take: 10);
+            var tEmployees = _api.GetRevenueByEmployeeAsync(from, to);
+            var tCampaigns = _api.GetCampaignReportAsync(from, to);
+
+            await Task.WhenAll(new Task[] { tSummary, tPoints, tInvoices, tItems, tEmployees, tCampaigns });
+
+            // Nguoi dung da doi bo loc / roi man hinh trong luc cho -> bo ket qua cu.
+            if (ver != _version || IsDisposed) return;
+
+            ApplySummary(await tSummary ?? new RevenueSummaryDto());
+            ApplyChart(await tPoints, UnitOf(from, to));
+            ApplyInvoices(await tInvoices);
+            var items = await tItems;
+            ApplyTopItems(items);
+            ApplyEmployees(await tEmployees);
+            ApplyCampaigns(await tCampaigns);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được báo cáo: {ex.Message}");
+            if (ver == _version && !IsDisposed)
+                MessageBox.Show($"Không tải được báo cáo: {ex.Message}");
+        }
+        finally
+        {
+            if (ver == _version && !IsDisposed) UseWaitCursor = false;
         }
     }
 
-    private async Task LoadSummaryAsync()
+    private void ApplySummary(RevenueSummaryDto summary)
     {
-        var summary = await _api.GetReportSummaryAsync(_from, _to) ?? new RevenueSummaryDto();
-
         var trendText = summary.TrendPercent.HasValue ? $"{Math.Abs(summary.TrendPercent.Value):0.#}% so với kỳ trước" : null;
         var trendUp = summary.TrendPercent is null or >= 0;
 
         cardRevenue.Configure("💰", AppColors.Primary, AppColors.ErrorContainer, "DOANH THU", $"{summary.Revenue:N0}đ", trendText, trendUp);
-        cardOrders.Configure("🧾", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "SỐ HÓA ĐƠN", summary.OrderCount.ToString("N0"));
-        cardCost.Configure("📊", AppColors.Secondary, AppColors.SecondaryContainer, "GIÁ TRỊ TB/HÓA ĐƠN", $"{summary.AvgOrderValue:N0}đ");
         cardProfit.Configure("🏷️", AppColors.Warning, Color.FromArgb(255, 243, 224), "TỔNG TIỀN ĐÃ GIẢM", $"{summary.TotalDiscount:N0}đ");
+        cardCost.Configure("📊", AppColors.Secondary, AppColors.SecondaryContainer, "GIÁ TRỊ TB/HÓA ĐƠN", $"{summary.AvgOrderValue:N0}đ");
+        cardOrders.Configure("🧾", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "SỐ HÓA ĐƠN", summary.OrderCount.ToString("N0"));
     }
 
-    private async Task LoadChartAsync()
+    private void ApplyChart(List<RevenuePointDto> points, string unit)
     {
-        var points = await _api.GetRevenueByPeriodAsync(_from, _to);
+        lblChartTitle.Text = $"Doanh thu theo {unit}";
+
         chartPanel.Data = points.Select(p => (p.Label, (double)p.Revenue)).ToList();
-        chartPanel.HighlightIndex = points.Count - 1;
+
+        // To dam cot cao nhat (neu co doanh thu).
+        var maxIdx = -1;
+        decimal maxVal = 0;
+        for (var i = 0; i < points.Count; i++)
+        {
+            if (points[i].Revenue > maxVal)
+            {
+                maxVal = points[i].Revenue;
+                maxIdx = i;
+            }
+        }
+        chartPanel.HighlightIndex = maxIdx;
         chartPanel.Invalidate();
+
+        ApplyInsights(points, unit, maxIdx);
     }
 
-    private async Task LoadRecentInvoicesAsync()
+    // 4 chi so nhanh o the "Diem noi bat", tinh tu chinh du lieu bieu do.
+    private void ApplyInsights(List<RevenuePointDto> points, string unit, int maxIdx)
     {
-        var invoices = await _api.GetRecentInvoicesReportAsync(_from, _to, take: 15);
+        var cap = char.ToUpper(unit[0]) + unit[1..];
+
+        _insightCaptions[0].Text = $"{cap} doanh thu cao nhất";
+        _insightCaptions[1].Text = $"Doanh thu trung bình mỗi {unit}";
+        _insightCaptions[2].Text = $"{cap} doanh thu thấp nhất";
+        _insightCaptions[3].Text = $"Số {unit} có doanh thu";
+
+        if (points.Count == 0 || maxIdx < 0)
+        {
+            _insightValues[0].Text = "Chưa có doanh thu";
+            _insightValues[1].Text = "0đ";
+            _insightValues[2].Text = "—";
+            _insightValues[3].Text = $"0/{points.Count}";
+            return;
+        }
+
+        var max = points[maxIdx];
+        var min = points.OrderBy(p => p.Revenue).First();
+        var avg = points.Sum(p => p.Revenue) / points.Count;
+        var active = points.Count(p => p.Revenue > 0);
+
+        _insightValues[0].Text = $"{max.Label} · {max.Revenue:N0}đ";
+        _insightValues[1].Text = $"{avg:N0}đ";
+        _insightValues[2].Text = $"{min.Label} · {min.Revenue:N0}đ";
+        _insightValues[3].Text = $"{active}/{points.Count}";
+    }
+
+    private void ApplyInvoices(List<RecentInvoiceReportDto> invoices)
+    {
         gridInvoices.Rows.Clear();
         foreach (var inv in invoices)
         {
@@ -145,27 +536,32 @@ public partial class RevenueControl : UserControl
                 string.IsNullOrEmpty(inv.TableName) ? "Mang về" : inv.TableName,
                 inv.InvoiceDate.ToString("HH:mm, dd/MM"),
                 $"{inv.TotalAmount:N0} đ",
-                InvoiceStatusLabels[statusIndex]
-            );
+                InvoiceStatusLabels[statusIndex]);
         }
+        if (invoices.Count == 0)
+            gridInvoices.Rows.Add("", "(Chưa có hóa đơn trong kỳ này)", "", "", "");
     }
 
-    private async Task LoadTopItemsAsync()
+    private void ApplyTopItems(List<TopItemDto> items)
     {
-        var items = await _api.GetTopItemsAsync(_from, _to, take: 10);
         gridTopItems.Rows.Clear();
         var rank = 1;
         foreach (var item in items)
-        {
             gridTopItems.Rows.Add(rank++, item.MenuItemName, item.QuantitySold.ToString("N0"), $"{item.Revenue:N0}đ");
-        }
         if (items.Count == 0)
             gridTopItems.Rows.Add("", "(Chưa có dữ liệu trong khoảng thời gian này)", "", "");
+
+        // Top 5 o the ben phai cua tab Doanh thu.
+        gridTop5.Rows.Clear();
+        rank = 1;
+        foreach (var item in items.Take(5))
+            gridTop5.Rows.Add(rank++, item.MenuItemName, item.QuantitySold.ToString("N0"));
+        if (items.Count == 0)
+            gridTop5.Rows.Add("", "(Chưa có dữ liệu)", "");
     }
 
-    private async Task LoadByEmployeeAsync()
+    private void ApplyEmployees(List<EmployeeRevenueDto> rows)
     {
-        var rows = await _api.GetRevenueByEmployeeAsync(_from, _to);
         gridByEmployee.Rows.Clear();
         foreach (var r in rows)
         {
@@ -176,15 +572,92 @@ public partial class RevenueControl : UserControl
             gridByEmployee.Rows.Add("(Chưa có dữ liệu trong khoảng thời gian này)", "", "", "");
     }
 
-    private async Task LoadCampaignsAsync()
+    private void ApplyCampaigns(List<CampaignReportDto> rows)
     {
-        var rows = await _api.GetCampaignReportAsync(_from, _to);
         gridCampaigns.Rows.Clear();
         foreach (var r in rows)
-        {
             gridCampaigns.Rows.Add(r.CampaignName, r.InvoiceCount.ToString("N0"), $"{r.TotalDiscount:N0}đ");
-        }
         if (rows.Count == 0)
             gridCampaigns.Rows.Add("(Chưa có chiến dịch nào được áp dụng trong khoảng thời gian này)", "", "");
+    }
+
+    // ------------------------------------------------------------------
+    // XUAT EXCEL
+    // ------------------------------------------------------------------
+
+    private async Task ExportExcelAsync()
+    {
+        ResolvePeriod();
+        var from = _from;
+        var to = _to;
+        var periodLabel = _periodLabel;
+
+        using var dlg = new SaveFileDialog
+        {
+            Title = "Xuất báo cáo doanh thu",
+            Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+            DefaultExt = "xlsx",
+            AddExtension = true,
+            FileName = $"BaoCaoDoanhThu_{from:yyyyMMdd}_{to:yyyyMMdd}.xlsx",
+        };
+        if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+
+        var oldText = btnExport.Text;
+        btnExport.Enabled = false;
+        btnExport.Text = "Đang xuất...";
+        try
+        {
+            // Lay day du du lieu cua ky (khong gioi han 10-15 dong nhu man hinh).
+            var tSummary = _api.GetReportSummaryAsync(from, to);
+            var tPoints = LoadPointsAsync(from, to);
+            var tInvoices = _api.GetRecentInvoicesReportAsync(from, to, take: 5000);
+            var tItems = _api.GetTopItemsAsync(from, to, take: 200);
+            var tEmployees = _api.GetRevenueByEmployeeAsync(from, to);
+            var tCampaigns = _api.GetCampaignReportAsync(from, to);
+            await Task.WhenAll(new Task[] { tSummary, tPoints, tInvoices, tItems, tEmployees, tCampaigns });
+
+            var unit = UnitOf(from, to);
+            var data = new ReportExportData
+            {
+                From = from,
+                To = to,
+                PeriodLabel = periodLabel,
+                ChartUnit = char.ToUpper(unit[0]) + unit[1..],
+                Summary = await tSummary ?? new RevenueSummaryDto(),
+                Points = await tPoints,
+                Invoices = await tInvoices,
+                TopItems = await tItems,
+                Employees = await tEmployees,
+                Campaigns = await tCampaigns,
+            };
+
+            var path = dlg.FileName;
+            await Task.Run(() => ExcelExportService.Export(path, data));
+
+            var open = MessageBox.Show(
+                "Đã xuất báo cáo thành công.\nBạn có muốn mở file ngay không?",
+                "Xuất Excel", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (open == DialogResult.Yes)
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (IOException)
+        {
+            MessageBox.Show(
+                "Không ghi được file. Nếu file đang mở trong Excel, hãy đóng lại rồi thử lại.",
+                "Xuất Excel", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Không xuất được báo cáo: {ex.Message}", "Xuất Excel",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                btnExport.Enabled = true;
+                btnExport.Text = oldText;
+            }
+        }
     }
 }
