@@ -21,6 +21,11 @@ public record MobileClearTableRequest(
     string? EmployeeCode = null
 );
 
+public record MobileOrderQuantityRequest(
+    int Quantity,
+    string? EmployeeCode = null
+);
+
 [ApiController]
 [Route("api/mobile/order-actions")]
 public class MobileOrderActionsController : ControllerBase
@@ -139,6 +144,390 @@ public class MobileOrderActionsController : ControllerBase
             updatedIds = updated.Select(x => x.OrderItemId).ToList(),
             skippedIds = ids.Except(updated.Select(x => x.OrderItemId)).ToList()
         });
+    }
+
+    [HttpPut("items/{id:int}/quantity")]
+    [RequireMobilePermission("order.cancel")]
+    public async Task<IActionResult> UpdateQuantity(
+        int id,
+        [FromBody] MobileOrderQuantityRequest request)
+    {
+        if (id <= 0)
+            return BadRequest(new { message = "Món không hợp lệ" });
+
+        if (request.Quantity < 1 || request.Quantity > 99)
+        {
+            return BadRequest(new
+            {
+                message = "Số lượng món phải từ 1 đến 99"
+            });
+        }
+
+        var userId = await ResolveUserIdAsync(request.EmployeeCode);
+        var connection = _db.Database.GetDbConnection();
+        var shouldClose =
+            connection.State != System.Data.ConnectionState.Open;
+
+        if (shouldClose)
+            await connection.OpenAsync();
+
+        await using var transaction =
+            await connection.BeginTransactionAsync();
+
+        try
+        {
+            int orderId;
+            int? tableId;
+            string tableName;
+            string itemName;
+            string status;
+
+            await using (var readCommand = connection.CreateCommand())
+            {
+                readCommand.Transaction = transaction;
+                readCommand.CommandText = """
+                    SELECT
+                        oi.OrderId,
+                        o.TableId,
+                        COALESCE(dt.TableName, N'') AS TableName,
+                        COALESCE(mi.ItemName, N'Món') AS ItemName,
+                        CAST(oi.Status AS nvarchar(50)) AS Status
+                    FROM OrderItems oi
+                    INNER JOIN Orders o
+                        ON o.OrderId = oi.OrderId
+                    LEFT JOIN DiningTables dt
+                        ON dt.TableId = o.TableId
+                    LEFT JOIN MenuItems mi
+                        ON mi.MenuItemId = oi.MenuItemId
+                    WHERE oi.OrderItemId = @Id;
+                    """;
+
+                var idParameter = readCommand.CreateParameter();
+                idParameter.ParameterName = "@Id";
+                idParameter.Value = id;
+                readCommand.Parameters.Add(idParameter);
+
+                await using var reader =
+                    await readCommand.ExecuteReaderAsync();
+
+                if (!await reader.ReadAsync())
+                {
+                    await transaction.RollbackAsync();
+                    return NotFound(new { message = "Không tìm thấy món" });
+                }
+
+                orderId = reader.GetInt32(0);
+                tableId =
+                    reader.IsDBNull(1)
+                        ? null
+                        : reader.GetInt32(1);
+                tableName =
+                    reader.IsDBNull(2)
+                        ? ""
+                        : reader.GetString(2);
+                itemName =
+                    reader.IsDBNull(3)
+                        ? "Món"
+                        : reader.GetString(3);
+                status =
+                    reader.IsDBNull(4)
+                        ? ""
+                        : reader.GetString(4);
+            }
+
+            if (!string.Equals(
+                    status,
+                    nameof(KitchenStatus.MoiGoi),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        "Chỉ có thể sửa số lượng khi bếp chưa bắt đầu chế biến"
+                });
+            }
+
+            await using (var updateCommand = connection.CreateCommand())
+            {
+                updateCommand.Transaction = transaction;
+                updateCommand.CommandText = """
+                    UPDATE OrderItems
+                    SET Quantity = @Quantity
+                    WHERE OrderItemId = @Id
+                      AND Status = N'MoiGoi';
+                    """;
+
+                var quantityParameter =
+                    updateCommand.CreateParameter();
+                quantityParameter.ParameterName = "@Quantity";
+                quantityParameter.Value = request.Quantity;
+                updateCommand.Parameters.Add(quantityParameter);
+
+                var idParameter = updateCommand.CreateParameter();
+                idParameter.ParameterName = "@Id";
+                idParameter.Value = id;
+                updateCommand.Parameters.Add(idParameter);
+
+                var affected =
+                    await updateCommand.ExecuteNonQueryAsync();
+
+                if (affected != 1)
+                {
+                    await transaction.RollbackAsync();
+                    return Conflict(new
+                    {
+                        message =
+                            "Món vừa được bếp xử lý. Hãy tải lại trước khi sửa số lượng."
+                    });
+                }
+            }
+
+            decimal totalAmount;
+
+            await using (var totalCommand = connection.CreateCommand())
+            {
+                totalCommand.Transaction = transaction;
+                totalCommand.CommandText = """
+                    SELECT COALESCE(
+                        SUM(
+                            CAST(Quantity AS decimal(18,2)) *
+                            CAST(UnitPrice AS decimal(18,2))
+                        ),
+                        0
+                    )
+                    FROM OrderItems
+                    WHERE OrderId = @OrderId
+                      AND Status <> N'DaHuy';
+                    """;
+
+                var orderParameter = totalCommand.CreateParameter();
+                orderParameter.ParameterName = "@OrderId";
+                orderParameter.Value = orderId;
+                totalCommand.Parameters.Add(orderParameter);
+
+                var rawTotal =
+                    await totalCommand.ExecuteScalarAsync();
+
+                totalAmount =
+                    rawTotal is null ||
+                    rawTotal == DBNull.Value
+                        ? 0
+                        : Convert.ToDecimal(rawTotal);
+            }
+
+            await using (var orderCommand = connection.CreateCommand())
+            {
+                orderCommand.Transaction = transaction;
+                orderCommand.CommandText = """
+                    UPDATE Orders
+                    SET TotalAmount = @TotalAmount
+                    WHERE OrderId = @OrderId;
+                    """;
+
+                var totalParameter =
+                    orderCommand.CreateParameter();
+                totalParameter.ParameterName = "@TotalAmount";
+                totalParameter.Value = totalAmount;
+                orderCommand.Parameters.Add(totalParameter);
+
+                var orderParameter = orderCommand.CreateParameter();
+                orderParameter.ParameterName = "@OrderId";
+                orderParameter.Value = orderId;
+                orderCommand.Parameters.Add(orderParameter);
+
+                await orderCommand.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            // Realtime là bước thông báo sau khi DB đã commit.
+            // Nếu client realtime tạm lỗi thì không được biến thao tác lưu
+            // thành HTTP 500 vì dữ liệu chính đã cập nhật thành công.
+            try
+            {
+                await _hub.Clients.All.SendAsync(
+                    "OrderItemQuantityUpdated",
+                    new
+                    {
+                        id,
+                        orderId,
+                        tableId = tableId ?? 0,
+                        tableName =
+                            string.IsNullOrWhiteSpace(tableName)
+                                ? $"Bàn #{tableId ?? 0}"
+                                : tableName,
+                        itemName,
+                        quantity = request.Quantity,
+                        totalAmount
+                    });
+
+                await _hub.Clients.All.SendAsync(
+                    "ItemStatusUpdated",
+                    new
+                    {
+                        Id = id,
+                        OrderId = orderId,
+                        TableId = tableId ?? 0,
+                        TableName =
+                            string.IsNullOrWhiteSpace(tableName)
+                                ? $"Bàn #{tableId ?? 0}"
+                                : tableName,
+                        MenuItemName = itemName,
+                        Status = KitchenStatus.MoiGoi,
+                        Quantity = request.Quantity
+                    });
+            }
+            catch
+            {
+                // DB đã commit. Lần refresh kế tiếp vẫn đọc đúng số lượng.
+            }
+
+            return Ok(new
+            {
+                id,
+                quantity = request.Quantity,
+                totalAmount,
+                changedBy = userId
+            });
+        }
+        catch
+        {
+            try
+            {
+                await transaction.RollbackAsync();
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
+    }
+
+    [HttpPost("items/{id:int}/decrement")]
+    [RequireMobilePermission("order.cancel")]
+    public async Task<IActionResult> DecrementQuantity(
+        int id,
+        [FromBody] MobileOrderActionRequest request)
+    {
+        if (id <= 0)
+            return BadRequest(new { message = "Món không hợp lệ" });
+
+        var userId = await ResolveUserIdAsync(request.EmployeeCode);
+
+        await using var transaction =
+            await _db.Database.BeginTransactionAsync();
+
+        try
+        {
+            var item = await _db.OrderItems
+                .Include(x => x.Order)
+                    .ThenInclude(o => o!.Table)
+                .Include(x => x.MenuItem)
+                .FirstOrDefaultAsync(
+                    x => x.OrderItemId == id);
+
+            if (item is null)
+            {
+                await transaction.RollbackAsync();
+                return NotFound(new { message = "Không tìm thấy món" });
+            }
+
+            if (item.Status != KitchenStatus.MoiGoi)
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        "Chỉ có thể giảm số lượng khi bếp chưa bắt đầu chế biến"
+                });
+            }
+
+            if (item.Quantity <= 1)
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        "Số lượng món đã là 1. Hãy hủy món nếu không còn gọi món này."
+                });
+            }
+
+            item.Quantity -= 1;
+
+            await _db.SaveChangesAsync();
+
+            var totalAmount = await _db.OrderItems
+                .Where(x =>
+                    x.OrderId == item.OrderId &&
+                    x.Status != KitchenStatus.DaHuy)
+                .SumAsync(x =>
+                    (decimal?)(x.Quantity * x.UnitPrice))
+                ?? 0;
+
+            if (item.Order is not null)
+            {
+                item.Order.TotalAmount = totalAmount;
+                await _db.SaveChangesAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            var tableId = item.Order?.TableId ?? 0;
+            var tableName =
+                item.Order?.Table?.TableName ??
+                $"Bàn #{tableId}";
+            var itemName =
+                item.MenuItem?.ItemName ?? "Món";
+
+            // Mobile/Web có thể dùng event này khi cần cập nhật số lượng realtime.
+            await _hub.Clients.All.SendAsync(
+                "OrderItemQuantityUpdated",
+                new
+                {
+                    id = item.OrderItemId,
+                    orderId = item.OrderId,
+                    tableId,
+                    tableName,
+                    itemName,
+                    quantity = item.Quantity,
+                    totalAmount
+                });
+
+            // WinForms Bếp đang nghe ItemStatusUpdated. Gửi cùng trạng thái hiện tại
+            // và thêm Quantity để cập nhật 2x -> 1x ngay trên phiếu bếp.
+            await _hub.Clients.All.SendAsync(
+                "ItemStatusUpdated",
+                new
+                {
+                    Id = item.OrderItemId,
+                    item.OrderId,
+                    TableId = tableId,
+                    TableName = tableName,
+                    MenuItemName = itemName,
+                    Status = item.Status,
+                    Quantity = item.Quantity
+                });
+
+            return Ok(new
+            {
+                id = item.OrderItemId,
+                quantity = item.Quantity,
+                totalAmount,
+                changedBy = userId
+            });
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     [HttpPost("clear-table")]

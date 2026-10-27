@@ -118,40 +118,68 @@ public class UsersController : ControllerBase
             return BadRequest(new { message = "Chỉ tài khoản Bếp mới được gán Bếp/Quầy nước" });
         }
 
-        var user = new User
-        {
-            FullName = request.FullName.Trim(),
-            Username = username,
-            PasswordHash = PasswordHasher.Hash(request.Password),
-            Phone = request.Phone,
-            Email = request.Email,
-            IsActive = true
-        };
-        _db.Users.Add(user);
-        await _db.SaveChangesAsync();
+        await using var transaction =
+            await _db.Database.BeginTransactionAsync();
 
-        var employee = new Employee
+        try
         {
-            UserId = user.UserId,
-            EmployeeCode = employeeCode,
-            Position = role.RoleName,
-            HireDate = DateTime.Now,
-            Status = EmployeeStatus.DangLamViec,
-            StationId = stationId
-        };
-        _db.Employees.Add(employee);
+            var user = new User
+            {
+                FullName = request.FullName.Trim(),
+                Username = username,
+                PasswordHash = PasswordHasher.Hash(request.Password),
+                Phone = string.IsNullOrWhiteSpace(request.Phone)
+                    ? null
+                    : request.Phone.Trim(),
+                Email = string.IsNullOrWhiteSpace(request.Email)
+                    ? null
+                    : request.Email.Trim(),
+                IsActive = true
+            };
 
-        _db.UserRoles.Add(new UserRole
+            _db.Users.Add(user);
+            await _db.SaveChangesAsync();
+
+            var employee = new Employee
+            {
+                UserId = user.UserId,
+                EmployeeCode = employeeCode,
+                Position = role.RoleName,
+                HireDate = DateTime.Now,
+                Status = EmployeeStatus.DangLamViec,
+                StationId = stationId
+            };
+
+            _db.Employees.Add(employee);
+
+            _db.UserRoles.Add(new UserRole
+            {
+                UserId = user.UserId,
+                RoleId = request.RoleId,
+                IsActive = true,
+                AssignedBy = CurrentUserId,
+                AssignedAt = DateTime.Now
+            });
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return Ok(new
+            {
+                Id = employee.EmployeeId,
+                UserId = user.UserId,
+                employee.EmployeeCode,
+                user.FullName,
+                RoleId = request.RoleId,
+                RoleName = role.RoleName,
+                employee.StationId
+            });
+        }
+        catch
         {
-            UserId = user.UserId,
-            RoleId = request.RoleId,
-            IsActive = true,
-            AssignedBy = CurrentUserId,
-            AssignedAt = DateTime.Now
-        });
-
-        await _db.SaveChangesAsync();
-        return Ok(new { Id = employee.EmployeeId });
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     [HttpPut("{id}")]

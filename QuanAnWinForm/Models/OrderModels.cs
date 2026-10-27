@@ -243,6 +243,9 @@ public class ItemStatusUpdatedPayload
     public string TableName { get; set; } = "";
     public string MenuItemName { get; set; } = "";
     public int Status { get; set; }
+
+    // Có giá trị khi Backend chỉ thay đổi số lượng món mới gọi.
+    public int? Quantity { get; set; }
 }
 public class OrderItemStatusResultDto
 {
