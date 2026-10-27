@@ -128,8 +128,48 @@ public class AttendanceController : ControllerBase
                 LEFT JOIN Areas a
                     ON a.AreaId = sa.AreaId
                 WHERE e.EmployeeCode = @EmployeeCode
-                  AND sa.WorkDate = CAST(GETDATE() AS DATE)
-                ORDER BY s.StartTime;
+                  AND (
+                    sa.WorkDate = CAST(GETDATE() AS DATE)
+                    OR (
+                      sa.WorkDate = DATEADD(
+                        DAY,
+                        -1,
+                        CAST(GETDATE() AS DATE)
+                      )
+                      AND s.EndTime <= s.StartTime
+                      AND sa.CheckInTime IS NOT NULL
+                      AND sa.CheckOutTime IS NULL
+                    )
+                  )
+                ORDER BY
+                  CASE
+                    WHEN sa.CheckInTime IS NOT NULL
+                         AND sa.CheckOutTime IS NULL
+                      THEN 0
+                    WHEN sa.CheckOutTime IS NULL
+                         AND sa.Status NOT IN (
+                           N'DaHoanThanh',
+                           N'VangMat'
+                         )
+                      THEN 1
+                    ELSE 2
+                  END,
+                  ABS(
+                    DATEDIFF(
+                      MINUTE,
+                      DATEADD(
+                        SECOND,
+                        DATEDIFF(
+                          SECOND,
+                          CAST('00:00:00' AS time),
+                          s.StartTime
+                        ),
+                        CAST(sa.WorkDate AS datetime2)
+                      ),
+                      GETDATE()
+                    )
+                  ),
+                  s.StartTime;
                 """;
 
             AddParameter(
@@ -736,8 +776,48 @@ public class AttendanceController : ControllerBase
             INNER JOIN Shifts s
                 ON s.ShiftId = sa.ShiftId
             WHERE e.EmployeeCode = @EmployeeCode
-              AND sa.WorkDate = CAST(GETDATE() AS DATE)
-            ORDER BY s.StartTime;
+              AND (
+                sa.WorkDate = CAST(GETDATE() AS DATE)
+                OR (
+                  sa.WorkDate = DATEADD(
+                    DAY,
+                    -1,
+                    CAST(GETDATE() AS DATE)
+                  )
+                  AND s.EndTime <= s.StartTime
+                  AND sa.CheckInTime IS NOT NULL
+                  AND sa.CheckOutTime IS NULL
+                )
+              )
+            ORDER BY
+              CASE
+                WHEN sa.CheckInTime IS NOT NULL
+                     AND sa.CheckOutTime IS NULL
+                  THEN 0
+                WHEN sa.CheckOutTime IS NULL
+                     AND sa.Status NOT IN (
+                       N'DaHoanThanh',
+                       N'VangMat'
+                     )
+                  THEN 1
+                ELSE 2
+              END,
+              ABS(
+                DATEDIFF(
+                  MINUTE,
+                  DATEADD(
+                    SECOND,
+                    DATEDIFF(
+                      SECOND,
+                      CAST('00:00:00' AS time),
+                      s.StartTime
+                    ),
+                    CAST(sa.WorkDate AS datetime2)
+                  ),
+                  GETDATE()
+                )
+              ),
+              s.StartTime;
             """;
 
         AddParameter(
