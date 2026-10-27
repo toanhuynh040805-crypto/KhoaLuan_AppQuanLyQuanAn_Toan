@@ -1159,7 +1159,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     }
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         backgroundColor: const Color(0xFFF6F7F9),
         appBar: AppBar(
@@ -1172,7 +1172,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
             ),
           ),
           bottom: const TabBar(
+            isScrollable: true,
             tabs: [
+              Tab(text: 'Nhân viên'),
               Tab(text: 'Ca làm'),
               Tab(text: 'Nhiệm vụ'),
               Tab(text: 'Lịch sử'),
@@ -1180,8 +1182,151 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
           ),
         ),
         body: TabBarView(
-          children: [_shiftTab(), _taskTab(), _historyTab()],
+          children: [
+            _employeeTab(),
+            _shiftTab(),
+            _taskTab(),
+            _historyTab(),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _employeeTab() {
+    final int activeCount =
+        employees.where((e) => e.isActive).length;
+
+    return RefreshIndicator(
+      onRefresh: _reloadEmployees,
+      child: ListView(
+        padding: const EdgeInsets.all(14),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Danh sách nhân viên',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight:
+                            FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${employees.length} nhân viên • $activeCount đang hoạt động',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _addEmployee,
+                icon: const Icon(
+                  Icons.person_add_alt_1,
+                ),
+                label: const Text('Thêm'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (employees.isEmpty)
+            _empty(
+              'Chưa có nhân viên. Bấm Thêm để tạo nhân viên đầu tiên.',
+            )
+          else
+            ...employees.map(
+              (employee) => Card(
+                margin:
+                    const EdgeInsets.only(
+                  bottom: 10,
+                ),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        employee.isActive
+                            ? const Color(
+                                0xFFE7F6EC,
+                              )
+                            : Colors
+                                .grey.shade200,
+                    child: Text(
+                      employee.fullName
+                              .trim()
+                              .isEmpty
+                          ? '?'
+                          : employee.fullName
+                              .trim()
+                              .substring(0, 1)
+                              .toUpperCase(),
+                      style: TextStyle(
+                        color: employee
+                                .isActive
+                            ? Colors.green
+                            : Colors.grey,
+                        fontWeight:
+                            FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    employee.fullName,
+                    style: const TextStyle(
+                      fontWeight:
+                          FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${employee.employeeCode} • ${employee.roleName}\n'
+                    '${employee.isActive ? 'Đang hoạt động' : 'Tạm khóa'}',
+                  ),
+                  isThreeLine: true,
+                  trailing: Container(
+                    padding:
+                        const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: employee.isActive
+                          ? Colors.green.withValues(
+                              alpha: 0.10,
+                            )
+                          : Colors.grey.withValues(
+                              alpha: 0.12,
+                            ),
+                      borderRadius:
+                          BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      employee.isActive
+                          ? 'Hoạt động'
+                          : 'Tạm khóa',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight:
+                            FontWeight.w600,
+                        color: employee
+                                .isActive
+                            ? Colors.green
+                            : Colors
+                                .grey.shade700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
