@@ -202,7 +202,12 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     final phone = TextEditingController();
     final email = TextEditingController();
 
-    ManagedRole role = roles.first;
+    ManagedRole role = roles.firstWhere(
+      (item) =>
+          item.name.trim().toLowerCase() ==
+          'phucvu',
+      orElse: () => roles.first,
+    );
     ManagedStation? station;
     bool obscurePassword = true;
     bool obscureConfirmPassword = true;
