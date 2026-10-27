@@ -12,6 +12,7 @@ class LocationCheckResult {
   final double? distanceMeters;
   final double? accuracyMeters;
   final bool isMocked;
+  final bool requiresSecureContext;
   final String message;
 
   const LocationCheckResult({
@@ -24,6 +25,7 @@ class LocationCheckResult {
     this.distanceMeters,
     this.accuracyMeters,
     this.isMocked = false,
+    this.requiresSecureContext = false,
     required this.message,
   });
 
@@ -38,6 +40,20 @@ class LocationCheckResult {
 
 class LocationService {
   const LocationService();
+
+  bool get _isInsecureWebContext {
+    if (!kIsWeb) return false;
+
+    final Uri uri = Uri.base;
+    final String host = uri.host.toLowerCase();
+    final bool localhost =
+        host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1';
+
+    return uri.scheme != 'https' &&
+        !localhost;
+  }
 
   static const String _envLatitudeRaw =
       String.fromEnvironment(
@@ -120,6 +136,19 @@ class LocationService {
       checkCurrentLocation({
     bool requestPermission = true,
   }) async {
+    if (_isInsecureWebContext) {
+      return const LocationCheckResult(
+        isConfigured: false,
+        serviceEnabled: true,
+        permissionGranted: false,
+        isInside: false,
+        requiresSecureContext: true,
+        message:
+            'Bản Web đang mở bằng HTTP nên Safari không cho truy cập GPS. '
+            'Điểm danh trên iPhone Web cần mở ứng dụng bằng HTTPS.',
+      );
+    }
+
     final bool serviceEnabled =
         await Geolocator
             .isLocationServiceEnabled();
