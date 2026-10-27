@@ -7,7 +7,30 @@ using QuanAnBackend.Services;
 namespace QuanAnBackend.Controllers;
 
 public record ShiftRequest(string Name, TimeSpan StartTime, TimeSpan EndTime);
-public record AssignShiftRequest(int UserId, int ShiftId, DateTime WorkDate, int? AreaId = null);
+public record AssignShiftRequest(
+    int UserId,
+    int ShiftId,
+    DateTime WorkDate,
+    List<int>? AreaIds = null,
+    int? AreaId = null);
+public record UpdateAssignmentAreasRequest(
+    List<int>? AreaIds);
+public record ShiftAssignmentDto(
+    int Id,
+    int UserId,
+    string UserName,
+    int ShiftId,
+    string ShiftName,
+    TimeSpan ShiftStart,
+    TimeSpan ShiftEnd,
+    DateTime WorkDate,
+    int? AreaId,
+    string? AreaName,
+    List<int> AreaIds,
+    List<string> AreaNames,
+    AssignmentStatus Status,
+    DateTime? CheckInTime,
+    DateTime? CheckOutTime);
 
 [ApiController]
 [Route("api/[controller]")]
@@ -72,170 +95,469 @@ public class ShiftsController : ControllerBase
     }
 
     [HttpGet("assignments")]
-    public async Task<IActionResult> GetAssignments([FromQuery] DateTime date)
+    public async Task<IActionResult> GetAssignments(
+        [FromQuery] DateTime date)
     {
-        var day = DateOnly.FromDateTime(date.Date);
-        var assignments = await _db.ShiftAssignments
-            .Include(a => a.Employee)!.ThenInclude(e => e!.User)
+        var day =
+            DateOnly.FromDateTime(date.Date);
+
+        var rows = await _db.ShiftAssignments
+            .Include(a => a.Employee)!
+                .ThenInclude(e => e!.User)
             .Include(a => a.Shift)
             .Include(a => a.Area)
+            .Include(a => a.AssignedAreas)
+                .ThenInclude(x => x.Area)
             .Where(a => a.WorkDate == day)
             .AsNoTracking()
-            .Select(a => new
-            {
-                Id = a.ShiftAssignmentId,
-                UserId = a.Employee != null && a.Employee.User != null ? a.Employee.User.UserId : 0,
-                UserName = a.Employee != null && a.Employee.User != null ? a.Employee.User.FullName : "",
-                a.ShiftId,
-                ShiftName = a.Shift != null ? a.Shift.ShiftName : "",
-                ShiftStart = a.Shift != null ? a.Shift.StartTime : TimeSpan.Zero,
-                ShiftEnd = a.Shift != null ? a.Shift.EndTime : TimeSpan.Zero,
-                WorkDate = a.WorkDate.ToDateTime(TimeOnly.MinValue),
-                a.AreaId,
-                AreaName = a.Area != null ? a.Area.AreaName : null,
-                Status = a.Status,
-                a.CheckInTime,
-                a.CheckOutTime
-            })
+            .OrderBy(a => a.Shift!.StartTime)
             .ToListAsync();
 
-        return Ok(assignments);
+        return Ok(
+            rows.Select(ToAssignmentDto)
+                .ToList()
+        );
     }
 
     [HttpPost("assignments")]
-    public async Task<IActionResult> Assign([FromBody] AssignShiftRequest request)
+    public async Task<IActionResult> Assign(
+        [FromBody] AssignShiftRequest request)
     {
-        var employee = await _db.Employees.FirstOrDefaultAsync(e => e.UserId == request.UserId);
+        var employee =
+            await _db.Employees
+                .FirstOrDefaultAsync(
+                    e => e.UserId ==
+                        request.UserId
+                );
+
         if (employee is null)
-            return BadRequest(new { message = "Tài khoản này chưa được gắn với hồ sơ nhân viên (Employees)" });
-
-        if (!await _db.Shifts.AnyAsync(s => s.ShiftId == request.ShiftId))
-            return BadRequest(new { message = "Ca làm không tồn tại" });
-
-        if (request.AreaId.HasValue && !await _db.Areas.AnyAsync(a => a.AreaId == request.AreaId.Value))
-            return BadRequest(new { message = "Khu vực không tồn tại" });
-
-        var workDate = DateOnly.FromDateTime(request.WorkDate.Date);
-
-        var exists = await _db.ShiftAssignments.AnyAsync(a =>
-            a.EmployeeId == employee.EmployeeId && a.ShiftId == request.ShiftId && a.WorkDate == workDate);
-        if (exists) return BadRequest(new { message = "Nhân viên đã được phân vào ca này trong ngày" });
-
-        var assignment = new ShiftAssignment
         {
-            EmployeeId = employee.EmployeeId,
-            ShiftId = request.ShiftId,
-            WorkDate = workDate,
-            AreaId = request.AreaId,
-            Status = AssignmentStatus.DaXepLich
-        };
-        _db.ShiftAssignments.Add(assignment);
-        await _db.SaveChangesAsync();
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Tài khoản này chưa được gắn với hồ sơ nhân viên (Employees)"
+                }
+            );
+        }
 
-        var shiftName = await _db.Shifts.Where(s => s.ShiftId == request.ShiftId).Select(s => s.ShiftName).FirstOrDefaultAsync() ?? "";
-        var areaName = await GetAreaNameAsync(request.AreaId);
-        var message = $"Ca {shiftName} - ngày {request.WorkDate:dd/MM/yyyy}";
-        if (!string.IsNullOrEmpty(areaName))
-            message += $" · Khu vực: {areaName}";
+        var shift = await _db.Shifts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                s => s.ShiftId ==
+                    request.ShiftId
+            );
 
-        await _notifications.CreateAsync(
-            "Bạn vừa được xếp ca mới",
-            message,
-            NotificationType.CaLam,
-            targetUserId: request.UserId,
-            relatedEntityType: "ShiftAssignment",
-            relatedEntityId: assignment.ShiftAssignmentId);
-
-        return Ok(new { Id = assignment.ShiftAssignmentId, UserId = request.UserId, assignment.ShiftId, WorkDate = request.WorkDate.Date, assignment.AreaId, Status = assignment.Status });
-    }
-
-    [HttpPut("assignments/{id}/area")]
-    public async Task<IActionResult> UpdateAssignmentArea(int id, [FromBody] int? areaId)
-    {
-        var assignment = await _db.ShiftAssignments
-            .Include(a => a.Employee)
-            .Include(a => a.Shift)
-            .FirstOrDefaultAsync(a => a.ShiftAssignmentId == id);
-        if (assignment is null) return NotFound();
-
-        if (areaId.HasValue && !await _db.Areas.AnyAsync(a => a.AreaId == areaId.Value))
-            return BadRequest(new { message = "Khu vực không tồn tại" });
-
-        var oldAreaId = assignment.AreaId;
-        assignment.AreaId = areaId;
-        await _db.SaveChangesAsync();
-
-        var isUpcoming = assignment.WorkDate >= DateOnly.FromDateTime(DateTime.Today);
-        var targetUserId = assignment.Employee?.UserId;
-        if (oldAreaId != areaId && isUpcoming && targetUserId.HasValue)
+        if (shift is null)
         {
-            var newAreaName = await GetAreaNameAsync(areaId);
-            var shiftName = assignment.Shift?.ShiftName ?? "";
-            var workDateText = assignment.WorkDate.ToString("dd/MM/yyyy");
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Ca làm không tồn tại"
+                }
+            );
+        }
 
-            string title, message;
-            if (!string.IsNullOrEmpty(newAreaName))
+        var areaIds =
+            NormalizeAreaIds(
+                request.AreaIds,
+                request.AreaId
+            );
+
+        if (!await AreAreasValidAsync(areaIds))
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Có khu vực không tồn tại"
+                }
+            );
+        }
+
+        var workDate =
+            DateOnly.FromDateTime(
+                request.WorkDate.Date
+            );
+
+        var exists =
+            await _db.ShiftAssignments
+                .AnyAsync(
+                    a =>
+                        a.EmployeeId ==
+                            employee.EmployeeId &&
+                        a.ShiftId ==
+                            request.ShiftId &&
+                        a.WorkDate ==
+                            workDate
+                );
+
+        if (exists)
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Nhân viên đã được phân vào ca này trong ngày"
+                }
+            );
+        }
+
+        await using var transaction =
+            await _db.Database
+                .BeginTransactionAsync();
+
+        try
+        {
+            var assignment =
+                new ShiftAssignment
+                {
+                    EmployeeId =
+                        employee.EmployeeId,
+                    ShiftId =
+                        request.ShiftId,
+                    WorkDate = workDate,
+                    // Giữ khu đầu tiên để WinForms/API cũ vẫn đọc được.
+                    AreaId = areaIds
+                        .Cast<int?>()
+                        .FirstOrDefault(),
+                    Status =
+                        AssignmentStatus
+                            .DaXepLich
+                };
+
+            _db.ShiftAssignments.Add(
+                assignment
+            );
+
+            await _db.SaveChangesAsync();
+
+            foreach (var areaId in areaIds)
             {
-                title = oldAreaId.HasValue ? "Khu vực phụ trách của bạn đã thay đổi" : "Bạn được phân khu vực phụ trách";
-                message = $"Ca {shiftName} - ngày {workDateText} · Khu vực: {newAreaName}";
+                _db.ShiftAssignmentAreas.Add(
+                    new ShiftAssignmentArea
+                    {
+                        ShiftAssignmentId =
+                            assignment
+                                .ShiftAssignmentId,
+                        AreaId = areaId
+                    }
+                );
             }
-            else
+
+            await _db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            var areaNames =
+                await GetAreaNamesAsync(
+                    areaIds
+                );
+
+            var message =
+                $"Ca {shift.ShiftName} - " +
+                $"ngày {request.WorkDate:dd/MM/yyyy}";
+
+            if (areaNames.Count > 0)
             {
-                title = "Khu vực phụ trách của bạn đã được gỡ";
-                message = $"Ca {shiftName} - ngày {workDateText} hiện chưa phân khu vực";
+                message +=
+                    $" · Khu vực: " +
+                    string.Join(
+                        ", ",
+                        areaNames
+                    );
             }
 
             await _notifications.CreateAsync(
-                title,
+                "Bạn vừa được xếp ca mới",
                 message,
                 NotificationType.CaLam,
-                targetUserId: targetUserId.Value,
-                relatedEntityType: "ShiftAssignment",
-                relatedEntityId: assignment.ShiftAssignmentId);
+                targetUserId:
+                    request.UserId,
+                relatedEntityType:
+                    "ShiftAssignment",
+                relatedEntityId:
+                    assignment
+                        .ShiftAssignmentId
+            );
+
+            return Ok(
+                new
+                {
+                    Id =
+                        assignment
+                            .ShiftAssignmentId,
+                    UserId =
+                        request.UserId,
+                    assignment.ShiftId,
+                    WorkDate =
+                        request
+                            .WorkDate.Date,
+                    assignment.AreaId,
+                    AreaIds = areaIds,
+                    AreaNames = areaNames,
+                    Status =
+                        assignment.Status
+                }
+            );
+        }
+        catch
+        {
+            await transaction
+                .RollbackAsync();
+            throw;
+        }
+    }
+
+    [HttpPut("assignments/{id}/area")]
+    public Task<IActionResult>
+        UpdateAssignmentArea(
+            int id,
+            [FromBody] int? areaId)
+    {
+        var areaIds = areaId.HasValue
+            ? new List<int>
+            {
+                areaId.Value
+            }
+            : new List<int>();
+
+        return UpdateAssignmentAreasInternal(
+            id,
+            areaIds
+        );
+    }
+
+    [HttpPut("assignments/{id}/areas")]
+    public Task<IActionResult>
+        UpdateAssignmentAreas(
+            int id,
+            [FromBody]
+            UpdateAssignmentAreasRequest request)
+    {
+        return UpdateAssignmentAreasInternal(
+            id,
+            NormalizeAreaIds(
+                request.AreaIds,
+                null
+            )
+        );
+    }
+
+    private async Task<IActionResult>
+        UpdateAssignmentAreasInternal(
+            int id,
+            List<int> areaIds)
+    {
+        if (!await AreAreasValidAsync(areaIds))
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Có khu vực không tồn tại"
+                }
+            );
         }
 
-        return Ok(new { Id = assignment.ShiftAssignmentId, assignment.AreaId });
+        var assignment =
+            await _db.ShiftAssignments
+                .Include(a => a.Employee)
+                .Include(a => a.Shift)
+                .Include(a =>
+                    a.AssignedAreas)
+                .FirstOrDefaultAsync(
+                    a =>
+                        a.ShiftAssignmentId ==
+                        id
+                );
+
+        if (assignment is null)
+            return NotFound();
+
+        var oldAreaIds =
+            assignment.AssignedAreas
+                .Select(x => x.AreaId)
+                .ToHashSet();
+
+        if (oldAreaIds.Count == 0 &&
+            assignment.AreaId.HasValue)
+        {
+            oldAreaIds.Add(
+                assignment.AreaId.Value
+            );
+        }
+
+        var newAreaIds =
+            areaIds.ToHashSet();
+
+        var changed =
+            !oldAreaIds.SetEquals(
+                newAreaIds
+            );
+
+        _db.ShiftAssignmentAreas
+            .RemoveRange(
+                assignment.AssignedAreas
+            );
+
+        foreach (var areaId in areaIds)
+        {
+            _db.ShiftAssignmentAreas.Add(
+                new ShiftAssignmentArea
+                {
+                    ShiftAssignmentId =
+                        assignment
+                            .ShiftAssignmentId,
+                    AreaId = areaId
+                }
+            );
+        }
+
+        // Khu đầu tiên tiếp tục làm giá trị tương thích cho client cũ.
+        assignment.AreaId =
+            areaIds
+                .Cast<int?>()
+                .FirstOrDefault();
+
+        await _db.SaveChangesAsync();
+
+        var areaNames =
+            await GetAreaNamesAsync(
+                areaIds
+            );
+
+        var isUpcoming =
+            assignment.WorkDate >=
+            DateOnly.FromDateTime(
+                DateTime.Today
+            );
+
+        var targetUserId =
+            assignment.Employee?.UserId;
+
+        if (changed &&
+            isUpcoming &&
+            targetUserId.HasValue)
+        {
+            var shiftName =
+                assignment.Shift
+                    ?.ShiftName ?? "";
+
+            var workDateText =
+                assignment.WorkDate
+                    .ToString(
+                        "dd/MM/yyyy"
+                    );
+
+            var message =
+                areaNames.Count > 0
+                    ? $"Ca {shiftName} - ngày {workDateText} · Khu vực: " +
+                        string.Join(
+                            ", ",
+                            areaNames
+                        )
+                    : $"Ca {shiftName} - ngày {workDateText} hiện chưa phân khu vực";
+
+            await _notifications
+                .CreateAsync(
+                    areaNames.Count > 0
+                        ? "Khu vực phụ trách của bạn đã thay đổi"
+                        : "Khu vực phụ trách của bạn đã được gỡ",
+                    message,
+                    NotificationType.CaLam,
+                    targetUserId:
+                        targetUserId.Value,
+                    relatedEntityType:
+                        "ShiftAssignment",
+                    relatedEntityId:
+                        assignment
+                            .ShiftAssignmentId
+                );
+        }
+
+        return Ok(
+            new
+            {
+                Id =
+                    assignment
+                        .ShiftAssignmentId,
+                assignment.AreaId,
+                AreaIds = areaIds,
+                AreaNames = areaNames
+            }
+        );
     }
 
     [HttpGet("assignments/history")]
-    public async Task<IActionResult> GetAssignmentHistory([FromQuery] int? userId, [FromQuery] DateTime? from, [FromQuery] DateTime? to)
+    public async Task<IActionResult>
+        GetAssignmentHistory(
+            [FromQuery] int? userId,
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to)
     {
-        var toDate = DateOnly.FromDateTime((to ?? DateTime.Today).Date);
-        var fromDate = DateOnly.FromDateTime((from ?? DateTime.Today.AddDays(-29)).Date);
+        var toDate =
+            DateOnly.FromDateTime(
+                (to ?? DateTime.Today).Date
+            );
 
-        var query = _db.ShiftAssignments
-            .Include(a => a.Employee)!.ThenInclude(e => e!.User)
-            .Include(a => a.Shift)
-            .Include(a => a.Area)
-            .Where(a => a.WorkDate >= fromDate && a.WorkDate <= toDate)
-            .AsNoTracking()
-            .AsQueryable();
+        var fromDate =
+            DateOnly.FromDateTime(
+                (
+                    from ??
+                    DateTime.Today
+                        .AddDays(-29)
+                ).Date
+            );
+
+        var query =
+            _db.ShiftAssignments
+                .Include(a => a.Employee)!
+                    .ThenInclude(e =>
+                        e!.User)
+                .Include(a => a.Shift)
+                .Include(a => a.Area)
+                .Include(a =>
+                    a.AssignedAreas)
+                    .ThenInclude(x =>
+                        x.Area)
+                .Where(
+                    a =>
+                        a.WorkDate >=
+                            fromDate &&
+                        a.WorkDate <=
+                            toDate
+                )
+                .AsNoTracking()
+                .AsQueryable();
 
         if (userId.HasValue)
-            query = query.Where(a => a.Employee != null && a.Employee.User != null && a.Employee.User.UserId == userId.Value);
+        {
+            query = query.Where(
+                a =>
+                    a.Employee != null &&
+                    a.Employee.User !=
+                        null &&
+                    a.Employee.User
+                        .UserId ==
+                        userId.Value
+            );
+        }
 
-        var history = await query
-            .OrderByDescending(a => a.WorkDate)
-            .ThenBy(a => a.Shift!.StartTime)
-            .Select(a => new
-            {
-                Id = a.ShiftAssignmentId,
-                UserId = a.Employee != null && a.Employee.User != null ? a.Employee.User.UserId : 0,
-                UserName = a.Employee != null && a.Employee.User != null ? a.Employee.User.FullName : "",
-                a.ShiftId,
-                ShiftName = a.Shift != null ? a.Shift.ShiftName : "",
-                ShiftStart = a.Shift != null ? a.Shift.StartTime : TimeSpan.Zero,
-                ShiftEnd = a.Shift != null ? a.Shift.EndTime : TimeSpan.Zero,
-                WorkDate = a.WorkDate.ToDateTime(TimeOnly.MinValue),
-                a.AreaId,
-                AreaName = a.Area != null ? a.Area.AreaName : null,
-                Status = a.Status,
-                a.CheckInTime,
-                a.CheckOutTime
-            })
+        var rows = await query
+            .OrderByDescending(
+                a => a.WorkDate
+            )
+            .ThenBy(
+                a =>
+                    a.Shift!.StartTime
+            )
             .ToListAsync();
 
-        return Ok(history);
+        return Ok(
+            rows.Select(ToAssignmentDto)
+                .ToList()
+        );
     }
 
     [HttpPut("assignments/{id}/status")]
@@ -315,12 +637,142 @@ public class ShiftsController : ControllerBase
         return NoContent();
     }
 
-    private async Task<string> GetAreaNameAsync(int? areaId)
+    private static List<int>
+        NormalizeAreaIds(
+            IEnumerable<int>? areaIds,
+            int? legacyAreaId)
     {
-        if (!areaId.HasValue) return "";
+        var result =
+            (areaIds ??
+                Enumerable.Empty<int>())
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        if (result.Count == 0 &&
+            legacyAreaId.HasValue &&
+            legacyAreaId.Value > 0)
+        {
+            result.Add(
+                legacyAreaId.Value
+            );
+        }
+
+        return result;
+    }
+
+    private async Task<bool>
+        AreAreasValidAsync(
+            IReadOnlyCollection<int>
+                areaIds)
+    {
+        if (areaIds.Count == 0)
+            return true;
+
+        var count = await _db.Areas
+            .CountAsync(
+                a =>
+                    areaIds.Contains(
+                        a.AreaId
+                    )
+            );
+
+        return count ==
+            areaIds.Count;
+    }
+
+    private async Task<List<string>>
+        GetAreaNamesAsync(
+            IReadOnlyCollection<int>
+                areaIds)
+    {
+        if (areaIds.Count == 0)
+        {
+            return new List<string>();
+        }
+
         return await _db.Areas
-            .Where(a => a.AreaId == areaId.Value)
+            .Where(
+                a =>
+                    areaIds.Contains(
+                        a.AreaId
+                    )
+            )
+            .OrderBy(a => a.AreaName)
             .Select(a => a.AreaName)
-            .FirstOrDefaultAsync() ?? "";
+            .ToListAsync();
+    }
+
+    private static ShiftAssignmentDto
+        ToAssignmentDto(
+            ShiftAssignment a)
+    {
+        var assignedAreas =
+            a.AssignedAreas
+                .Where(
+                    x =>
+                        x.Area != null
+                )
+                .OrderBy(
+                    x =>
+                        x.Area!.AreaName
+                )
+                .ToList();
+
+        var areaIds =
+            assignedAreas.Count > 0
+                ? assignedAreas
+                    .Select(
+                        x => x.AreaId
+                    )
+                    .ToList()
+                : a.AreaId.HasValue
+                    ? new List<int>
+                    {
+                        a.AreaId.Value
+                    }
+                    : new List<int>();
+
+        var areaNames =
+            assignedAreas.Count > 0
+                ? assignedAreas
+                    .Select(
+                        x =>
+                            x.Area!
+                                .AreaName
+                    )
+                    .ToList()
+                : a.Area != null
+                    ? new List<string>
+                    {
+                        a.Area.AreaName
+                    }
+                    : new List<string>();
+
+        return new ShiftAssignmentDto(
+            a.ShiftAssignmentId,
+            a.Employee?.User
+                ?.UserId ?? 0,
+            a.Employee?.User
+                ?.FullName ?? "",
+            a.ShiftId,
+            a.Shift?.ShiftName ?? "",
+            a.Shift?.StartTime ??
+                TimeSpan.Zero,
+            a.Shift?.EndTime ??
+                TimeSpan.Zero,
+            a.WorkDate.ToDateTime(
+                TimeOnly.MinValue
+            ),
+            areaIds
+                .Cast<int?>()
+                .FirstOrDefault(),
+            areaNames.FirstOrDefault(),
+            areaIds,
+            areaNames,
+            a.Status,
+            a.CheckInTime,
+            a.CheckOutTime
+        );
     }
 }
