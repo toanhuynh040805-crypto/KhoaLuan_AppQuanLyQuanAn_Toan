@@ -583,6 +583,10 @@ class _AttendanceScreenState
     final AttendanceState state =
         widget.attendanceState;
 
+    if (state.status == 'VangMat') {
+      return 'Vắng mặt';
+    }
+
     if (!state.checkedIn) {
       return 'Chưa điểm danh';
     }
@@ -597,6 +601,10 @@ class _AttendanceScreenState
   String _getCheckOutStatus() {
     final AttendanceState state =
         widget.attendanceState;
+
+    if (state.status == 'VangMat') {
+      return 'Không áp dụng';
+    }
 
     if (!state.checkedOut) {
       return 'Chưa kết thúc ca';
@@ -614,6 +622,8 @@ class _AttendanceScreenState
         widget.attendanceState;
 
     switch (state.attendanceStatus) {
+      case 'VangMat':
+        return 'Vắng mặt';
       case 'DiTre_VeSom':
         return 'Đi trễ & về sớm';
       case 'DiTre':
@@ -662,6 +672,10 @@ class _AttendanceScreenState
   Color _getAttendanceOverallColor() {
     final AttendanceState state =
         widget.attendanceState;
+
+    if (state.status == 'VangMat') {
+      return Colors.red;
+    }
 
     if (!state.checkedIn) {
       return Colors.grey;
