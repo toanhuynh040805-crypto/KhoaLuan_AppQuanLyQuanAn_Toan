@@ -8,7 +8,10 @@ using QuanAnBackend.Data;
 namespace QuanAnBackend.Controllers;
 
 public record AttendanceActionRequest(
-    string EmployeeCode
+    string EmployeeCode,
+    double? Latitude = null,
+    double? Longitude = null,
+    double? AccuracyMeters = null
 );
 
 public record AttendanceTodayDto(
@@ -40,10 +43,14 @@ public record AttendanceHistoryDto(
 public class AttendanceController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IConfiguration _configuration;
 
-    public AttendanceController(AppDbContext db)
+    public AttendanceController(
+        AppDbContext db,
+        IConfiguration configuration)
     {
         _db = db;
+        _configuration = configuration;
     }
 
     // Chỉ cho phép chấm công/xem lịch sử của CHÍNH MÌNH (mã nhân viên phải thuộc
@@ -248,6 +255,37 @@ public class AttendanceController : ControllerBase
                 );
             }
 
+            var earlyMinutes = Math.Max(
+                0,
+                _configuration.GetValue<int?>(
+                    "Attendance:CheckInEarlyMinutes")
+                    ?? 30
+            );
+
+            var allowedFrom =
+                assignment.ShiftStartTime.AddMinutes(
+                    -earlyMinutes
+                );
+
+            if (assignment.DatabaseNow < allowedFrom)
+            {
+                return Conflict(
+                    new
+                    {
+                        message =
+                            $"Chưa đến thời gian điểm danh. " +
+                            $"Bạn có thể điểm danh từ " +
+                            $"{allowedFrom:HH:mm}."
+                    }
+                );
+            }
+
+            var locationError =
+                ValidateAttendanceLocation(request);
+
+            if (locationError is not null)
+                return locationError;
+
             await ExecuteAsync(
                 connection,
                 transaction,
@@ -383,6 +421,12 @@ public class AttendanceController : ControllerBase
                     }
                 );
             }
+
+            var locationError =
+                ValidateAttendanceLocation(request);
+
+            if (locationError is not null)
+                return locationError;
 
             await ExecuteAsync(
                 connection,
@@ -550,7 +594,17 @@ public class AttendanceController : ControllerBase
                 sa.ShiftAssignmentId,
                 sa.Status,
                 sa.CheckInTime,
-                sa.CheckOutTime
+                sa.CheckOutTime,
+                DATEADD(
+                    SECOND,
+                    DATEDIFF(
+                        SECOND,
+                        CAST('00:00:00' AS time),
+                        s.StartTime
+                    ),
+                    CAST(sa.WorkDate AS datetime2)
+                ) AS ShiftStartTime,
+                GETDATE() AS DatabaseNow
             FROM ShiftAssignments sa
             INNER JOIN Employees e
                 ON e.EmployeeId = sa.EmployeeId
@@ -581,8 +635,147 @@ public class AttendanceController : ControllerBase
                 : reader.GetDateTime(2),
             reader.IsDBNull(3)
                 ? null
-                : reader.GetDateTime(3)
+                : reader.GetDateTime(3),
+            reader.GetDateTime(4),
+            reader.GetDateTime(5)
         );
+    }
+
+    private IActionResult? ValidateAttendanceLocation(
+        AttendanceActionRequest request)
+    {
+        if (!request.Latitude.HasValue ||
+            !request.Longitude.HasValue ||
+            !request.AccuracyMeters.HasValue)
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Không lấy được vị trí GPS hiện tại. " +
+                        "Hãy bật vị trí và thử lại."
+                }
+            );
+        }
+
+        var latitude = request.Latitude.Value;
+        var longitude = request.Longitude.Value;
+        var accuracy = request.AccuracyMeters.Value;
+
+        if (latitude is < -90 or > 90 ||
+            longitude is < -180 or > 180 ||
+            accuracy < 0)
+        {
+            return BadRequest(
+                new { message = "Dữ liệu vị trí GPS không hợp lệ." }
+            );
+        }
+
+        var restaurantLatitude =
+            _configuration.GetValue<double?>(
+                "Attendance:RestaurantLatitude");
+
+        var restaurantLongitude =
+            _configuration.GetValue<double?>(
+                "Attendance:RestaurantLongitude");
+
+        if (!restaurantLatitude.HasValue ||
+            !restaurantLongitude.HasValue)
+        {
+            return Conflict(
+                new
+                {
+                    message =
+                        "Máy chủ chưa cấu hình vị trí nhà hàng. " +
+                        "Vui lòng báo quản lý."
+                }
+            );
+        }
+
+        var maxAccuracy = Math.Max(
+            1,
+            _configuration.GetValue<double?>(
+                "Attendance:MaxAccuracyMeters")
+                ?? 50
+        );
+
+        if (accuracy > maxAccuracy)
+        {
+            return Conflict(
+                new
+                {
+                    message =
+                        $"GPS chưa đủ chính xác (sai số khoảng " +
+                        $"{Math.Round(accuracy)} m). " +
+                        $"Cần sai số không quá " +
+                        $"{Math.Round(maxAccuracy)} m."
+                }
+            );
+        }
+
+        var radius = Math.Max(
+            1,
+            _configuration.GetValue<double?>(
+                "Attendance:RadiusMeters")
+                ?? 100
+        );
+
+        var distance = CalculateDistanceMeters(
+            latitude,
+            longitude,
+            restaurantLatitude.Value,
+            restaurantLongitude.Value
+        );
+
+        if (distance > radius)
+        {
+            return Conflict(
+                new
+                {
+                    message =
+                        $"Bạn đang cách nhà hàng khoảng " +
+                        $"{Math.Round(distance)} m. " +
+                        $"Chỉ được điểm danh trong bán kính " +
+                        $"{Math.Round(radius)} m."
+                }
+            );
+        }
+
+        return null;
+    }
+
+    private static double CalculateDistanceMeters(
+        double latitude1,
+        double longitude1,
+        double latitude2,
+        double longitude2)
+    {
+        const double earthRadiusMeters = 6371000;
+
+        static double ToRadians(double degrees)
+            => degrees * Math.PI / 180.0;
+
+        var lat1 = ToRadians(latitude1);
+        var lat2 = ToRadians(latitude2);
+        var deltaLat =
+            ToRadians(latitude2 - latitude1);
+        var deltaLon =
+            ToRadians(longitude2 - longitude1);
+
+        var a =
+            Math.Sin(deltaLat / 2) *
+            Math.Sin(deltaLat / 2) +
+            Math.Cos(lat1) *
+            Math.Cos(lat2) *
+            Math.Sin(deltaLon / 2) *
+            Math.Sin(deltaLon / 2);
+
+        var c = 2 * Math.Atan2(
+            Math.Sqrt(a),
+            Math.Sqrt(1 - a)
+        );
+
+        return earthRadiusMeters * c;
     }
 
     private static string FormatSqlTime(
@@ -676,6 +869,8 @@ public class AttendanceController : ControllerBase
         int ShiftAssignmentId,
         string Status,
         DateTime? CheckInTime,
-        DateTime? CheckOutTime
+        DateTime? CheckOutTime,
+        DateTime ShiftStartTime,
+        DateTime DatabaseNow
     );
 }
