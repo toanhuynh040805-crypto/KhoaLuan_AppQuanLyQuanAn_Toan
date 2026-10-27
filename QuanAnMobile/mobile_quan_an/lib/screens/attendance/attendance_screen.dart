@@ -501,105 +501,99 @@ class _AttendanceScreenState
   }
 
   String _getCheckInStatus() {
-    final DateTime? checkIn =
-        widget.attendanceState.checkInTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkIn == null) {
+    if (!state.checkedIn) {
       return 'Chưa điểm danh';
     }
 
-    final DateTime? shiftStart =
-        _shiftDateTime(
-      checkIn,
-      widget.attendanceState.shiftStartTime,
-    );
-
-    if (shiftStart == null) {
-      return 'Đã điểm danh';
-    }
-
-    if (checkIn.isAfter(shiftStart)) {
-      final int lateMinutes =
-          checkIn.difference(shiftStart).inMinutes;
-
-      return 'Đi trễ $lateMinutes phút';
+    if (state.lateMinutes > 0) {
+      return 'Đi trễ ${state.lateMinutes} phút';
     }
 
     return 'Đúng giờ';
   }
 
   String _getCheckOutStatus() {
-    final DateTime? checkOut =
-        widget.attendanceState.checkOutTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkOut == null) {
+    if (!state.checkedOut) {
       return 'Chưa kết thúc ca';
     }
 
-    final DateTime? shiftEnd =
-        _shiftDateTime(
-      checkOut,
-      widget.attendanceState.shiftEndTime,
-    );
-
-    if (shiftEnd == null) {
-      return 'Đã kết thúc';
-    }
-
-    if (checkOut.isBefore(shiftEnd)) {
-      final int earlyMinutes =
-          shiftEnd.difference(checkOut).inMinutes;
-
-      return 'Về sớm $earlyMinutes phút';
+    if (state.earlyLeaveMinutes > 0) {
+      return 'Về sớm ${state.earlyLeaveMinutes} phút';
     }
 
     return 'Đủ giờ';
   }
 
-  Color _getCheckInStatusColor() {
-    final DateTime? checkIn =
-        widget.attendanceState.checkInTime;
+  String _getAttendanceOverallStatus() {
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkIn == null) {
+    switch (state.attendanceStatus) {
+      case 'DiTre_VeSom':
+        return 'Đi trễ & về sớm';
+      case 'DiTre':
+        return 'Đi trễ';
+      case 'VeSom':
+        return 'Về sớm';
+      case 'DungGio_DuGio':
+        return 'Đúng giờ • Đủ giờ';
+      case 'DangLam_DiTre':
+        return 'Đang làm • Đi trễ';
+      case 'DangLam_DungGio':
+        return 'Đang làm • Đúng giờ';
+      default:
+        return state.checkedIn
+            ? 'Đang trong ca'
+            : 'Chưa điểm danh';
+    }
+  }
+
+  Color _getCheckInStatusColor() {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.checkedIn) {
       return Colors.grey;
     }
 
-    final DateTime? shiftStart =
-        _shiftDateTime(
-      checkIn,
-      widget.attendanceState.shiftStartTime,
-    );
-
-    if (shiftStart == null) {
-      return Colors.green;
-    }
-
-    return checkIn.isAfter(shiftStart)
+    return state.lateMinutes > 0
         ? Colors.red
         : Colors.green;
   }
 
   Color _getCheckOutStatusColor() {
-    final DateTime? checkOut =
-        widget.attendanceState.checkOutTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkOut == null) {
+    if (!state.checkedOut) {
       return Colors.grey;
     }
 
-    final DateTime? shiftEnd =
-        _shiftDateTime(
-      checkOut,
-      widget.attendanceState.shiftEndTime,
-    );
-
-    if (shiftEnd == null) {
-      return Colors.green;
-    }
-
-    return checkOut.isBefore(shiftEnd)
+    return state.earlyLeaveMinutes > 0
         ? Colors.orange
         : Colors.green;
+  }
+
+  Color _getAttendanceOverallColor() {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.checkedIn) {
+      return Colors.grey;
+    }
+
+    if (state.lateMinutes > 0 ||
+        state.earlyLeaveMinutes > 0) {
+      return Colors.red;
+    }
+
+    return Colors.green;
   }
 
   String get _shiftLabel {
@@ -997,6 +991,15 @@ class _AttendanceScreenState
             color:
                 _getCheckOutStatusColor(),
           ),
+          const Divider(height: 28),
+          _buildStatusRow(
+            icon: Icons.fact_check_outlined,
+            title: 'Trạng thái ca',
+            value:
+                _getAttendanceOverallStatus(),
+            color:
+                _getAttendanceOverallColor(),
+          ),
         ],
       ),
     );
@@ -1017,18 +1020,24 @@ class _AttendanceScreenState
       color = Colors.grey;
       background = Colors.grey.shade100;
     } else if (state.checkedOut) {
-      text = 'Đã kết thúc ca';
-      icon = Icons.check_circle;
-      color = Colors.blueGrey;
-      background =
-          Colors.blueGrey.shade50;
+      text = _getAttendanceOverallStatus();
+      icon = state.lateMinutes > 0 ||
+              state.earlyLeaveMinutes > 0
+          ? Icons.warning_amber_rounded
+          : Icons.check_circle;
+      color = _getAttendanceOverallColor();
+      background = color.withValues(
+        alpha: 0.08,
+      );
     } else if (state.checkedIn) {
-      text = 'Đang trong ca làm';
-      icon =
-          Icons.check_circle_outline;
-      color = Colors.green;
-      background =
-          Colors.green.shade50;
+      text = _getAttendanceOverallStatus();
+      icon = state.lateMinutes > 0
+          ? Icons.warning_amber_rounded
+          : Icons.check_circle_outline;
+      color = _getAttendanceOverallColor();
+      background = color.withValues(
+        alpha: 0.08,
+      );
     } else if (_isTooEarlyToCheckIn) {
       text =
           'Có thể điểm danh từ '
