@@ -53,9 +53,22 @@ public class AreaAccessService
         var areaIds = await _db.Database
             .SqlQuery<int>($"""
                 WITH ShiftAreas AS (
+                    SELECT DISTINCT saa.AreaId
+                    FROM ShiftAssignments sa
+                    INNER JOIN Employees e
+                        ON e.EmployeeId = sa.EmployeeId
+                    INNER JOIN ShiftAssignmentAreas saa
+                        ON saa.ShiftAssignmentId = sa.ShiftAssignmentId
+                    WHERE e.UserId = {userId.Value}
+                      AND sa.WorkDate = {day}
+                      AND sa.Status <> N'VangMat'
+
+                    UNION
+
                     SELECT DISTINCT sa.AreaId
                     FROM ShiftAssignments sa
-                    INNER JOIN Employees e ON e.EmployeeId = sa.EmployeeId
+                    INNER JOIN Employees e
+                        ON e.EmployeeId = sa.EmployeeId
                     WHERE e.UserId = {userId.Value}
                       AND sa.AreaId IS NOT NULL
                       AND sa.WorkDate = {day}
