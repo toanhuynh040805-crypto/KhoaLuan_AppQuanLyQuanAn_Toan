@@ -24,6 +24,12 @@ public partial class RevenueControl : UserControl
     private bool _suppress;   // true khi dang set gia tri bo loc bang code -> khong reload
     private int _version;     // chong ket qua cu ghi de ket qua moi khi bam loc nhanh
 
+    // O chon "den ngay" + 2 nhan "Tu"/"den" cho kieu loc khoang ngay (tao bang code, khong dung Designer).
+    private readonly DateTimePicker dtpDateTo = new();
+    private readonly Panel _filterRow = new() { Dock = DockStyle.Fill };
+    private readonly Label lblFrom = new();
+    private readonly Label lblTo = new();
+
     private readonly Label[] _insightCaptions = new Label[4];
     private readonly Label[] _insightValues = new Label[4];
 
@@ -44,6 +50,7 @@ public partial class RevenueControl : UserControl
         Load += async (s, e) =>
         {
             PositionHeaderButtons();
+            LayoutFilterRow();
             await ReloadAllAsync();
         };
     }
@@ -57,13 +64,43 @@ public partial class RevenueControl : UserControl
     {
         lblFilterCaption.Width = 100; // tranh bi cat chu "Xem theo:"
 
-        flowFilter.SuspendLayout();
-        flowFilter.Controls.Clear();
-        flowFilter.Controls.AddRange(new Control[]
+        // Kieu loc "Chon ngay" nay cho chon ca khoang ngay (tu ngay - den ngay).
+        cbPeriod.Items[PeriodDay] = "Khoảng ngày";
+
+        lblFrom.Text = "Từ";
+        lblTo.Text = "đến";
+        foreach (var l in new[] { lblFrom, lblTo })
         {
-            lblFilterCaption, cbPeriod, dtpDate, cbWeek, cbMonth, cbQuarter, nudYear, lblRange
+            l.AutoSize = false;
+            l.Font = new Font("Segoe UI", 10F);
+            l.Margin = new Padding(4, 0, 4, 0);
+            l.TextAlign = ContentAlignment.MiddleCenter;
+
+            // Do theo chu that (tinh den DPI man hinh) thay vi gan cung, tranh bi cat chu / de len o ngay.
+            var textWidth = TextRenderer.MeasureText(l.Text, l.Font).Width;
+            l.Size = new Size(textWidth + 10, dtpDate.Height);
+        }
+
+        dtpDateTo.CustomFormat = dtpDate.CustomFormat;
+        dtpDateTo.Format = DateTimePickerFormat.Custom;
+        dtpDateTo.Font = dtpDate.Font;
+        dtpDateTo.Margin = dtpDate.Margin;
+        dtpDateTo.Size = dtpDate.Size;
+
+        // Bo FlowLayoutPanel (thu tu bi phu thuoc vao Designer) -> dung 1 Panel va tu dat toa do
+        // cho tung o trong LayoutFilterRow(): o NAM luon dung SAU o tuan / thang / quy.
+        flowFilter.Controls.Clear();
+        pnlFilter.Controls.Remove(flowFilter);
+        _filterRow.Controls.AddRange(new Control[]
+        {
+            lblFilterCaption, cbPeriod,
+            lblFrom, dtpDate, lblTo, dtpDateTo,
+            cbWeek, cbMonth, cbQuarter,
+            nudYear,
+            lblRange
         });
-        flowFilter.ResumeLayout(true);
+        pnlFilter.Controls.Add(_filterRow);
+        LayoutFilterRow();
     }
 
     private void InitPickers()
@@ -71,12 +108,54 @@ public partial class RevenueControl : UserControl
         _suppress = true;
         var today = DateTime.Today;
         dtpDate.Value = today;
+        dtpDateTo.Value = today;
         cbMonth.SelectedIndex = today.Month - 1;
         cbQuarter.SelectedIndex = (today.Month - 1) / 3;
         nudYear.Value = today.Year;
         PopulateWeeks(ISOWeek.GetYear(today) == today.Year ? ISOWeek.GetWeekOfYear(today) : 1);
         cbPeriod.SelectedIndex = PeriodToday;
         _suppress = false;
+    }
+
+    // Xep cac o cua thanh loc tu trai sang phai theo kieu loc dang chon:
+    //   Xem theo | kieu loc | [Tu - den] HOAC [tuan | thang | quy] + NAM | nhan ky
+    private void LayoutFilterRow()
+    {
+        var m = cbPeriod.SelectedIndex;
+        var order = new List<Control> { lblFilterCaption, cbPeriod };
+        switch (m)
+        {
+            case PeriodDay:
+                order.AddRange(new Control[] { lblFrom, dtpDate, lblTo, dtpDateTo });
+                break;
+            case PeriodWeek:
+                order.AddRange(new Control[] { cbWeek, nudYear });
+                break;
+            case PeriodMonth:
+                order.AddRange(new Control[] { cbMonth, nudYear });
+                break;
+            case PeriodQuarter:
+                order.AddRange(new Control[] { cbQuarter, nudYear });
+                break;
+        }
+        order.Add(lblRange);
+
+        var x = 14;
+        foreach (var c in order)
+        {
+            x += c.Margin.Left;
+            c.Location = new Point(x, 11);
+            x += c.Width + c.Margin.Right;
+        }
+    }
+
+    // Gan ngay cho 1 o chon bang code ma khong kich hoat tai du lieu.
+    private void SetDateSilently(DateTimePicker picker, DateTime value)
+    {
+        var wasSuppressed = _suppress;
+        _suppress = true;
+        try { picker.Value = value; }
+        finally { _suppress = wasSuppressed; }
     }
 
     private void WireUpEvents()
@@ -101,7 +180,19 @@ public partial class RevenueControl : UserControl
             if (cbPeriod.SelectedIndex == PeriodWeek) PopulateWeeks();
             await ReloadAllAsync();
         };
-        dtpDate.ValueChanged += async (s, e) => await ReloadAllAsync();
+        // Khoang ngay: giu "Tu ngay" <= "Den ngay" (keo ngay con lai theo, khong bao loi).
+        dtpDate.ValueChanged += async (s, e) =>
+        {
+            if (!_suppress && dtpDate.Value.Date > dtpDateTo.Value.Date)
+                SetDateSilently(dtpDateTo, dtpDate.Value);
+            await ReloadAllAsync();
+        };
+        dtpDateTo.ValueChanged += async (s, e) =>
+        {
+            if (!_suppress && dtpDateTo.Value.Date < dtpDate.Value.Date)
+                SetDateSilently(dtpDate, dtpDateTo.Value);
+            await ReloadAllAsync();
+        };
         cbWeek.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
         cbMonth.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
         cbQuarter.SelectedIndexChanged += async (s, e) => await ReloadAllAsync();
@@ -230,6 +321,8 @@ public partial class RevenueControl : UserControl
         lblTitle.ForeColor = AppColors.OnSurface;
         lblSubtitle.ForeColor = AppColors.OnSurfaceVariant;
         lblFilterCaption.ForeColor = AppColors.OnSurfaceVariant;
+        lblFrom.ForeColor = AppColors.OnSurfaceVariant;
+        lblTo.ForeColor = AppColors.OnSurfaceVariant;
         lblRange.ForeColor = AppColors.Primary;
         foreach (var l in new[] { lblChartTitle, lblInvoicesTitle, lblInsightsTitle, lblTop5Title })
             l.ForeColor = AppColors.OnSurface;
@@ -306,11 +399,15 @@ public partial class RevenueControl : UserControl
     private void ApplyModeUI()
     {
         var m = cbPeriod.SelectedIndex;
+        lblFrom.Visible = m == PeriodDay;
         dtpDate.Visible = m == PeriodDay;
+        lblTo.Visible = m == PeriodDay;
+        dtpDateTo.Visible = m == PeriodDay;
         cbWeek.Visible = m == PeriodWeek;
         cbMonth.Visible = m == PeriodMonth;
         cbQuarter.Visible = m == PeriodQuarter;
         nudYear.Visible = m == PeriodWeek || m == PeriodMonth || m == PeriodQuarter;
+        LayoutFilterRow();
     }
 
     // Nap danh sach tuan ISO (Thu 2 - Chu nhat) cua nam dang chon vao cbWeek, giu nguyen tuan dang chon.
@@ -354,8 +451,12 @@ public partial class RevenueControl : UserControl
         switch (cbPeriod.SelectedIndex)
         {
             case PeriodDay:
-                from = to = dtpDate.Value.Date;
-                _periodLabel = $"Ngày {from:dd/MM/yyyy}";
+                from = dtpDate.Value.Date;
+                to = dtpDateTo.Value.Date;
+                if (to < from) (from, to) = (to, from);
+                _periodLabel = from == to
+                    ? $"Ngày {from:dd/MM/yyyy}"
+                    : $"Từ {from:dd/MM/yyyy} đến {to:dd/MM/yyyy}";
                 break;
 
             case PeriodWeek:
