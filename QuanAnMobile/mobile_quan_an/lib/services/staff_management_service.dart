@@ -90,7 +90,7 @@ class StaffManagementService {
     required int userId,
     required int shiftId,
     required DateTime workDate,
-    int? areaId,
+    required List<int> areaIds,
   }) async {
     await _apiClient.post(
       '/shifts/assignments',
@@ -98,7 +98,19 @@ class StaffManagementService {
         'userId': userId,
         'shiftId': shiftId,
         'workDate': _date(workDate),
-        'areaId': areaId,
+        'areaIds': areaIds,
+      },
+    );
+  }
+
+  Future<void> updateAssignmentAreas({
+    required int id,
+    required List<int> areaIds,
+  }) async {
+    await _apiClient.put(
+      '/shifts/assignments/$id/areas',
+      body: {
+        'areaIds': areaIds,
       },
     );
   }
