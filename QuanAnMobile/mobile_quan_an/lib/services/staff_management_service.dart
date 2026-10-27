@@ -16,6 +16,51 @@ class StaffManagementService {
         .toList();
   }
 
+  Future<List<ManagedRole>> getRoles() async {
+    final dynamic response = await _apiClient.get('/users/roles');
+    if (response is! List) return <ManagedRole>[];
+    return response
+        .whereType<Map>()
+        .map((e) => ManagedRole.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.id > 0 && e.name.trim().isNotEmpty)
+        .toList();
+  }
+
+  Future<List<ManagedStation>> getStations() async {
+    final dynamic response = await _apiClient.get('/stations');
+    if (response is! List) return <ManagedStation>[];
+    return response
+        .whereType<Map>()
+        .map((e) => ManagedStation.fromJson(Map<String, dynamic>.from(e)))
+        .where((e) => e.id > 0 && e.name.trim().isNotEmpty)
+        .toList();
+  }
+
+  Future<void> createEmployee({
+    required String fullName,
+    required String username,
+    required String password,
+    required String employeeCode,
+    required int roleId,
+    String? phone,
+    String? email,
+    int? stationId,
+  }) async {
+    await _apiClient.post(
+      '/users',
+      body: {
+        'fullName': fullName.trim(),
+        'username': username.trim(),
+        'password': password,
+        'phone': phone?.trim().isEmpty == true ? null : phone?.trim(),
+        'email': email?.trim().isEmpty == true ? null : email?.trim(),
+        'employeeCode': employeeCode.trim(),
+        'roleId': roleId,
+        'stationId': stationId,
+      },
+    );
+  }
+
   Future<List<ManagedShift>> getShifts() async {
     final dynamic response = await _apiClient.get('/shifts');
     if (response is! List) return <ManagedShift>[];
