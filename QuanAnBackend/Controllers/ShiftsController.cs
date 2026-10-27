@@ -396,12 +396,38 @@ public class ShiftsController : ControllerBase
                 newAreaIds
             );
 
-        _db.ShiftAssignmentAreas
-            .RemoveRange(
-                assignment.AssignedAreas
-            );
+        var existingRows =
+            assignment.AssignedAreas
+                .ToList();
 
-        foreach (var areaId in areaIds)
+        var rowsToRemove =
+            existingRows
+                .Where(
+                    row =>
+                        !newAreaIds.Contains(
+                            row.AreaId
+                        )
+                )
+                .ToList();
+
+        _db.ShiftAssignmentAreas
+            .RemoveRange(rowsToRemove);
+
+        var existingIds =
+            existingRows
+                .Select(
+                    row => row.AreaId
+                )
+                .ToHashSet();
+
+        foreach (
+            var areaId in
+                newAreaIds.Where(
+                    id =>
+                        !existingIds
+                            .Contains(id)
+                )
+        )
         {
             _db.ShiftAssignmentAreas.Add(
                 new ShiftAssignmentArea
