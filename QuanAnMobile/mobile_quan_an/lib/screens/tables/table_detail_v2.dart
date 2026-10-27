@@ -19,6 +19,7 @@ import '../menu/menu_screen.dart';
 import '../order_log/order_log_screen.dart';
 import 'payment_dialog.dart';
 import 'kitchen_requests_screen.dart';
+import 'order_item_edit_screen.dart';
 
 class TableDetailV2 extends StatefulWidget {
   final RestaurantTable table;
@@ -819,80 +820,60 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
   }
 
-  Future<void> _decrementItem(OrderItem item) async {
+  Future<void> _editItem(OrderItem item) async {
     if (!_canCancelOrderItem ||
         item.id == null ||
+        item.status != 'Chờ chế biến' ||
         _bulkActionRunning) {
       return;
     }
 
-    if (item.quantity <= 1) {
-      await _cancelItem(item);
+    final int? savedQuantity =
+        await Navigator.push<int>(
+      context,
+      MaterialPageRoute<int>(
+        builder: (_) =>
+            OrderItemEditScreen(
+          item: item,
+        ),
+      ),
+    );
+
+    if (!mounted ||
+        savedQuantity == null) {
       return;
     }
 
+    final int index = orderItems
+        .indexWhere(
+      (current) =>
+          current.id == item.id,
+    );
+
+    if (index < 0) return;
+
+    final OrderItem current =
+        orderItems[index];
+
     setState(() {
-      _bulkActionRunning = true;
+      orderItems[index] = OrderItem(
+        id: current.id,
+        name: current.name,
+        quantity: savedQuantity,
+        unitPrice: current.unitPrice,
+        status: current.status,
+        note: current.note,
+        isTakeaway:
+            current.isTakeaway,
+      );
+
+      currentAmount =
+          orderItems.fold<int>(
+        0,
+        (sum, current) =>
+            sum + current.totalPrice,
+      );
     });
-
-    try {
-      final int newQuantity =
-          await AppServices.orderService
-              .decrementItemQuantity(
-        orderItemId: item.id!,
-      );
-
-      if (!mounted) return;
-
-      final int index = orderItems.indexWhere(
-        (current) => current.id == item.id,
-      );
-
-      if (index < 0) return;
-
-      final OrderItem current =
-          orderItems[index];
-
-      setState(() {
-        orderItems[index] = OrderItem(
-          id: current.id,
-          name: current.name,
-          quantity: newQuantity,
-          unitPrice: current.unitPrice,
-          status: current.status,
-          note: current.note,
-          isTakeaway: current.isTakeaway,
-        );
-
-        currentAmount =
-            orderItems.fold<int>(
-          0,
-          (sum, current) =>
-              sum + current.totalPrice,
-        );
-      });
-
-      TopMessage.show(
-        context,
-        message:
-            'Đã giảm ${item.name} còn $newQuantity phần',
-        type: TopMessageType.success,
-      );
-    } on ApiException catch (error) {
-      if (!mounted) return;
-
-      TopMessage.show(
-        context,
-        message: error.message,
-        type: TopMessageType.error,
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _bulkActionRunning = false;
-        });
-      }
-    }
   }
 
   Future<void> _cancelItem(OrderItem item) async {
@@ -1900,128 +1881,234 @@ class _TableDetailV2State extends State<TableDetailV2> {
     );
   }
 
-  Widget _buildOrderItem(int index, OrderItem item) {
-    final Color color = _statusColor(item.status);
+  Widget _buildOrderItem(
+    int index,
+    OrderItem item,
+  ) {
+    final Color color =
+        _statusColor(item.status);
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        item.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                    // Món khách yêu cầu mang về (đơn mang về thì cả đơn đã là mang về)
-                    if (item.isTakeaway && !currentTable.isTakeaway) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppTheme.orangeColor.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          'Mang về',
-                          style: TextStyle(
-                            color: AppTheme.orangeColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
+    final bool canEdit =
+        _canCancelOrderItem &&
+        item.id != null &&
+        item.status ==
+            'Chờ chế biến' &&
+        !_bulkActionRunning;
+
+    return GestureDetector(
+      behavior:
+          HitTestBehavior.opaque,
+      onTap:
+          canEdit
+              ? () => _editItem(item)
+              : null,
+      child: Container(
+        padding:
+            const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius:
+              BorderRadius.circular(14),
+          border: Border.all(
+            color:
+                canEdit
+                    ? AppTheme
+                        .orangeColor
+                        .withValues(
+                          alpha: 0.28,
+                        )
+                    : Colors
+                        .grey.shade200,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment
+                        .start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          item.name,
+                          style:
+                              const TextStyle(
+                            fontWeight:
+                                FontWeight.w700,
+                            fontSize: 15,
                           ),
                         ),
                       ),
+                      if (item.isTakeaway &&
+                          !currentTable
+                              .isTakeaway) ...[
+                        const SizedBox(
+                          width: 8,
+                        ),
+                        Container(
+                          padding:
+                              const EdgeInsets
+                                  .symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration:
+                              BoxDecoration(
+                            color: AppTheme
+                                .orangeColor
+                                .withValues(
+                              alpha: 0.12,
+                            ),
+                            borderRadius:
+                                BorderRadius
+                                    .circular(
+                              8,
+                            ),
+                          ),
+                          child:
+                              const Text(
+                            'Mang về',
+                            style:
+                                TextStyle(
+                              color: AppTheme
+                                  .orangeColor,
+                              fontSize: 11,
+                              fontWeight:
+                                  FontWeight
+                                      .w700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  'SL: ${item.quantity}  •  ${_formatMoney(item.totalPrice)}',
-                  style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
-                ),
-                if (item.note != null && item.note!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 5),
+                  ),
+                  const SizedBox(
+                    height: 5,
+                  ),
                   Text(
-                    item.note!,
+                    'SL: ${item.quantity}  •  '
+                    '${_formatMoney(item.totalPrice)}',
                     style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
+                      color:
+                          Colors.grey.shade700,
+                      fontSize: 13,
                     ),
                   ),
+                  if (canEdit) ...[
+                    const SizedBox(
+                      height: 5,
+                    ),
+                    const Text(
+                      'Chạm vào món để sửa số lượng',
+                      style: TextStyle(
+                        color: AppTheme
+                            .orangeColor,
+                        fontSize: 11,
+                        fontWeight:
+                            FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  if (item.note != null &&
+                      item.note!
+                          .trim()
+                          .isNotEmpty) ...[
+                    const SizedBox(
+                      height: 5,
+                    ),
+                    Text(
+                      item.note!,
+                      style: TextStyle(
+                        color: Colors
+                            .grey.shade600,
+                        fontSize: 12,
+                        fontStyle:
+                            FontStyle.italic,
+                      ),
+                    ),
+                  ],
                 ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets
+                          .symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
+                  decoration:
+                      BoxDecoration(
+                    color: color
+                        .withValues(
+                      alpha: 0.1,
+                    ),
+                    borderRadius:
+                        BorderRadius
+                            .circular(
+                      14,
+                    ),
+                  ),
+                  child: Text(
+                    item.status,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight:
+                          FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (_canMarkServed &&
+                    item.status ==
+                        'Đã xong')
+                  IconButton(
+                    onPressed:
+                        _bulkActionRunning
+                            ? null
+                            : () =>
+                                _markAsServed(
+                                  index,
+                                ),
+                    tooltip:
+                        'Đã phục vụ',
+                    icon: const Icon(
+                      Icons
+                          .check_circle_outline,
+                      color: Colors.green,
+                    ),
+                  )
+                else if (_canCancelOrderItem &&
+                    item.status ==
+                        'Chờ chế biến')
+                  IconButton(
+                    onPressed:
+                        _bulkActionRunning
+                            ? null
+                            : () =>
+                                _cancelItem(
+                                  item,
+                                ),
+                    tooltip: 'Hủy món',
+                    icon: const Icon(
+                      Icons
+                          .cancel_outlined,
+                      color: Colors.red,
+                    ),
+                  ),
               ],
             ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  item.status,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              if (_canMarkServed && item.status == 'Đã xong')
-                IconButton(
-                  onPressed: _bulkActionRunning
-                      ? null
-                      : () => _markAsServed(index),
-                  tooltip: 'Đã phục vụ',
-                  icon: const Icon(
-                    Icons.check_circle_outline,
-                    color: Colors.green,
-                  ),
-                )
-              else if (_canCancelOrderItem && item.status == 'Chờ chế biến')
-                IconButton(
-                  onPressed: _bulkActionRunning
-                      ? null
-                      : () => item.quantity > 1
-                          ? _decrementItem(item)
-                          : _cancelItem(item),
-                  tooltip: item.quantity > 1
-                      ? 'Giảm 1 phần'
-                      : 'Hủy món',
-                  icon: Icon(
-                    item.quantity > 1
-                        ? Icons.remove_circle_outline
-                        : Icons.cancel_outlined,
-                    color: item.quantity > 1
-                        ? AppTheme.orangeColor
-                        : Colors.red,
-                  ),
-                ),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
