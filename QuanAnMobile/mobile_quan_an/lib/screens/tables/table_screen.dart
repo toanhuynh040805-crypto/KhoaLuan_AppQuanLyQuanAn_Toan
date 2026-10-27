@@ -1683,7 +1683,10 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
               const SizedBox(width: 8),
               Expanded(
                 child: dropdownShell(
-                  selected: _section.startsWith('area:'),
+                  selected:
+                      selectedFloor != null &&
+                      (_section == 'areas' ||
+                          _section.startsWith('area:')),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       isExpanded: true,
