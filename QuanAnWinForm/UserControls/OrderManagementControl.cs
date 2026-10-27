@@ -431,21 +431,32 @@ public partial class OrderManagementControl : UserControl
         };
         row.Height = ItemRowPanel.HeightFor(note.Length > 0);
 
-        // Chỉ cho hủy món khi đơn đang mở và món ở trạng thái Mới gọi (MoiGoi = 0)
+        // Đồng bộ Mobile: món Mới gọi có SL > 1 thì giảm từng 1;
+        // khi chỉ còn SL = 1 mới chuyển sang hủy toàn bộ món.
         if (orderStatus == 0 && statusIndex == 0)
         {
+            var canDecrease = item.Quantity > 1;
             var btn = new Button
             {
-                Text = "Hủy món",
+                Text = canDecrease ? "Giảm 1" : "Hủy món",
                 Size = new Size(76, 26),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.White,
-                ForeColor = AppColors.Error,
+                ForeColor = canDecrease ? AppColors.Primary : AppColors.Error,
                 Font = FontCaption,
                 Cursor = Cursors.Hand,
             };
-            btn.FlatAppearance.BorderColor = AppColors.Error;
-            btn.Click += async (s, e) => await CancelItemAsync(item, btn);
+            btn.FlatAppearance.BorderColor =
+                canDecrease ? AppColors.Primary : AppColors.Error;
+
+            btn.Click += async (s, e) =>
+            {
+                if (item.Quantity > 1)
+                    await DecrementItemAsync(item, btn);
+                else
+                    await CancelItemAsync(item, btn);
+            };
+
             row.AttachCancelButton(btn);
         }
         return row;
@@ -472,6 +483,41 @@ public partial class OrderManagementControl : UserControl
         {
             MessageBox.Show($"Không hủy được đơn: {ex.Message}", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             btnCancelOrder.Enabled = true;
+        }
+    }
+
+    private async Task DecrementItemAsync(OrderItemDto item, Button btn)
+    {
+        if (item.Quantity <= 1)
+        {
+            await CancelItemAsync(item, btn);
+            return;
+        }
+
+        btn.Enabled = false;
+
+        try
+        {
+            var newQuantity =
+                await _api.DecrementOrderItemQuantityAsync(item.Id);
+
+            await LoadOrdersAsync();
+
+            MessageBox.Show(
+                $"Đã giảm \"{item.MenuItem?.Name}\" còn {newQuantity} phần.",
+                "Cập nhật số lượng",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không giảm được số lượng món: {ex.Message}",
+                "Lỗi / Cảnh báo",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+
+            btn.Enabled = true;
         }
     }
 
