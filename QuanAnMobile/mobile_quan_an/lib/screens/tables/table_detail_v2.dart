@@ -60,6 +60,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   bool _bulkActionRunning = false;
   bool _closingAfterPayment = false;
   bool _tableLockLost = false;
+  bool _tableLockLostDialogShowing = false;
   bool _tableActionRunning = false;
   String _tableLockLostMessage = '';
   MemberCustomer? _memberCustomer;
@@ -67,6 +68,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
+  StreamSubscription<TableLockTakenOverRealtimeEvent>?
+      _tableLockTakeoverSubscription;
 
   bool get _canManageTables =>
       MobileAccessPolicy.canManageTables(appEmployee.role);
@@ -115,6 +118,10 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _paymentSubscription = AppServices.realtimeService.paymentCompletions
         .listen(_handlePaymentCompleted);
 
+    _tableLockTakeoverSubscription =
+        AppServices.realtimeService.tableLockTakeovers
+            .listen(_handleTableLockTakenOver);
+
     final String token = widget.tableLockToken?.trim() ?? '';
     if (token.isNotEmpty) {
       _tableLockHeartbeatTimer = Timer.periodic(
@@ -129,6 +136,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _tableLockHeartbeatTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
+    _tableLockTakeoverSubscription?.cancel();
     super.dispose();
   }
 
@@ -149,38 +157,99 @@ class _TableDetailV2State extends State<TableDetailV2> {
       _tableLockLostMessage = error.message;
       _tableLockHeartbeatTimer?.cancel();
 
-      if (ModalRoute.of(context)?.isCurrent == true) {
-        await _showLockLostAndClose();
-      }
+      await _showLockLostAndClose();
     }
   }
 
   Future<void> _showLockLostAndClose() async {
-    if (!mounted) return;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Bàn đang được thao tác ở nơi khác'),
-        content: Text(
-          _tableLockLostMessage.isEmpty
-              ? 'Quyền thao tác bàn đã hết hạn. Vui lòng mở lại bàn.'
-              : _tableLockLostMessage,
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Quay lại'),
-          ),
-        ],
-      ),
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 280));
-    if (mounted && !_closingAfterPayment) {
-      Navigator.of(context).pop(_result());
+    if (!mounted ||
+        _closingAfterPayment ||
+        _tableLockLostDialogShowing) {
+      return;
     }
+
+    _tableLockLostDialogShowing = true;
+
+    try {
+      // Nếu nhân viên đang mở menu/dialog con từ màn chi tiết bàn thì đóng các
+      // route con trước. Phiên cũ không được tiếp tục thao tác sau khi bàn đã
+      // được tài khoản khác tiếp quản.
+      final Route<dynamic>? detailRoute = ModalRoute.of(context);
+      if (detailRoute != null && !detailRoute.isCurrent) {
+        Navigator.of(context).popUntil((route) => route == detailRoute);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+
+      if (!mounted || _closingAfterPayment) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Bàn đã được tài khoản khác tiếp quản'),
+          content: Text(
+            _tableLockLostMessage.isEmpty
+                ? 'Quyền thao tác bàn của bạn đã kết thúc.'
+                : _tableLockLostMessage,
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (mounted && !_closingAfterPayment) {
+        Navigator.of(context).pop(_result());
+      }
+    } finally {
+      _tableLockLostDialogShowing = false;
+    }
+  }
+
+  void _handleTableLockTakenOver(
+    TableLockTakenOverRealtimeEvent event,
+  ) {
+    if (!mounted ||
+        _closingAfterPayment ||
+        event.tableId != currentTable.id) {
+      return;
+    }
+
+    final String currentToken = widget.tableLockToken?.trim() ?? '';
+    if (currentToken.isEmpty) return;
+
+    // Cùng một tài khoản có thể đăng nhập nhiều thiết bị. So token để chỉ
+    // đúng thiết bị đang giữ lease cũ bị đẩy ra.
+    if (event.previousClientToken.trim().isNotEmpty &&
+        event.previousClientToken.trim() != currentToken) {
+      return;
+    }
+
+    final String employeeName = event.takenOverByEmployeeName.trim();
+    final String employeeCode = event.takenOverByEmployeeCode.trim();
+    String account = employeeName.isNotEmpty ? employeeName : employeeCode;
+
+    if (employeeCode.isNotEmpty &&
+        employeeName.isNotEmpty &&
+        employeeCode.toLowerCase() != employeeName.toLowerCase()) {
+      account = '$employeeName ($employeeCode)';
+    }
+
+    if (account.isEmpty) {
+      account = 'một tài khoản khác';
+    }
+
+    _tableLockLost = true;
+    _tableLockLostMessage =
+        'Tài khoản $account đã tiếp quản ${_displayTableName()}. '
+        'Bạn không thể tiếp tục thao tác trên bàn này.';
+    _tableLockHeartbeatTimer?.cancel();
+
+    unawaited(_showLockLostAndClose());
   }
 
   Map<String, dynamic> _result({
