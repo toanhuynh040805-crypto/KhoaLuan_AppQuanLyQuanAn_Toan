@@ -233,6 +233,19 @@ class _AttendanceLocationSettingsScreenState
       return;
     }
 
+    if (_currentAccuracy != null &&
+        _currentAccuracy! > maxAccuracy) {
+      TopMessage.show(
+        context,
+        message:
+            'GPS hiện tại chưa đủ chính xác (sai số khoảng '
+            '${_currentAccuracy!.round()} m). '
+            'Hãy chờ GPS ổn định hơn rồi lấy lại vị trí.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
     setState(() {
       _saving = true;
     });
