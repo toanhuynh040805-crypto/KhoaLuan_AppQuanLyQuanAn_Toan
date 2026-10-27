@@ -227,6 +227,16 @@ public partial class StaffControl : UserControl
         dtpHistoryTo.ValueChanged += async (s, e) => await LoadHistoryAsync();
         btnHistoryQuick7.Click += async (s, e) => await SetHistoryRangeAsync(6);
         btnHistoryQuick30.Click += async (s, e) => await SetHistoryRangeAsync(29);
+
+        // Đồng bộ Mobile: chọn trực tiếp một ngày và xem ngay số ca trong ngày đó.
+        var btnHistorySpecificDate = MakeOutlineButton(
+            "Ngày cụ thể",
+            AppColors.Primary,
+            Dp(116),
+            Dp(32));
+        btnHistorySpecificDate.Margin = new Padding(Dp(6), 0, 0, 0);
+        btnHistorySpecificDate.Click += async (s, e) => await PickHistorySpecificDateAsync();
+        flowHistoryFilter.Controls.Add(btnHistorySpecificDate);
     }
 
     // Tat thanh cuon ngang: noi dung luon duoc co gian vua chieu rong khung, chi con cuon doc.
@@ -925,12 +935,36 @@ public partial class StaffControl : UserControl
     // Chuoi hien thi gio vao/ra thuc te cua 1 ca (khop voi man hinh Diem danh tren mobile).
     private static string FormatActualTimes(ShiftAssignmentDto a)
     {
-        if (a.Status == 2) return "Vắng mặt";
-        if (a.CheckInTime is null) return "Chưa điểm danh";
+        if (a.Status == 2 || a.AttendanceStatus == "VangMat")
+            return "Vắng mặt";
 
-        var text = $"Vào {a.CheckInTime:HH:mm}";
-        text += a.CheckOutTime is null ? " · Đang làm" : $" · Ra {a.CheckOutTime:HH:mm}";
-        return text;
+        if (a.CheckInTime is null)
+            return "Chưa điểm danh";
+
+        var parts = new List<string>
+        {
+            $"Vào {a.CheckInTime:HH:mm}"
+        };
+
+        if (a.LateMinutes > 0)
+            parts.Add($"Đi trễ {a.LateMinutes} phút");
+        else
+            parts.Add("Đúng giờ");
+
+        if (a.CheckOutTime is null)
+        {
+            parts.Add("Đang làm");
+        }
+        else
+        {
+            parts.Add($"Ra {a.CheckOutTime:HH:mm}");
+            parts.Add(
+                a.EarlyLeaveMinutes > 0
+                    ? $"Về sớm {a.EarlyLeaveMinutes} phút"
+                    : "Đủ giờ");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private CardPanel BuildRosterRow(EmployeeDto emp, List<ShiftAssignmentDto> empAssignments)
@@ -996,9 +1030,12 @@ public partial class StaffControl : UserControl
                 assignment.Status == 2 ? AppColors.Error : AppColors.OnSurfaceVariant, ellipsis: true);
 
             // Khu vuc phu trach CUA DUNG ca nay (neu co) - bam vao de doi/gan khu vuc khac.
-            var hasArea = !string.IsNullOrEmpty(assignment.AreaName);
-            var lblArea = MakeLabel(hasArea ? $"📍 {assignment.AreaName}" : "📍 Chưa gán khu vực",
-                FBody, hasArea ? AppColors.Tertiary : AppColors.Outline, ellipsis: true);
+            var hasArea = !string.IsNullOrWhiteSpace(assignment.AreaLabel);
+            var lblArea = MakeLabel(
+                hasArea ? $"📍 {assignment.AreaLabel}" : "📍 Chưa gán khu vực",
+                FBody,
+                hasArea ? AppColors.Tertiary : AppColors.Outline,
+                ellipsis: true);
             lblArea.Cursor = Cursors.Hand;
             lblArea.Click += (s, e) => OpenChangeAreaDialog(assignment);
 
@@ -1075,8 +1112,8 @@ public partial class StaffControl : UserControl
         using var dialog = new Form
         {
             Text = $"Khu vực phụ trách - {assignment.UserName} ({assignment.ShiftName})",
-            Width = 360,
-            Height = 200,
+            Width = 430,
+            Height = 430,
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -1085,44 +1122,103 @@ public partial class StaffControl : UserControl
 
         var lblInfo = new Label
         {
-            Text = $"Ca {assignment.ShiftName} ({assignment.ShiftStart:hh\\:mm}-{assignment.ShiftEnd:hh\\:mm}) ngày {assignment.WorkDate:dd/MM/yyyy}",
+            Text = $"Ca {assignment.ShiftName} ({assignment.ShiftStart:hh\:mm}-{assignment.ShiftEnd:hh\:mm}) ngày {assignment.WorkDate:dd/MM/yyyy}",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
             Location = new Point(20, 16),
+            Size = new Size(370, 40),
+        };
+
+        var lblArea = new Label
+        {
+            Text = "Khu vực phụ trách (có thể chọn nhiều)",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 62),
             AutoSize = true,
         };
 
-        var lblArea = new Label { Text = "Khu vực phụ trách", Font = AppFonts.BodyMd, Location = new Point(20, 50), AutoSize = true };
-        var cbArea = new ComboBox { Location = new Point(20, 70), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
-        cbArea.Items.Add("(Không chọn)");
-        cbArea.Items.AddRange(_areas.Cast<object>().ToArray());
-        var preselect = assignment.AreaId is int areaId ? _areas.FindIndex(a => a.Id == areaId) : -1;
-        cbArea.SelectedIndex = preselect >= 0 ? preselect + 1 : 0;
+        var checkedAreas = new CheckedListBox
+        {
+            Location = new Point(20, 88),
+            Size = new Size(370, 230),
+            CheckOnClick = true,
+            Font = AppFonts.BodyMd,
+            IntegralHeight = false,
+        };
 
-        dialog.Controls.Add(lblInfo);
-        dialog.Controls.Add(lblArea);
-        dialog.Controls.Add(cbArea);
+        var selectedIds = assignment.AreaIds.Count > 0
+            ? assignment.AreaIds.ToHashSet()
+            : assignment.AreaId.HasValue
+                ? new HashSet<int> { assignment.AreaId.Value }
+                : new HashSet<int>();
 
-        var btnSave = new Button { Text = "Lưu", Location = new Point(110, 110), Size = new Size(120, 34), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
-        dialog.Controls.Add(btnSave);
+        foreach (var area in _areas)
+        {
+            var index = checkedAreas.Items.Add(area);
+            if (selectedIds.Contains(area.Id))
+                checkedAreas.SetItemChecked(index, true);
+        }
+
+        var lblHint = new Label
+        {
+            Text = "Bỏ chọn tất cả nếu ca này chưa cần phân khu vực.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 324),
+            AutoSize = true,
+        };
+
+        var btnSave = new Button
+        {
+            Text = "Lưu khu vực",
+            Location = new Point(135, 350),
+            Size = new Size(150, 34),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblInfo,
+            lblArea,
+            checkedAreas,
+            lblHint,
+            btnSave,
+        });
         dialog.AcceptButton = btnSave;
 
-        if (dialog.ShowDialog() != DialogResult.OK) return;
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
 
-        int? newAreaId = cbArea.SelectedIndex > 0 && cbArea.SelectedItem is AreaDto area ? area.Id : null;
-        _ = SaveAssignmentAreaAsync(assignment, newAreaId);
+        var areaIds = checkedAreas.CheckedItems
+            .Cast<AreaDto>()
+            .Select(a => a.Id)
+            .ToList();
+
+        _ = SaveAssignmentAreasAsync(
+            assignment,
+            areaIds);
     }
 
-    private async Task SaveAssignmentAreaAsync(ShiftAssignmentDto assignment, int? areaId)
+    private async Task SaveAssignmentAreasAsync(
+        ShiftAssignmentDto assignment,
+        IReadOnlyCollection<int> areaIds)
     {
         try
         {
-            await _api.UpdateAssignmentAreaAsync(assignment.Id, areaId);
+            await _api.UpdateAssignmentAreasAsync(
+                assignment.Id,
+                areaIds);
+
             await LoadAssignmentsAsync();
+            await LoadHistoryAsync();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không cập nhật được khu vực: {ex.Message}");
+            MessageBox.Show(
+                $"Không cập nhật được khu vực: {ex.Message}");
         }
     }
 
@@ -1150,6 +1246,7 @@ public partial class StaffControl : UserControl
             MessageBox.Show("Chưa có nhân viên nào để phân công.");
             return;
         }
+
         if (_shifts.Count == 0)
         {
             MessageBox.Show("Chưa có ca làm nào, hãy thêm ca làm trước.");
@@ -1159,77 +1256,164 @@ public partial class StaffControl : UserControl
         using var dialog = new Form
         {
             Text = "Phân công ca làm",
-            Width = 360,
-            Height = 340,
+            Width = 430,
+            Height = 510,
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
         };
 
-        var lblEmp = new Label { Text = "Nhân viên *", Font = AppFonts.BodyMd, Location = new Point(20, 16), AutoSize = true };
-        var cbEmp = new ComboBox { Location = new Point(20, 36), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "FullName" };
-        cbEmp.Items.AddRange(_employees.Where(e => e.IsActive).Cast<object>().ToArray());
+        var lblEmp = new Label
+        {
+            Text = "Nhân viên *",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 16),
+            AutoSize = true,
+        };
+
+        var cbEmp = new ComboBox
+        {
+            Location = new Point(20, 38),
+            Width = 370,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DisplayMember = "FullName",
+        };
+        cbEmp.Items.AddRange(
+            _employees
+                .Where(e => e.IsActive)
+                .Cast<object>()
+                .ToArray());
 
         var selIdx = 0;
         if (preselect is not null)
         {
             for (var i = 0; i < cbEmp.Items.Count; i++)
-                if (cbEmp.Items[i] is EmployeeDto e && e.UserId == preselect.UserId) { selIdx = i; break; }
+            {
+                if (cbEmp.Items[i] is EmployeeDto e &&
+                    e.UserId == preselect.UserId)
+                {
+                    selIdx = i;
+                    break;
+                }
+            }
         }
-        if (cbEmp.Items.Count > 0) cbEmp.SelectedIndex = selIdx;
 
-        var lblShift = new Label { Text = "Ca làm *", Font = AppFonts.BodyMd, Location = new Point(20, 76), AutoSize = true };
-        var cbShift = new ComboBox { Location = new Point(20, 96), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
-        cbShift.Items.AddRange(_shifts.Cast<object>().ToArray());
-        cbShift.SelectedIndex = 0;
+        if (cbEmp.Items.Count > 0)
+            cbEmp.SelectedIndex = selIdx;
 
-        // Khu vuc phu trach: KHONG bat buoc, va chi co y nghia cho DUNG ca vua chon
-        // o tren (vi se duoc luu chung 1 ban ghi ShiftAssignment voi ca do) - day
-        // chinh la co che dam bao khu vuc luon "khop" voi ca lam that su.
-        var lblArea = new Label { Text = "Khu vực phụ trách (không bắt buộc)", Font = AppFonts.BodyMd, Location = new Point(20, 136), AutoSize = true };
-        var cbArea = new ComboBox { Location = new Point(20, 156), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
-        cbArea.Items.Add("(Không chọn)");
-        cbArea.Items.AddRange(_areas.Cast<object>().ToArray());
-        cbArea.SelectedIndex = 0;
-        var lblAreaHint = new Label
+        var lblShift = new Label
         {
-            Text = "Khu vực chỉ áp dụng cho đúng ca làm chọn ở trên.",
+            Text = "Ca làm *",
             Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(20, 190),
-            Size = new Size(300, 34),
+            Location = new Point(20, 78),
+            AutoSize = true,
         };
 
-        dialog.Controls.Add(lblEmp);
-        dialog.Controls.Add(cbEmp);
-        dialog.Controls.Add(lblShift);
-        dialog.Controls.Add(cbShift);
-        dialog.Controls.Add(lblArea);
-        dialog.Controls.Add(cbArea);
-        dialog.Controls.Add(lblAreaHint);
+        var cbShift = new ComboBox
+        {
+            Location = new Point(20, 100),
+            Width = 370,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DisplayMember = "Name",
+        };
+        cbShift.Items.AddRange(
+            _shifts.Cast<object>().ToArray());
+        cbShift.SelectedIndex = 0;
 
-        var btnSave = new Button { Text = "Phân công", Location = new Point(100, 232), Size = new Size(140, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
-        dialog.Controls.Add(btnSave);
+        var lblArea = new Label
+        {
+            Text = "Khu vực phụ trách (có thể chọn nhiều)",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 142),
+            AutoSize = true,
+        };
+
+        var checkedAreas = new CheckedListBox
+        {
+            Location = new Point(20, 168),
+            Size = new Size(370, 210),
+            CheckOnClick = true,
+            Font = AppFonts.BodyMd,
+            IntegralHeight = false,
+        };
+
+        foreach (var area in _areas)
+            checkedAreas.Items.Add(area);
+
+        var lblAreaHint = new Label
+        {
+            Text = "Các khu đã chọn chỉ áp dụng cho đúng ca làm này. Có thể để trống.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 384),
+            Size = new Size(370, 36),
+        };
+
+        var btnSave = new Button
+        {
+            Text = "Phân công",
+            Location = new Point(140, 425),
+            Size = new Size(140, 34),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblEmp,
+            cbEmp,
+            lblShift,
+            cbShift,
+            lblArea,
+            checkedAreas,
+            lblAreaHint,
+            btnSave,
+        });
         dialog.AcceptButton = btnSave;
 
-        if (dialog.ShowDialog() != DialogResult.OK) return;
-        if (cbEmp.SelectedItem is not EmployeeDto emp || cbShift.SelectedItem is not ShiftDto shift) return;
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
 
-        int? areaId = cbArea.SelectedIndex > 0 && cbArea.SelectedItem is AreaDto area ? area.Id : null;
-        _ = SaveAssignmentAsync(emp.UserId, shift.Id, dtpAssignDate.Value.Date, areaId);
+        if (cbEmp.SelectedItem is not EmployeeDto emp ||
+            cbShift.SelectedItem is not ShiftDto shift)
+            return;
+
+        var areaIds = checkedAreas.CheckedItems
+            .Cast<AreaDto>()
+            .Select(a => a.Id)
+            .ToList();
+
+        _ = SaveAssignmentAsync(
+            emp.UserId,
+            shift.Id,
+            dtpAssignDate.Value.Date,
+            areaIds);
     }
 
-    private async Task SaveAssignmentAsync(int userId, int shiftId, DateTime workDate, int? areaId)
+    private async Task SaveAssignmentAsync(
+        int userId,
+        int shiftId,
+        DateTime workDate,
+        IReadOnlyCollection<int> areaIds)
     {
         try
         {
-            await _api.AssignShiftAsync(userId, shiftId, workDate, areaId);
+            await _api.AssignShiftAsync(
+                userId,
+                shiftId,
+                workDate,
+                areaIds);
+
             await LoadAssignmentsAsync();
+            await LoadHistoryAsync();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không phân công được: {ex.Message}");
+            MessageBox.Show(
+                $"Không phân công được: {ex.Message}");
         }
     }
 
@@ -1540,6 +1724,66 @@ public partial class StaffControl : UserControl
     // theo từng ngày, ngày gần nhất lên đầu - giống newsfeed/lịch sử giao dịch
     // của các app hiện đại, thay vì 1 bảng DataGridView dày đặc khó quét mắt.
 
+    private async Task PickHistorySpecificDateAsync()
+    {
+        using var dialog = new Form
+        {
+            Text = "Chọn ngày lịch sử",
+            Width = 330,
+            Height = 180,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+        };
+
+        var lbl = new Label
+        {
+            Text = "Ngày cần xem",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 18),
+            AutoSize = true,
+        };
+
+        var picker = new DateTimePicker
+        {
+            Location = new Point(20, 44),
+            Width = 270,
+            Format = DateTimePickerFormat.Custom,
+            CustomFormat = "dd/MM/yyyy",
+            Value = dtpHistoryTo.Value.Date,
+        };
+
+        var btn = new Button
+        {
+            Text = "Xem ngày này",
+            Location = new Point(95, 88),
+            Size = new Size(130, 34),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lbl,
+            picker,
+            btn,
+        });
+        dialog.AcceptButton = btn;
+
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
+
+        _suppressHistoryReload = true;
+        dtpHistoryFrom.Value = picker.Value.Date;
+        dtpHistoryTo.Value = picker.Value.Date;
+        _suppressHistoryReload = false;
+
+        await LoadHistoryAsync();
+    }
+
     private void RenderHistoryFilterOptions()
     {
         cbHistoryEmployee.Items.Clear();
@@ -1624,13 +1868,23 @@ public partial class StaffControl : UserControl
         };
     }
 
-    private static Color HistoryStatusColor(int status) => status switch
+    private static Color HistoryStatusColor(ShiftAssignmentDto item)
     {
-        1 => AppColors.Tertiary,   // Da diem danh
-        2 => AppColors.Error,      // Vang mat
-        3 => AppColors.Success,    // Da hoan thanh
-        _ => AppColors.Outline,    // Da xep lich
-    };
+        if (item.Status == 2 ||
+            item.AttendanceStatus == "VangMat")
+            return AppColors.Error;
+
+        if (item.LateMinutes > 0 ||
+            item.EarlyLeaveMinutes > 0)
+            return AppColors.Warning;
+
+        return item.Status switch
+        {
+            1 => AppColors.Tertiary,
+            3 => AppColors.Success,
+            _ => AppColors.Outline,
+        };
+    }
 
     // 1 dong = 1 ca lam cu the cua 1 nhan vien trong ngay: gio ca, ten NV (an khi
     // dang loc theo dung 1 nhan vien do), khu vuc phu trach, gio vao/ra va trang thai.
@@ -1639,7 +1893,7 @@ public partial class StaffControl : UserControl
         var margin = new Padding(0, 0, 0, Dp(8));
         var pad = Dp(18);
         var h = Dp(64);
-        var statusColor = HistoryStatusColor(item.Status);
+        var statusColor = HistoryStatusColor(item);
 
         var row = new CardPanel
         {
@@ -1657,13 +1911,32 @@ public partial class StaffControl : UserControl
         var lblEmployee = MakeLabel("👤 " + item.UserName, FBodyBold, AppColors.OnSurface, ellipsis: true);
         lblEmployee.Visible = showEmployeeName;
 
-        var lblArea = MakeLabel(string.IsNullOrEmpty(item.AreaName) ? "" : $"📍 {item.AreaName}", FSmall, AppColors.Tertiary, ellipsis: true);
+        var lblArea = MakeLabel(
+            string.IsNullOrWhiteSpace(item.AreaLabel)
+                ? ""
+                : $"📍 {item.AreaLabel}",
+            FSmall,
+            AppColors.Tertiary,
+            ellipsis: true);
 
         var actualText = FormatActualTimes(item);
         var lblActual = MakeLabel(actualText, FSmall, item.Status == 2 ? AppColors.Error : AppColors.OnSurfaceVariant, ellipsis: true);
 
-        var statusIndex = Math.Clamp(item.Status, 0, AssignmentStatusLabels.Length - 1);
-        var statusPill = MakePill(AssignmentStatusLabels[statusIndex], Color.White, statusColor);
+        var statusText =
+            item.CheckInTime is not null ||
+            item.Status == 2
+                ? item.AttendanceStatusLabel
+                : AssignmentStatusLabels[
+                    Math.Clamp(
+                        item.Status,
+                        0,
+                        AssignmentStatusLabels.Length - 1)];
+
+        var statusPill = MakePill(
+            statusText,
+            Color.White,
+            statusColor,
+            Dp(190));
 
         row.Controls.Add(lblTime);
         row.Controls.Add(lblShiftName);
