@@ -220,12 +220,21 @@ public class AttendanceController : ControllerBase
             if (shiftEnd <= shiftStart)
                 shiftEnd = shiftEnd.AddDays(1);
 
-            var attendance = BuildAttendanceStatus(
-                shiftStart,
-                shiftEnd,
-                checkInTime,
-                checkOutTime
-            );
+            var attendance =
+                reader.GetString(4) == "VangMat"
+                    ? new AttendanceStatusResult(
+                        0,
+                        0,
+                        "VangMat",
+                        "KhongApDung",
+                        "VangMat"
+                    )
+                    : BuildAttendanceStatus(
+                        shiftStart,
+                        shiftEnd,
+                        checkInTime,
+                        checkOutTime
+                    );
 
             return Ok(
                 new AttendanceTodayDto(
@@ -367,6 +376,19 @@ public class AttendanceController : ControllerBase
                             $"Chưa đến thời gian điểm danh. " +
                             $"Bạn có thể điểm danh từ " +
                             $"{allowedFrom:HH:mm}."
+                    }
+                );
+            }
+
+            if (assignment.DatabaseNow >=
+                assignment.ShiftEndTime)
+            {
+                return Conflict(
+                    new
+                    {
+                        message =
+                            "Ca làm đã kết thúc. " +
+                            "Không thể điểm danh vào ca này."
                     }
                 );
             }
