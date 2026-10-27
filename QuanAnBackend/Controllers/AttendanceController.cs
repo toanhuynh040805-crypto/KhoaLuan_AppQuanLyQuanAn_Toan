@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Controllers;
 
@@ -54,13 +55,19 @@ public class AttendanceController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IConfiguration _configuration;
+    private readonly AttendanceSettingsService
+        _attendanceSettings;
 
     public AttendanceController(
         AppDbContext db,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AttendanceSettingsService
+            attendanceSettings)
     {
         _db = db;
         _configuration = configuration;
+        _attendanceSettings =
+            attendanceSettings;
     }
 
     // Chỉ cho phép chấm công/xem lịch sử của CHÍNH MÌNH (mã nhân viên phải thuộc
@@ -394,7 +401,11 @@ public class AttendanceController : ControllerBase
             }
 
             var locationError =
-                ValidateAttendanceLocation(request);
+                await ValidateAttendanceLocationAsync(
+                    request,
+                    connection,
+                    transaction
+                );
 
             if (locationError is not null)
                 return locationError;
@@ -548,7 +559,11 @@ public class AttendanceController : ControllerBase
             }
 
             var locationError =
-                ValidateAttendanceLocation(request);
+                await ValidateAttendanceLocationAsync(
+                    request,
+                    connection,
+                    transaction
+                );
 
             if (locationError is not null)
                 return locationError;
@@ -869,8 +884,11 @@ public class AttendanceController : ControllerBase
         );
     }
 
-    private IActionResult? ValidateAttendanceLocation(
-        AttendanceActionRequest request)
+    private async Task<IActionResult?>
+        ValidateAttendanceLocationAsync(
+            AttendanceActionRequest request,
+            DbConnection connection,
+            DbTransaction transaction)
     {
         if (!request.Latitude.HasValue ||
             !request.Longitude.HasValue ||
@@ -895,36 +913,38 @@ public class AttendanceController : ControllerBase
             accuracy < 0)
         {
             return BadRequest(
-                new { message = "Dữ liệu vị trí GPS không hợp lệ." }
+                new
+                {
+                    message =
+                        "Dữ liệu vị trí GPS không hợp lệ."
+                }
             );
         }
 
-        var restaurantLatitude =
-            _configuration.GetValue<double?>(
-                "Attendance:RestaurantLatitude");
+        var settings =
+            await _attendanceSettings.GetAsync(
+                connection,
+                transaction
+            );
 
-        var restaurantLongitude =
-            _configuration.GetValue<double?>(
-                "Attendance:RestaurantLongitude");
-
-        if (!restaurantLatitude.HasValue ||
-            !restaurantLongitude.HasValue)
+        if (!settings.IsConfigured ||
+            !settings.Latitude.HasValue ||
+            !settings.Longitude.HasValue)
         {
             return Conflict(
                 new
                 {
                     message =
-                        "Máy chủ chưa cấu hình vị trí nhà hàng. " +
-                        "Vui lòng báo quản lý."
+                        "Quản lý chưa thiết lập vị trí nhà hàng. " +
+                        "Vui lòng cấu hình trong Cá nhân > " +
+                        "Vị trí điểm danh."
                 }
             );
         }
 
         var maxAccuracy = Math.Max(
             1,
-            _configuration.GetValue<double?>(
-                "Attendance:MaxAccuracyMeters")
-                ?? 50
+            settings.MaxAccuracyMeters
         );
 
         if (accuracy > maxAccuracy)
@@ -943,16 +963,14 @@ public class AttendanceController : ControllerBase
 
         var radius = Math.Max(
             1,
-            _configuration.GetValue<double?>(
-                "Attendance:RadiusMeters")
-                ?? 100
+            settings.RadiusMeters
         );
 
         var distance = CalculateDistanceMeters(
             latitude,
             longitude,
-            restaurantLatitude.Value,
-            restaurantLongitude.Value
+            settings.Latitude.Value,
+            settings.Longitude.Value
         );
 
         if (distance > radius)
