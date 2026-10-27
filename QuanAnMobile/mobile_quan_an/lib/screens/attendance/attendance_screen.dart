@@ -172,6 +172,15 @@ class _AttendanceScreenState
       return null;
     }
 
+    if (result.requiresSecureContext) {
+      TopMessage.show(
+        context,
+        message: result.message,
+        type: TopMessageType.warning,
+      );
+      return null;
+    }
+
     if (!result.serviceEnabled) {
       TopMessage.show(
         context,
@@ -1157,6 +1166,11 @@ class _AttendanceScreenState
       statusIcon = Icons.location_searching;
       detailText =
           'Bấm Kiểm tra vị trí để lấy GPS hiện tại. Backend sẽ đối chiếu với vị trí quán do quản lý cấu hình.';
+    } else if (result.requiresSecureContext) {
+      statusText = 'Cần HTTPS';
+      statusColor = Colors.orange;
+      statusIcon = Icons.lock_outline;
+      detailText = result.message;
     } else if (!result.serviceEnabled) {
       statusText = 'GPS đang tắt';
       statusColor = Colors.red;
@@ -1331,6 +1345,7 @@ class _AttendanceScreenState
             ),
           ],
           if (result != null &&
+              !result.requiresSecureContext &&
               result.serviceEnabled &&
               !result.permissionGranted) ...[
             const SizedBox(height: 8),
