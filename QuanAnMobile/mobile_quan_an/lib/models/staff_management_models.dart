@@ -30,6 +30,53 @@ class ManagedEmployee {
   String toString() => fullName;
 }
 
+class ManagedRole {
+  final int id;
+  final String name;
+  final String? description;
+
+  const ManagedRole({
+    required this.id,
+    required this.name,
+    this.description,
+  });
+
+  factory ManagedRole.fromJson(Map<String, dynamic> json) {
+    return ManagedRole(
+      id: _asInt(json['roleId'] ?? json['RoleId'] ?? json['id'] ?? json['Id']),
+      name: (json['roleName'] ?? json['RoleName'] ?? json['name'] ?? json['Name'] ?? '')
+          .toString(),
+      description: (json['description'] ?? json['Description'])?.toString(),
+    );
+  }
+
+  bool get isKitchen =>
+      name.trim().toLowerCase() == 'bep';
+
+  @override
+  String toString() => name;
+}
+
+class ManagedStation {
+  final int id;
+  final String name;
+
+  const ManagedStation({
+    required this.id,
+    required this.name,
+  });
+
+  factory ManagedStation.fromJson(Map<String, dynamic> json) {
+    return ManagedStation(
+      id: _asInt(json['id'] ?? json['Id']),
+      name: (json['name'] ?? json['Name'] ?? '').toString(),
+    );
+  }
+
+  @override
+  String toString() => name;
+}
+
 class ManagedShift {
   final int id;
   final String name;
