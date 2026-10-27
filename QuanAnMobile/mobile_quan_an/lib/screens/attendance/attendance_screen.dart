@@ -152,7 +152,8 @@ class _AttendanceScreenState
     }
   }
 
-  Future<bool> _validateLocationForAttendance() async {
+  Future<LocationCheckResult?>
+      _validateLocationForAttendance() async {
     final LocationCheckResult? result =
         await _refreshLocation(
       showMessage: false,
@@ -160,17 +161,7 @@ class _AttendanceScreenState
     );
 
     if (!mounted || result == null) {
-      return false;
-    }
-
-    if (!result.isConfigured) {
-      TopMessage.show(
-        context,
-        message:
-            'Chưa cấu hình vị trí nhà hàng nên chưa thể điểm danh bằng GPS.',
-        type: TopMessageType.warning,
-      );
-      return false;
+      return null;
     }
 
     if (!result.serviceEnabled) {
@@ -180,7 +171,7 @@ class _AttendanceScreenState
             'Hãy bật GPS/Dịch vụ vị trí trước khi điểm danh.',
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
     if (!result.permissionGranted) {
@@ -189,10 +180,23 @@ class _AttendanceScreenState
         message: result.message,
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
-    if (!result.isInside) {
+    if (result.latitude == null ||
+        result.longitude == null ||
+        result.accuracyMeters == null) {
+      TopMessage.show(
+        context,
+        message:
+            'Không thể lấy tọa độ GPS hiện tại. Hãy thử lại.',
+        type: TopMessageType.warning,
+      );
+      return null;
+    }
+
+    if (result.isConfigured &&
+        !result.isInside) {
       final double? distance =
           result.distanceMeters;
 
@@ -206,10 +210,10 @@ class _AttendanceScreenState
                 '${LocationService.geofenceRadiusMeters.round()} m.',
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
-    return true;
+    return result;
   }
 
   Future<void> _calibrateDebugLocation() async {
@@ -257,6 +261,45 @@ class _AttendanceScreenState
     }
   }
 
+  DateTime? get _checkInAllowedFrom {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.hasShift) {
+      return null;
+    }
+
+    final DateTime? shiftStart =
+        _shiftDateTime(
+      _currentTime,
+      state.shiftStartTime,
+    );
+
+    return shiftStart?.subtract(
+      const Duration(minutes: 30),
+    );
+  }
+
+  bool get _isTooEarlyToCheckIn {
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    return allowedFrom != null &&
+        _currentTime.isBefore(allowedFrom);
+  }
+
+  String get _checkInButtonLabel {
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    if (_isTooEarlyToCheckIn &&
+        allowedFrom != null) {
+      return 'Điểm danh từ ${_formatTime(allowedFrom)}';
+    }
+
+    return 'Điểm danh vào ca';
+  }
+
   Future<void> _checkIn() async {
     if (_isSubmitting ||
         _isCheckingLocation ||
@@ -265,10 +308,26 @@ class _AttendanceScreenState
       return;
     }
 
-    final bool locationValid =
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    if (allowedFrom != null &&
+        _currentTime.isBefore(allowedFrom)) {
+      TopMessage.show(
+        context,
+        message:
+            'Chưa đến thời gian điểm danh. '
+            'Bạn có thể điểm danh từ '
+            '${_formatTime(allowedFrom)}.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    final LocationCheckResult? location =
         await _validateLocationForAttendance();
 
-    if (!locationValid || !mounted) {
+    if (location == null || !mounted) {
       return;
     }
 
@@ -280,6 +339,7 @@ class _AttendanceScreenState
       await AppServices.attendanceService.checkIn(
         employeeCode: appEmployee.employeeCode,
         state: widget.attendanceState,
+        location: location,
       );
 
       if (!mounted) return;
@@ -316,10 +376,10 @@ class _AttendanceScreenState
       return;
     }
 
-    final bool locationValid =
+    final LocationCheckResult? location =
         await _validateLocationForAttendance();
 
-    if (!locationValid || !mounted) {
+    if (location == null || !mounted) {
       return;
     }
 
@@ -331,6 +391,7 @@ class _AttendanceScreenState
       await AppServices.attendanceService.checkOut(
         employeeCode: appEmployee.employeeCode,
         state: widget.attendanceState,
+        location: location,
       );
 
       if (!mounted) return;
@@ -729,7 +790,7 @@ class _AttendanceScreenState
                               : !state.hasShift
                               ? 'Chưa được xếp ca'
                               : !state.checkedIn
-                                  ? 'Điểm danh vào ca'
+                                  ? _checkInButtonLabel
                                   : state.checkedOut
                                       ? 'Đã kết thúc ca'
                                       : 'Kết thúc ca',
@@ -968,6 +1029,14 @@ class _AttendanceScreenState
       color = Colors.green;
       background =
           Colors.green.shade50;
+    } else if (_isTooEarlyToCheckIn) {
+      text =
+          'Có thể điểm danh từ '
+          '${_formatTime(_checkInAllowedFrom)}';
+      icon = Icons.schedule_outlined;
+      color = AppTheme.orangeColor;
+      background =
+          const Color(0xFFFFF1E8);
     } else {
       text = 'Chưa điểm danh';
       icon = Icons.schedule_outlined;
@@ -1024,13 +1093,24 @@ class _AttendanceScreenState
       statusIcon = Icons.location_searching;
       detailText =
           'Bấm Kiểm tra vị trí để xác nhận phạm vi điểm danh.';
+    } else if (!result.isConfigured &&
+        result.permissionGranted &&
+        result.latitude != null &&
+        result.longitude != null) {
+      statusText = 'GPS sẵn sàng';
+      statusColor = Colors.green;
+      statusIcon = Icons.my_location;
+      detailText =
+          'Đã lấy vị trí GPS hiện tại'
+          ' • Sai số: '
+          '${result.accuracyMeters?.round() ?? 0} m. '
+          'Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.';
     } else if (!result.isConfigured) {
       statusText = 'Chưa cấu hình';
       statusColor = Colors.orange;
       statusIcon = Icons.settings_outlined;
       detailText =
-          'Chưa có tọa độ nhà hàng. '
-          'Bản debug có thể dùng vị trí hiện tại làm mốc test.';
+          'Chưa lấy được vị trí GPS hiện tại.';
     } else if (!result.serviceEnabled) {
       statusText = 'GPS đang tắt';
       statusColor = Colors.red;
