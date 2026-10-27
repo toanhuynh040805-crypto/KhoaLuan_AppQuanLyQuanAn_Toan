@@ -819,6 +819,82 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
   }
 
+  Future<void> _decrementItem(OrderItem item) async {
+    if (!_canCancelOrderItem ||
+        item.id == null ||
+        _bulkActionRunning) {
+      return;
+    }
+
+    if (item.quantity <= 1) {
+      await _cancelItem(item);
+      return;
+    }
+
+    setState(() {
+      _bulkActionRunning = true;
+    });
+
+    try {
+      final int newQuantity =
+          await AppServices.orderService
+              .decrementItemQuantity(
+        orderItemId: item.id!,
+      );
+
+      if (!mounted) return;
+
+      final int index = orderItems.indexWhere(
+        (current) => current.id == item.id,
+      );
+
+      if (index < 0) return;
+
+      final OrderItem current =
+          orderItems[index];
+
+      setState(() {
+        orderItems[index] = OrderItem(
+          id: current.id,
+          name: current.name,
+          quantity: newQuantity,
+          unitPrice: current.unitPrice,
+          status: current.status,
+          note: current.note,
+          isTakeaway: current.isTakeaway,
+        );
+
+        currentAmount =
+            orderItems.fold<int>(
+          0,
+          (sum, current) =>
+              sum + current.totalPrice,
+        );
+      });
+
+      TopMessage.show(
+        context,
+        message:
+            'Đã giảm ${item.name} còn $newQuantity phần',
+        type: TopMessageType.success,
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      TopMessage.show(
+        context,
+        message: error.message,
+        type: TopMessageType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _bulkActionRunning = false;
+        });
+      }
+    }
+  }
+
   Future<void> _cancelItem(OrderItem item) async {
     if (!_canCancelOrderItem || item.id == null) {
       return;
@@ -1928,9 +2004,20 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 IconButton(
                   onPressed: _bulkActionRunning
                       ? null
-                      : () => _cancelItem(item),
-                  tooltip: 'Hủy món',
-                  icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                      : () => item.quantity > 1
+                          ? _decrementItem(item)
+                          : _cancelItem(item),
+                  tooltip: item.quantity > 1
+                      ? 'Giảm 1 phần'
+                      : 'Hủy món',
+                  icon: Icon(
+                    item.quantity > 1
+                        ? Icons.remove_circle_outline
+                        : Icons.cancel_outlined,
+                    color: item.quantity > 1
+                        ? AppTheme.orangeColor
+                        : Colors.red,
+                  ),
                 ),
             ],
           ),
