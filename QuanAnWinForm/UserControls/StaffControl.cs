@@ -1122,7 +1122,7 @@ public partial class StaffControl : UserControl
 
         var lblInfo = new Label
         {
-            Text = $"Ca {assignment.ShiftName} ({assignment.ShiftStart:hh\:mm}-{assignment.ShiftEnd:hh\:mm}) ngày {assignment.WorkDate:dd/MM/yyyy}",
+            Text = $"Ca {assignment.ShiftName} ({assignment.ShiftStart:hh\\:mm}-{assignment.ShiftEnd:hh\\:mm}) ngày {assignment.WorkDate:dd/MM/yyyy}",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
             Location = new Point(20, 16),
