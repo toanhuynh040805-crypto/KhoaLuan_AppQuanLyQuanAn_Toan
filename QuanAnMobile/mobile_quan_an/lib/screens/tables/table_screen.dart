@@ -51,6 +51,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   bool _realtimeRefreshPending = false;
 
   String _section = 'invoices';
+  String? _selectedFloorFilter;
   TableStatus? _statusFilter;
 
   bool get _canManageTables =>
@@ -138,6 +139,11 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   }
 
   String? get _selectedFloorName {
+    if (_selectedFloorFilter != null &&
+        _selectedFloorFilter!.trim().isNotEmpty) {
+      return _selectedFloorFilter;
+    }
+
     final String? area = _selectedAreaName;
     if (area == null || area.isEmpty) return null;
     return _floorNameForArea(area);
@@ -145,6 +151,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
 
   void _selectArea(String areaName) {
     setState(() {
+      _selectedFloorFilter = _floorNameForArea(areaName);
       _section = 'area:$areaName';
       _statusFilter = null;
     });
@@ -1597,11 +1604,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     final Map<String, List<String>> grouped = _areasByFloor;
     final List<String> floors = grouped.keys.toList()..sort();
     final String? selectedArea = _selectedAreaName;
-    String? selectedFloor = _selectedFloorName;
-
-    if (selectedFloor == null && floors.isNotEmpty) {
-      selectedFloor = floors.first;
-    }
+    final String? selectedFloor = _selectedFloorName;
 
     final List<String> floorAreas = selectedFloor == null
         ? <String>[]
@@ -1609,8 +1612,8 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
 
     final String? areaDropdownValue =
         selectedArea != null && floorAreas.contains(selectedArea)
-        ? selectedArea
-        : (floorAreas.isEmpty ? null : floorAreas.first);
+            ? selectedArea
+            : null;
 
     Widget navChip({
       required String label,
@@ -1672,6 +1675,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                 onTap: () {
                   setState(() {
                     _section = 'invoices';
+                    _selectedFloorFilter = null;
                     _statusFilter = null;
                   });
                 },
@@ -1684,7 +1688,18 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                     child: DropdownButton<String>(
                       isExpanded: true,
                       value: selectedFloor,
-                      hint: const Text('Chọn tầng'),
+                      hint: const Row(
+                        children: [
+                          Icon(Icons.layers_outlined, size: 17),
+                          SizedBox(width: 7),
+                          Text(
+                            'Tầng',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                       icon: const Icon(Icons.keyboard_arrow_down),
                       items: floors
                           .map(
@@ -1711,11 +1726,13 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                           .toList(),
                       onChanged: (floor) {
                         if (floor == null) return;
-                        final List<String> areas =
-                            grouped[floor] ?? const <String>[];
-                        if (areas.isNotEmpty) {
-                          _selectArea(areas.first);
-                        }
+
+                        setState(() {
+                          _selectedFloorFilter = floor;
+                          // Chọn tầng chỉ lọc danh sách khu, không tự chọn Khu A.
+                          _section = 'areas';
+                          _statusFilter = null;
+                        });
                       },
                     ),
                   ),
@@ -1729,23 +1746,39 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                 onTap: () {
                   setState(() {
                     _section = 'takeaway';
+                    _selectedFloorFilter = null;
                     _statusFilter = null;
                   });
                 },
               ),
             ],
           ),
-          if (_section.startsWith('area:')) ...[
+          if (_section == 'areas' || _section.startsWith('area:')) ...[
             const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
                   child: dropdownShell(
-                    selected: true,
+                    selected: selectedArea != null,
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         isExpanded: true,
                         value: areaDropdownValue,
+                        hint: const Row(
+                          children: [
+                            Icon(
+                              Icons.table_restaurant_outlined,
+                              size: 17,
+                            ),
+                            SizedBox(width: 7),
+                            Text(
+                              'Khu',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
                         icon: const Icon(Icons.keyboard_arrow_down),
                         items: floorAreas
                             .map(
@@ -2003,6 +2036,14 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildAreaView() {
+    if (_selectedAreaName == null) {
+      return _emptyState(
+        icon: Icons.table_restaurant_outlined,
+        title: 'Chọn tầng và khu',
+        subtitle: 'Chọn tầng trước, sau đó chọn khu để xem danh sách bàn.',
+      );
+    }
+
     final List<RestaurantTable> items = _areaTables;
 
     if (items.isEmpty) {
