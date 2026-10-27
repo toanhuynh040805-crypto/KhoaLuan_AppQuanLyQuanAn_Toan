@@ -236,6 +236,41 @@ class OrderService {
     return status;
   }
 
+  Future<int> updateItemQuantity({
+    required int orderItemId,
+    required int quantity,
+  }) async {
+    final dynamic response = await _apiClient.put(
+      '/mobile/order-actions/items/$orderItemId/quantity',
+      body: {
+        'quantity': quantity,
+        'employeeCode': appEmployee.employeeCode,
+      },
+    );
+
+    if (response is! Map) {
+      throw const ApiException(
+        message: 'Không thể cập nhật số lượng món.',
+      );
+    }
+
+    final dynamic raw =
+        response['quantity'] ??
+        response['Quantity'];
+
+    final int savedQuantity = raw is int
+        ? raw
+        : int.tryParse(raw?.toString() ?? '') ?? 0;
+
+    if (savedQuantity <= 0) {
+      throw const ApiException(
+        message: 'Máy chủ trả về số lượng món không hợp lệ.',
+      );
+    }
+
+    return savedQuantity;
+  }
+
   Future<int> decrementItemQuantity({
     required int orderItemId,
   }) async {
