@@ -417,6 +417,29 @@ public class ApiService
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
+    public async Task<int> DecrementOrderItemQuantityAsync(int orderItemId)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/order-actions/items/{orderItemId}/decrement",
+            new
+            {
+                orderItemIds = new[] { orderItemId },
+                employeeCode = (string?)null
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        var payload = await res.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+        if (payload.TryGetProperty("quantity", out var quantityElement) &&
+            quantityElement.TryGetInt32(out var quantity))
+        {
+            return quantity;
+        }
+
+        throw new InvalidOperationException(
+            "Backend không trả về số lượng món sau khi cập nhật.");
+    }
+
     public async Task CancelOrderItemAsync(int orderItemId, int userId, string? reason = null, byte[]? rowVer = null)
     {
         await UpdateOrderItemStatusAsync(orderItemId, (int)KitchenStatus.DaHuy, userId, reason, rowVer);
