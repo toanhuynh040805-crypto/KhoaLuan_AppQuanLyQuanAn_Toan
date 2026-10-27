@@ -126,7 +126,10 @@ public class AttendanceController : ControllerBase
                     sa.CheckInTime,
                     sa.CheckOutTime,
                     sa.WorkDate,
-                    a.AreaName
+                    COALESCE(
+                        assignedAreas.AreaNames,
+                        a.AreaName
+                    ) AS AreaName
                 FROM ShiftAssignments sa
                 INNER JOIN Employees e
                     ON e.EmployeeId = sa.EmployeeId
@@ -134,6 +137,18 @@ public class AttendanceController : ControllerBase
                     ON s.ShiftId = sa.ShiftId
                 LEFT JOIN Areas a
                     ON a.AreaId = sa.AreaId
+                OUTER APPLY
+                (
+                    SELECT STRING_AGG(
+                        ar.AreaName,
+                        N', '
+                    ) AS AreaNames
+                    FROM ShiftAssignmentAreas saa
+                    INNER JOIN Areas ar
+                        ON ar.AreaId = saa.AreaId
+                    WHERE saa.ShiftAssignmentId =
+                        sa.ShiftAssignmentId
+                ) assignedAreas
                 WHERE e.EmployeeCode = @EmployeeCode
                   AND (
                     sa.WorkDate = CAST(GETDATE() AS DATE)
