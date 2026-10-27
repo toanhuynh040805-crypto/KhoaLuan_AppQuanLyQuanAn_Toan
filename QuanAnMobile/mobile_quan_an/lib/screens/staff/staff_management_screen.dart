@@ -2100,7 +2100,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     '${_date(h.workDate)} · ${h.shiftName}'
                     '\n${h.shiftTimeLabel}'
                     '${h.areaLabel.isEmpty ? '' : ' · ${h.areaLabel}'}'
-                    '\n${h.statusLabel}'
+                    '\n${h.punctualityLabel}'
                     '${h.checkInTime == null ? '' : ' · Vào ${_time(h.checkInTime!)}'}'
                     '${h.checkOutTime == null ? '' : ' · Ra ${_time(h.checkOutTime!)}'}',
                   ),
