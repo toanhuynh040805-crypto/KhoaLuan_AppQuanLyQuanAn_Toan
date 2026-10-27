@@ -121,6 +121,9 @@ public class OpenTableOrderDto
     public string TableName { get; set; } = "";
     public decimal TotalAmount { get; set; }
     public List<OpenTableOrderItemDto> Items { get; set; } = new();
+
+    // Khách thành viên gắn với đơn / lượt đặt bàn (null nếu khách vãng lai).
+    public CustomerSearchResultDto? Customer { get; set; }
 }
 
 public class OpenTableOrderItemDto

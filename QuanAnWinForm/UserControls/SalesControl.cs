@@ -191,6 +191,10 @@ public partial class SalesControl : UserControl
             if (_selectedTableId != tableId) return;
 
             _existingOrder = order;
+
+            // Khách thành viên đã gắn với đơn/lượt đặt bàn -> tự điền SĐT, tên, điểm, email.
+            ApplyOrderCustomer(order?.Customer);
+
             RenderCart();
         }
         catch (Exception ex)
@@ -795,14 +799,18 @@ public partial class SalesControl : UserControl
 
     private async Task CreateQuickCustomerAsync(string phone)
     {
-        using var dialog = new Form { Text = "Thêm khách hàng mới", Width = 340, Height = 220, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
+        using var dialog = new Form { Text = "Thêm khách hàng mới", Width = 340, Height = 290, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false };
         var lblPhone = new Label { Text = $"SĐT: {phone}", Font = AppFonts.BodyMd, Location = new Point(20, 20), AutoSize = true };
         var lblNameCap = new Label { Text = "Họ tên *", Font = AppFonts.BodyMd, Location = new Point(20, 50), AutoSize = true };
         var txtName = new TextBox { Location = new Point(20, 70), Width = 280, Font = AppFonts.BodyMd };
-        var btnSave = new Button { Text = "Lưu", Location = new Point(100, 120), Size = new Size(120, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var lblEmailCap = new Label { Text = "Email (để gửi hóa đơn)", Font = AppFonts.BodyMd, Location = new Point(20, 105), AutoSize = true };
+        var txtEmail = new TextBox { Location = new Point(20, 125), Width = 280, Font = AppFonts.BodyMd };
+        var btnSave = new Button { Text = "Lưu", Location = new Point(100, 175), Size = new Size(120, 32), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
         dialog.Controls.Add(lblPhone);
         dialog.Controls.Add(lblNameCap);
         dialog.Controls.Add(txtName);
+        dialog.Controls.Add(lblEmailCap);
+        dialog.Controls.Add(txtEmail);
         dialog.Controls.Add(btnSave);
         dialog.AcceptButton = btnSave;
 
@@ -813,10 +821,17 @@ public partial class SalesControl : UserControl
             return;
         }
 
+        var email = string.IsNullOrWhiteSpace(txtEmail.Text) ? null : txtEmail.Text.Trim();
+        if (email is not null && !email.Contains('@'))
+        {
+            MessageBox.Show("Email không hợp lệ.");
+            return;
+        }
+
         try
         {
-            var id = await _api.CreateCustomerAsync(txtName.Text.Trim(), phone, null, null);
-            _selectedCustomer = new CustomerSearchResultDto { Id = id, FullName = txtName.Text.Trim(), Phone = phone, LoyaltyPoint = 0, MemberLevel = 0 };
+            var id = await _api.CreateCustomerAsync(txtName.Text.Trim(), phone, email, null);
+            _selectedCustomer = new CustomerSearchResultDto { Id = id, FullName = txtName.Text.Trim(), Phone = phone, Email = email, LoyaltyPoint = 0, MemberLevel = 0 };
             UpdateCustomerInfoLabel();
         }
         catch (Exception ex)
@@ -825,17 +840,33 @@ public partial class SalesControl : UserControl
         }
     }
 
+    // Tự điền khách thành viên đã gắn với đơn/lượt đặt bàn (trả về từ GET /api/orders/table/{id}).
+    // Không ghi đè nếu thu ngân đã chọn khách khác.
+    private void ApplyOrderCustomer(CustomerSearchResultDto? customer)
+    {
+        if (customer is null || _selectedCustomer is not null) return;
+
+        _selectedCustomer = customer;
+        txtCustomerPhone.Text = customer.Phone;
+        UpdateCustomerInfoLabel();
+    }
+
     private void UpdateCustomerInfoLabel()
     {
         if (_selectedCustomer is null)
         {
             lblCustomerInfo.Text = "Khách vãng lai (không tích điểm)";
             lblCustomerInfo.ForeColor = AppColors.OnSurfaceVariant;
+            _tip.SetToolTip(lblCustomerInfo, "");
         }
         else
         {
-            lblCustomerInfo.Text = $"✓ {_selectedCustomer.FullName} · {_selectedCustomer.LoyaltyPoint:N0} điểm";
+            var email = string.IsNullOrWhiteSpace(_selectedCustomer.Email)
+                ? "chưa có email"
+                : _selectedCustomer.Email;
+            lblCustomerInfo.Text = $"✓ {_selectedCustomer.FullName} · {_selectedCustomer.LoyaltyPoint:N0} điểm · {email}";
             lblCustomerInfo.ForeColor = AppColors.Success;
+            _tip.SetToolTip(lblCustomerInfo, lblCustomerInfo.Text);
         }
     }
 
