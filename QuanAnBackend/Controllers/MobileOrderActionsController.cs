@@ -21,6 +21,11 @@ public record MobileClearTableRequest(
     string? EmployeeCode = null
 );
 
+public record MobileOrderQuantityRequest(
+    int Quantity,
+    string? EmployeeCode = null
+);
+
 [ApiController]
 [Route("api/mobile/order-actions")]
 public class MobileOrderActionsController : ControllerBase
@@ -139,6 +144,119 @@ public class MobileOrderActionsController : ControllerBase
             updatedIds = updated.Select(x => x.OrderItemId).ToList(),
             skippedIds = ids.Except(updated.Select(x => x.OrderItemId)).ToList()
         });
+    }
+
+    [HttpPut("items/{id:int}/quantity")]
+    [RequireMobilePermission("order.cancel")]
+    public async Task<IActionResult> UpdateQuantity(
+        int id,
+        [FromBody] MobileOrderQuantityRequest request)
+    {
+        if (id <= 0)
+            return BadRequest(new { message = "Món không hợp lệ" });
+
+        if (request.Quantity < 1 || request.Quantity > 99)
+        {
+            return BadRequest(new
+            {
+                message = "Số lượng món phải từ 1 đến 99"
+            });
+        }
+
+        var userId = await ResolveUserIdAsync(request.EmployeeCode);
+
+        await using var transaction =
+            await _db.Database.BeginTransactionAsync();
+
+        try
+        {
+            var item = await _db.OrderItems
+                .Include(x => x.Order)
+                    .ThenInclude(o => o!.Table)
+                .Include(x => x.MenuItem)
+                .FirstOrDefaultAsync(x => x.OrderItemId == id);
+
+            if (item is null)
+            {
+                await transaction.RollbackAsync();
+                return NotFound(new { message = "Không tìm thấy món" });
+            }
+
+            if (item.Status != KitchenStatus.MoiGoi)
+            {
+                await transaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        "Chỉ có thể sửa số lượng khi bếp chưa bắt đầu chế biến"
+                });
+            }
+
+            item.Quantity = request.Quantity;
+
+            await _db.SaveChangesAsync();
+
+            var totalAmount = await _db.OrderItems
+                .Where(x =>
+                    x.OrderId == item.OrderId &&
+                    x.Status != KitchenStatus.DaHuy)
+                .SumAsync(x =>
+                    (decimal?)(x.Quantity * x.UnitPrice))
+                ?? 0;
+
+            if (item.Order is not null)
+            {
+                item.Order.TotalAmount = totalAmount;
+                await _db.SaveChangesAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            var tableId = item.Order?.TableId ?? 0;
+            var tableName =
+                item.Order?.Table?.TableName ?? $"Bàn #{tableId}";
+            var itemName =
+                item.MenuItem?.ItemName ?? "Món";
+
+            await _hub.Clients.All.SendAsync(
+                "OrderItemQuantityUpdated",
+                new
+                {
+                    id = item.OrderItemId,
+                    orderId = item.OrderId,
+                    tableId,
+                    tableName,
+                    itemName,
+                    quantity = item.Quantity,
+                    totalAmount
+                });
+
+            await _hub.Clients.All.SendAsync(
+                "ItemStatusUpdated",
+                new
+                {
+                    Id = item.OrderItemId,
+                    item.OrderId,
+                    TableId = tableId,
+                    TableName = tableName,
+                    MenuItemName = itemName,
+                    Status = item.Status,
+                    Quantity = item.Quantity
+                });
+
+            return Ok(new
+            {
+                id = item.OrderItemId,
+                quantity = item.Quantity,
+                totalAmount,
+                changedBy = userId
+            });
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     [HttpPost("items/{id:int}/decrement")]
