@@ -1,5 +1,6 @@
 import '../models/attendance_state.dart';
 import 'api_client.dart';
+import 'location_service.dart';
 
 class AttendanceService {
   final ApiClient _apiClient;
@@ -32,11 +33,15 @@ class AttendanceService {
   Future<void> checkIn({
     required String employeeCode,
     required AttendanceState state,
+    required LocationCheckResult location,
   }) async {
     await _apiClient.post(
       '/attendance/check-in',
       body: {
         'employeeCode': employeeCode,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'accuracyMeters': location.accuracyMeters,
       },
     );
 
@@ -49,11 +54,15 @@ class AttendanceService {
   Future<void> checkOut({
     required String employeeCode,
     required AttendanceState state,
+    required LocationCheckResult location,
   }) async {
     await _apiClient.post(
       '/attendance/check-out',
       body: {
         'employeeCode': employeeCode,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'accuracyMeters': location.accuracyMeters,
       },
     );
 
