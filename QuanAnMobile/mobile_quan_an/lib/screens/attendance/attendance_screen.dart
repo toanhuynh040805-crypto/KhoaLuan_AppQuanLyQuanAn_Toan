@@ -261,7 +261,7 @@ class _AttendanceScreenState
     }
   }
 
-  DateTime? get _checkInAllowedFrom {
+  DateTime? get _shiftStartDateTime {
     final AttendanceState state =
         widget.attendanceState;
 
@@ -269,13 +269,49 @@ class _AttendanceScreenState
       return null;
     }
 
-    final DateTime? shiftStart =
-        _shiftDateTime(
-      _currentTime,
+    final DateTime baseDate =
+        state.attendanceDate ??
+            _currentTime;
+
+    return _shiftDateTime(
+      baseDate,
       state.shiftStartTime,
     );
+  }
 
-    return shiftStart?.subtract(
+  DateTime? get _shiftEndDateTime {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.hasShift) {
+      return null;
+    }
+
+    final DateTime baseDate =
+        state.attendanceDate ??
+            _currentTime;
+
+    final DateTime? start =
+        _shiftStartDateTime;
+
+    DateTime? end = _shiftDateTime(
+      baseDate,
+      state.shiftEndTime,
+    );
+
+    if (start != null &&
+        end != null &&
+        !end.isAfter(start)) {
+      end = end.add(
+        const Duration(days: 1),
+      );
+    }
+
+    return end;
+  }
+
+  DateTime? get _checkInAllowedFrom {
+    return _shiftStartDateTime?.subtract(
       const Duration(minutes: 30),
     );
   }
@@ -288,7 +324,27 @@ class _AttendanceScreenState
         _currentTime.isBefore(allowedFrom);
   }
 
+  bool get _isShiftEndedBeforeCheckIn {
+    final DateTime? shiftEnd =
+        _shiftEndDateTime;
+
+    return !widget.attendanceState.checkedIn &&
+        shiftEnd != null &&
+        !_currentTime.isBefore(shiftEnd);
+  }
+
   String get _checkInButtonLabel {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (state.status == 'VangMat') {
+      return 'Ca đã đánh dấu vắng mặt';
+    }
+
+    if (_isShiftEndedBeforeCheckIn) {
+      return 'Ca đã kết thúc';
+    }
+
     final DateTime? allowedFrom =
         _checkInAllowedFrom;
 
@@ -305,6 +361,29 @@ class _AttendanceScreenState
         _isCheckingLocation ||
         !widget.attendanceState.hasShift ||
         widget.attendanceState.checkedIn) {
+      return;
+    }
+
+    if (widget.attendanceState.status ==
+        'VangMat') {
+      TopMessage.show(
+        context,
+        message:
+            'Ca làm đã được đánh dấu vắng mặt. '
+            'Vui lòng liên hệ quản lý nếu cần điều chỉnh.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    if (_isShiftEndedBeforeCheckIn) {
+      TopMessage.show(
+        context,
+        message:
+            'Ca làm đã kết thúc. '
+            'Không thể điểm danh vào ca này.',
+        type: TopMessageType.warning,
+      );
       return;
     }
 
@@ -755,7 +834,10 @@ class _AttendanceScreenState
                         onPressed:
                             _isSubmitting ||
                                     _isCheckingLocation ||
-                                    !state.hasShift
+                                    !state.hasShift ||
+                                    state.status ==
+                                        'VangMat' ||
+                                    _isShiftEndedBeforeCheckIn
                                 ? null
                                 : !state.checkedIn
                                     ? _checkIn
@@ -941,7 +1023,10 @@ class _AttendanceScreenState
                 Icons.calendar_today_outlined,
             title: 'Ngày',
             value:
-                _formatDate(_currentTime),
+                _formatDate(
+              state.attendanceDate ??
+                  _currentTime,
+            ),
           ),
           const Divider(height: 28),
           _buildInfoRow(
@@ -1019,6 +1104,11 @@ class _AttendanceScreenState
       icon = Icons.event_busy;
       color = Colors.grey;
       background = Colors.grey.shade100;
+    } else if (state.status == 'VangMat') {
+      text = 'Vắng mặt';
+      icon = Icons.person_off_outlined;
+      color = Colors.red;
+      background = Colors.red.shade50;
     } else if (state.checkedOut) {
       text = _getAttendanceOverallStatus();
       icon = state.lateMinutes > 0 ||
@@ -1038,6 +1128,12 @@ class _AttendanceScreenState
       background = color.withValues(
         alpha: 0.08,
       );
+    } else if (_isShiftEndedBeforeCheckIn) {
+      text =
+          'Ca đã kết thúc • Chưa điểm danh';
+      icon = Icons.event_busy_outlined;
+      color = Colors.red;
+      background = Colors.red.shade50;
     } else if (_isTooEarlyToCheckIn) {
       text =
           'Có thể điểm danh từ '
