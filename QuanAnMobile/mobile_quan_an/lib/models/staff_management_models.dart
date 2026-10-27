@@ -138,6 +138,9 @@ class ManagedShiftAssignment {
   final int status;
   final DateTime? checkInTime;
   final DateTime? checkOutTime;
+  final int lateMinutes;
+  final int earlyLeaveMinutes;
+  final String attendanceStatus;
 
   const ManagedShiftAssignment({
     required this.id,
@@ -155,6 +158,9 @@ class ManagedShiftAssignment {
     required this.status,
     required this.checkInTime,
     required this.checkOutTime,
+    required this.lateMinutes,
+    required this.earlyLeaveMinutes,
+    required this.attendanceStatus,
   });
 
   factory ManagedShiftAssignment.fromJson(Map<String, dynamic> json) {
@@ -178,6 +184,13 @@ class ManagedShiftAssignment {
       status: _asInt(json['status'] ?? json['Status']),
       checkInTime: _asDate(json['checkInTime'] ?? json['CheckInTime']),
       checkOutTime: _asDate(json['checkOutTime'] ?? json['CheckOutTime']),
+      lateMinutes: _asInt(json['lateMinutes'] ?? json['LateMinutes']),
+      earlyLeaveMinutes: _asInt(
+        json['earlyLeaveMinutes'] ?? json['EarlyLeaveMinutes'],
+      ),
+      attendanceStatus:
+          (json['attendanceStatus'] ?? json['AttendanceStatus'] ?? '')
+              .toString(),
     );
   }
 
@@ -196,6 +209,18 @@ class ManagedShiftAssignment {
     2 => 'Vắng mặt',
     3 => 'Đã hoàn thành',
     _ => 'Đã xếp lịch',
+  };
+
+  String get punctualityLabel => switch (attendanceStatus) {
+    'VangMat' => 'Vắng mặt',
+    'DiTre_VeSom' =>
+      'Đi trễ ${lateMinutes} phút · Về sớm ${earlyLeaveMinutes} phút',
+    'DiTre' => 'Đi trễ ${lateMinutes} phút',
+    'VeSom' => 'Về sớm ${earlyLeaveMinutes} phút',
+    'DungGio_DuGio' => 'Đúng giờ · Đủ giờ',
+    'DangLam_DiTre' => 'Đang làm · Đi trễ ${lateMinutes} phút',
+    'DangLam_DungGio' => 'Đang làm · Đúng giờ',
+    _ => statusLabel,
   };
 }
 
