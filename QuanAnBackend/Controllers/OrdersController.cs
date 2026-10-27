@@ -583,7 +583,18 @@ public class OrdersController : ControllerBase
         if (request.ReservationId.HasValue)
         {
             var reservation = await _db.Reservations.FindAsync(request.ReservationId.Value);
-            if (reservation is not null) reservation.Status = ReservationStatus.DaNhanBan;
+            if (reservation is not null)
+            {
+                reservation.Status = ReservationStatus.DaNhanBan;
+
+                // Gắn khách thành viên của lượt đặt bàn vào đơn ngay khi nhận bàn
+                // để màn Thanh toán tự lấy lại SĐT/email, không phải nhập tay.
+                if (order.CustomerId is null)
+                {
+                    var reservedCustomerId = await ResolveReservationCustomerIdAsync(reservation);
+                    if (reservedCustomerId.HasValue) order.CustomerId = reservedCustomerId;
+                }
+            }
         }
 
         await _db.SaveChangesAsync();
@@ -1090,8 +1101,32 @@ public class OrdersController : ControllerBase
         }
     }
 
+    // Xác định khách thành viên của 1 lượt đặt bàn:
+    //  1) Reservation.CustomerId (đặt từ web khi đã đăng nhập), nếu không có thì
+    //  2) khách có SĐT trùng Reservation.CustomerPhone (đặt hộ tại quầy, hoặc khách
+    //     đăng ký thành viên SAU khi đặt bàn).
+    private async Task<int?> ResolveReservationCustomerIdAsync(Reservation reservation)
+    {
+        if (reservation.CustomerId.HasValue)
+        {
+            var exists = await _db.Customers.AsNoTracking()
+                .AnyAsync(c => c.CustomerId == reservation.CustomerId.Value);
+            if (exists) return reservation.CustomerId;
+        }
+
+        var phone = reservation.CustomerPhone?.Trim();
+        if (string.IsNullOrEmpty(phone)) return null;
+
+        return await _db.Customers.AsNoTracking()
+            .Where(c => c.Phone == phone)
+            .Select(c => (int?)c.CustomerId)
+            .FirstOrDefaultAsync();
+    }
+
     // GET api/orders/table/{tableId} -> đơn đang mở của bàn, dùng bởi
     // WinForms khi mở màn thanh toán sau khi món được gọi từ Mobile.
+    // Có trả thêm "Customer" (khách thành viên gắn với đơn / lượt đặt bàn) để
+    // màn Thanh toán tự điền SĐT và email gửi hóa đơn.
     [HttpGet("table/{tableId:int}")]
     public async Task<IActionResult> GetOpenByTable(int tableId)
     {
@@ -1104,6 +1139,40 @@ public class OrdersController : ControllerBase
 
         if (order is null)
             return NotFound(new { message = "Bàn này chưa có đơn đang mở" });
+
+        // Khách của đơn; nếu đơn chưa gắn khách thì tra theo lượt đặt bàn đã nhận
+        // của bàn này (đơn tạo trước khi khách đăng ký thành viên, hoặc nhận bàn từ Mobile).
+        var customerId = order.CustomerId;
+        if (customerId is null)
+        {
+            var windowStart = order.OrderTime.AddHours(-12);
+            var windowEnd = order.OrderTime.AddHours(12);
+            var reservation = await _db.Reservations.AsNoTracking()
+                .Where(r => r.TableId == tableId
+                            && r.Status == ReservationStatus.DaNhanBan
+                            && r.ReservationTime >= windowStart && r.ReservationTime <= windowEnd)
+                .OrderByDescending(r => r.ReservationTime)
+                .FirstOrDefaultAsync();
+            if (reservation is not null)
+                customerId = await ResolveReservationCustomerIdAsync(reservation);
+        }
+
+        object? customerInfo = null;
+        if (customerId.HasValue)
+        {
+            customerInfo = await _db.Customers.AsNoTracking()
+                .Where(c => c.CustomerId == customerId.Value)
+                .Select(c => new
+                {
+                    Id = c.CustomerId,
+                    c.FullName,
+                    c.Phone,
+                    c.Email,
+                    c.LoyaltyPoint,
+                    MemberLevel = c.MemberLevel
+                })
+                .FirstOrDefaultAsync();
+        }
 
         var connection = _db.Database.GetDbConnection();
         var shouldClose = connection.State != ConnectionState.Open;
@@ -1166,7 +1235,8 @@ public class OrdersController : ControllerBase
                 order.TableId,
                 TableName = order.Table?.TableName ?? "",
                 TotalAmount = totalAmount,
-                Items = items
+                Items = items,
+                Customer = customerInfo
             });
         }
         finally

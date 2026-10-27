@@ -104,7 +104,7 @@ public class CustomersController : ControllerBase
             .Where(c => c.Phone.Contains(phone))
             .OrderBy(c => c.Phone)
             .Take(10)
-            .Select(c => new { Id = c.CustomerId, c.FullName, c.Phone, c.LoyaltyPoint, MemberLevel = c.MemberLevel })
+            .Select(c => new { Id = c.CustomerId, c.FullName, c.Phone, c.Email, c.LoyaltyPoint, MemberLevel = c.MemberLevel })
             .ToListAsync();
 
         return Ok(results);
