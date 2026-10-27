@@ -237,16 +237,77 @@ public class ApiService
         return res ?? new List<ShiftAssignmentDto>();
     }
 
-    public async Task AssignShiftAsync(int userId, int shiftId, DateTime workDate, int? areaId = null)
+    public async Task AssignShiftAsync(
+        int userId,
+        int shiftId,
+        DateTime workDate,
+        IReadOnlyCollection<int> areaIds)
     {
-        var res = await _http.PostAsJsonAsync("/api/shifts/assignments", new { userId, shiftId, workDate, areaId });
+        var res = await _http.PostAsJsonAsync(
+            "/api/shifts/assignments",
+            new
+            {
+                userId,
+                shiftId,
+                workDate,
+                areaIds = areaIds
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToArray()
+            });
+
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
-    public async Task UpdateAssignmentAreaAsync(int assignmentId, int? areaId)
+    // Overload giữ tương thích cho code cũ chỉ gán 1 khu.
+    public Task AssignShiftAsync(
+        int userId,
+        int shiftId,
+        DateTime workDate,
+        int? areaId = null)
     {
-        var res = await _http.PutAsJsonAsync($"/api/shifts/assignments/{assignmentId}/area", areaId);
+        IReadOnlyCollection<int> areaIds =
+            areaId.HasValue
+                ? new[] { areaId.Value }
+                : Array.Empty<int>();
+
+        return AssignShiftAsync(
+            userId,
+            shiftId,
+            workDate,
+            areaIds);
+    }
+
+    public async Task UpdateAssignmentAreasAsync(
+        int assignmentId,
+        IReadOnlyCollection<int> areaIds)
+    {
+        var res = await _http.PutAsJsonAsync(
+            $"/api/shifts/assignments/{assignmentId}/areas",
+            new
+            {
+                areaIds = areaIds
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToArray()
+            });
+
         await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    // Overload cũ vẫn dùng được nếu chỗ khác chỉ chỉnh một khu.
+    public Task UpdateAssignmentAreaAsync(
+        int assignmentId,
+        int? areaId)
+    {
+        IReadOnlyCollection<int> areaIds =
+            areaId.HasValue
+                ? new[] { areaId.Value }
+                : Array.Empty<int>();
+
+        return UpdateAssignmentAreasAsync(
+            assignmentId,
+            areaIds);
     }
 
     public async Task<List<ShiftAssignmentDto>> GetAssignmentHistoryAsync(int? userId, DateTime from, DateTime to)
@@ -255,6 +316,34 @@ public class ApiService
         if (userId.HasValue) url += $"&userId={userId}";
         var res = await _http.GetFromJsonAsync<List<ShiftAssignmentDto>>(url, JsonOpts);
         return res ?? new List<ShiftAssignmentDto>();
+    }
+
+    public async Task<AttendanceLocationSettingsDto?> GetAttendanceLocationSettingsAsync()
+    {
+        return await _http.GetFromJsonAsync<AttendanceLocationSettingsDto>(
+            "/api/attendance-settings",
+            JsonOpts);
+    }
+
+    public async Task<AttendanceLocationSettingsDto?> UpdateAttendanceLocationSettingsAsync(
+        double latitude,
+        double longitude,
+        double radiusMeters,
+        double maxAccuracyMeters)
+    {
+        var res = await _http.PutAsJsonAsync(
+            "/api/attendance-settings",
+            new
+            {
+                latitude,
+                longitude,
+                radiusMeters,
+                maxAccuracyMeters
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        return await res.Content.ReadFromJsonAsync<AttendanceLocationSettingsDto>(JsonOpts);
     }
 
     public async Task<List<StaffTaskDto>> GetTasksAsync(int? userId = null)
