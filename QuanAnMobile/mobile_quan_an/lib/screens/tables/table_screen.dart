@@ -2019,11 +2019,16 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(14),
         itemCount: items.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
-          childAspectRatio: 1.02,
+          // Safari/iPhone Web làm tròn device pixels khác Android.
+          // Cho card cao hơn một chút ở màn hình hẹp để không overflow.
+          childAspectRatio:
+              MediaQuery.sizeOf(context).width <= 430
+                  ? 0.94
+                  : 1.02,
         ),
         itemBuilder: (context, index) => _buildTableCard(items[index]),
       ),
