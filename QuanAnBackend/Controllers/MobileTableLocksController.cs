@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Authorization;
 using QuanAnBackend.Data;
+using QuanAnBackend.Hubs;
 using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Controllers;
@@ -18,13 +20,16 @@ public class MobileTableLocksController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly TableEditLockService _locks;
+    private readonly IHubContext<OrderHub> _hub;
 
     public MobileTableLocksController(
         AppDbContext db,
-        TableEditLockService locks)
+        TableEditLockService locks,
+        IHubContext<OrderHub> hub)
     {
         _db = db;
         _locks = locks;
+        _hub = hub;
     }
 
     [HttpPost("{tableId:int}/acquire")]
@@ -74,22 +79,28 @@ public class MobileTableLocksController : ControllerBase
         if (string.IsNullOrWhiteSpace(employeeName))
             employeeName = employeeCode;
 
-        if (!_locks.TryAcquire(
-                tableId,
-                employeeCode,
-                employeeName,
-                clientToken,
-                out var lease,
-                out var conflict))
+        _locks.TryAcquire(
+            tableId,
+            employeeCode,
+            employeeName,
+            clientToken,
+            out var lease,
+            out var previousLease);
+
+        // Tài khoản/thiết bị vào sau được tiếp quản ngay, không phải chờ tài
+        // khoản trước xác nhận. Phiên cũ nhận realtime và tự quay về sơ đồ bàn.
+        if (previousLease is not null)
         {
-            return Conflict(new
-            {
-                message = $"{table.TableName} đang được {conflict!.EmployeeName} thao tác. Vui lòng chờ nhân viên đó thoát bàn rồi thử lại.",
-                tableId,
-                lockedByEmployeeCode = conflict.EmployeeCode,
-                lockedByEmployeeName = conflict.EmployeeName,
-                expiresAtUtc = conflict.ExpiresAtUtc
-            });
+            await _hub.Clients
+                .Group($"employee-{previousLease.EmployeeCode}")
+                .SendAsync("TableLockTakenOver", new
+                {
+                    tableId,
+                    tableName = table.TableName,
+                    previousClientToken = previousLease.ClientToken,
+                    takenOverByEmployeeCode = employeeCode,
+                    takenOverByEmployeeName = employeeName
+                });
         }
 
         return Ok(ToResponse(lease));

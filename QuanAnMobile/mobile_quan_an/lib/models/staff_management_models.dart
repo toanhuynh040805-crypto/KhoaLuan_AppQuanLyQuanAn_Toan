@@ -30,6 +30,53 @@ class ManagedEmployee {
   String toString() => fullName;
 }
 
+class ManagedRole {
+  final int id;
+  final String name;
+  final String? description;
+
+  const ManagedRole({
+    required this.id,
+    required this.name,
+    this.description,
+  });
+
+  factory ManagedRole.fromJson(Map<String, dynamic> json) {
+    return ManagedRole(
+      id: _asInt(json['roleId'] ?? json['RoleId'] ?? json['id'] ?? json['Id']),
+      name: (json['roleName'] ?? json['RoleName'] ?? json['name'] ?? json['Name'] ?? '')
+          .toString(),
+      description: (json['description'] ?? json['Description'])?.toString(),
+    );
+  }
+
+  bool get isKitchen =>
+      name.trim().toLowerCase() == 'bep';
+
+  @override
+  String toString() => name;
+}
+
+class ManagedStation {
+  final int id;
+  final String name;
+
+  const ManagedStation({
+    required this.id,
+    required this.name,
+  });
+
+  factory ManagedStation.fromJson(Map<String, dynamic> json) {
+    return ManagedStation(
+      id: _asInt(json['id'] ?? json['Id']),
+      name: (json['name'] ?? json['Name'] ?? '').toString(),
+    );
+  }
+
+  @override
+  String toString() => name;
+}
+
 class ManagedShift {
   final int id;
   final String name;
@@ -86,9 +133,14 @@ class ManagedShiftAssignment {
   final DateTime workDate;
   final int? areaId;
   final String? areaName;
+  final List<int> areaIds;
+  final List<String> areaNames;
   final int status;
   final DateTime? checkInTime;
   final DateTime? checkOutTime;
+  final int lateMinutes;
+  final int earlyLeaveMinutes;
+  final String attendanceStatus;
 
   const ManagedShiftAssignment({
     required this.id,
@@ -101,9 +153,14 @@ class ManagedShiftAssignment {
     required this.workDate,
     required this.areaId,
     required this.areaName,
+    required this.areaIds,
+    required this.areaNames,
     required this.status,
     required this.checkInTime,
     required this.checkOutTime,
+    required this.lateMinutes,
+    required this.earlyLeaveMinutes,
+    required this.attendanceStatus,
   });
 
   factory ManagedShiftAssignment.fromJson(Map<String, dynamic> json) {
@@ -118,19 +175,52 @@ class ManagedShiftAssignment {
       workDate: _asDate(json['workDate'] ?? json['WorkDate']) ?? DateTime.now(),
       areaId: _asNullableInt(json['areaId'] ?? json['AreaId']),
       areaName: (json['areaName'] ?? json['AreaName'])?.toString(),
+      areaIds: _asIntList(
+        json['areaIds'] ?? json['AreaIds'],
+      ),
+      areaNames: _asStringList(
+        json['areaNames'] ?? json['AreaNames'],
+      ),
       status: _asInt(json['status'] ?? json['Status']),
       checkInTime: _asDate(json['checkInTime'] ?? json['CheckInTime']),
       checkOutTime: _asDate(json['checkOutTime'] ?? json['CheckOutTime']),
+      lateMinutes: _asInt(json['lateMinutes'] ?? json['LateMinutes']),
+      earlyLeaveMinutes: _asInt(
+        json['earlyLeaveMinutes'] ?? json['EarlyLeaveMinutes'],
+      ),
+      attendanceStatus:
+          (json['attendanceStatus'] ?? json['AttendanceStatus'] ?? '')
+              .toString(),
     );
   }
 
   String get shiftTimeLabel => '${_shortTime(shiftStart)} - ${_shortTime(shiftEnd)}';
+
+  String get areaLabel {
+    if (areaNames.isNotEmpty) {
+      return areaNames.join(', ');
+    }
+
+    return (areaName ?? '').trim();
+  }
 
   String get statusLabel => switch (status) {
     1 => 'Đã điểm danh',
     2 => 'Vắng mặt',
     3 => 'Đã hoàn thành',
     _ => 'Đã xếp lịch',
+  };
+
+  String get punctualityLabel => switch (attendanceStatus) {
+    'VangMat' => 'Vắng mặt',
+    'DiTre_VeSom' =>
+      'Đi trễ ${lateMinutes} phút · Về sớm ${earlyLeaveMinutes} phút',
+    'DiTre' => 'Đi trễ ${lateMinutes} phút',
+    'VeSom' => 'Về sớm ${earlyLeaveMinutes} phút',
+    'DungGio_DuGio' => 'Đúng giờ · Đủ giờ',
+    'DangLam_DiTre' => 'Đang làm · Đi trễ ${lateMinutes} phút',
+    'DangLam_DungGio' => 'Đang làm · Đúng giờ',
+    _ => statusLabel,
   };
 }
 
@@ -179,6 +269,25 @@ int _asInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+List<int> _asIntList(dynamic value) {
+  if (value is! List) return <int>[];
+
+  return value
+      .map(_asInt)
+      .where((item) => item > 0)
+      .toSet()
+      .toList();
+}
+
+List<String> _asStringList(dynamic value) {
+  if (value is! List) return <String>[];
+
+  return value
+      .map((item) => item?.toString().trim() ?? '')
+      .where((item) => item.isNotEmpty)
+      .toList();
 }
 
 int? _asNullableInt(dynamic value) {

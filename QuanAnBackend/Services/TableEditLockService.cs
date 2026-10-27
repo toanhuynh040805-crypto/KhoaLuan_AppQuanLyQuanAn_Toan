@@ -26,13 +26,14 @@ public sealed class TableEditLockService
         {
             CleanupExpiredUnsafe();
 
-            if (_locks.TryGetValue(tableId, out var current) &&
-                !string.Equals(current.ClientToken, clientToken, StringComparison.Ordinal))
-            {
-                lease = current;
-                conflictingLease = current;
-                return false;
-            }
+            // Phiên vào sau luôn được quyền tiếp quản bàn ngay lập tức.
+            // Giữ lại lease cũ để controller phát realtime cho thiết bị/tài
+            // khoản đang giữ bàn biết rằng phiên của họ đã bị thay thế.
+            conflictingLease =
+                _locks.TryGetValue(tableId, out var current) &&
+                !string.Equals(current.ClientToken, clientToken, StringComparison.Ordinal)
+                    ? current
+                    : null;
 
             lease = new TableEditLockSnapshot(
                 tableId,
@@ -43,7 +44,6 @@ public sealed class TableEditLockService
             );
 
             _locks[tableId] = lease;
-            conflictingLease = null;
             return true;
         }
     }

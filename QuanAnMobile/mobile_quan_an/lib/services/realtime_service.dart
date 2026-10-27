@@ -81,6 +81,37 @@ class TableStatusRealtimeEvent {
   }
 }
 
+class TableLockTakenOverRealtimeEvent {
+  final int tableId;
+  final String tableName;
+  final String previousClientToken;
+  final String takenOverByEmployeeCode;
+  final String takenOverByEmployeeName;
+
+  const TableLockTakenOverRealtimeEvent({
+    required this.tableId,
+    required this.tableName,
+    required this.previousClientToken,
+    required this.takenOverByEmployeeCode,
+    required this.takenOverByEmployeeName,
+  });
+
+  factory TableLockTakenOverRealtimeEvent.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return TableLockTakenOverRealtimeEvent(
+      tableId: _parseInt(json['tableId']),
+      tableName: json['tableName']?.toString() ?? '',
+      previousClientToken:
+          json['previousClientToken']?.toString() ?? '',
+      takenOverByEmployeeCode:
+          json['takenOverByEmployeeCode']?.toString() ?? '',
+      takenOverByEmployeeName:
+          json['takenOverByEmployeeName']?.toString() ?? '',
+    );
+  }
+}
+
 class RealtimeService {
   HubConnection? _connection;
   String? _employeeCode;
@@ -105,6 +136,10 @@ class RealtimeService {
   final StreamController<TableStatusRealtimeEvent> _tableStatusController =
       StreamController<TableStatusRealtimeEvent>.broadcast();
 
+  final StreamController<TableLockTakenOverRealtimeEvent>
+      _tableLockTakeoverController =
+      StreamController<TableLockTakenOverRealtimeEvent>.broadcast();
+
   final StreamController<void> _kitchenQueueController =
       StreamController<void>.broadcast();
 
@@ -119,6 +154,9 @@ class RealtimeService {
 
   Stream<TableStatusRealtimeEvent> get tableStatusChanges =>
       _tableStatusController.stream;
+
+  Stream<TableLockTakenOverRealtimeEvent> get tableLockTakeovers =>
+      _tableLockTakeoverController.stream;
 
   Stream<void> get kitchenQueueChanges =>
       _kitchenQueueController.stream;
@@ -218,6 +256,21 @@ class RealtimeService {
 
         // Phục vụ vẫn cần realtime để biết Thu ngân ở thiết bị khác đã thanh toán.
         _paymentController.add(event);
+      },
+    );
+
+    connection.on(
+      'TableLockTakenOver',
+      (arguments) {
+        final Map<String, dynamic>? data = _firstMap(arguments);
+
+        if (data == null) {
+          return;
+        }
+
+        _tableLockTakeoverController.add(
+          TableLockTakenOverRealtimeEvent.fromJson(data),
+        );
       },
     );
 

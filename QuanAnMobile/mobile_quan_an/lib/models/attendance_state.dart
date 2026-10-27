@@ -7,6 +7,11 @@ class ShiftRecord {
   final String shiftName;
   final String startTime;
   final String endTime;
+  final int lateMinutes;
+  final int earlyLeaveMinutes;
+  final String checkInStatus;
+  final String checkOutStatus;
+  final String attendanceStatus;
 
   const ShiftRecord({
     required this.date,
@@ -15,6 +20,11 @@ class ShiftRecord {
     this.shiftName = 'Ca làm',
     this.startTime = '08:00',
     this.endTime = '17:00',
+    this.lateMinutes = 0,
+    this.earlyLeaveMinutes = 0,
+    this.checkInStatus = 'DungGio',
+    this.checkOutStatus = 'DuGio',
+    this.attendanceStatus = 'DungGio_DuGio',
   });
 
   factory ShiftRecord.fromJson(
@@ -54,6 +64,28 @@ class ShiftRecord {
       endTime:
           json['endTime']?.toString() ??
               '17:00',
+      lateMinutes:
+          int.tryParse(
+                json['lateMinutes']?.toString() ??
+                    '',
+              ) ??
+              0,
+      earlyLeaveMinutes:
+          int.tryParse(
+                json['earlyLeaveMinutes']
+                        ?.toString() ??
+                    '',
+              ) ??
+              0,
+      checkInStatus:
+          json['checkInStatus']?.toString() ??
+              'DungGio',
+      checkOutStatus:
+          json['checkOutStatus']?.toString() ??
+              'DuGio',
+      attendanceStatus:
+          json['attendanceStatus']?.toString() ??
+              'DungGio_DuGio',
     );
   }
 }
@@ -73,6 +105,11 @@ class AttendanceState {
   String shiftEndTime;
   String status;
   String areaName;
+  int lateMinutes;
+  int earlyLeaveMinutes;
+  String checkInStatus;
+  String checkOutStatus;
+  String attendanceStatus;
 
   final List<ShiftRecord> history;
 
@@ -89,6 +126,11 @@ class AttendanceState {
     this.shiftEndTime = '--:--',
     this.status = 'ChuaXepCa',
     this.areaName = '',
+    this.lateMinutes = 0,
+    this.earlyLeaveMinutes = 0,
+    this.checkInStatus = 'ChuaDiemDanh',
+    this.checkOutStatus = 'ChuaKetThuc',
+    this.attendanceStatus = 'ChuaDiemDanh',
     List<ShiftRecord>? history,
   }) : history = history ?? [];
 
@@ -125,6 +167,11 @@ class AttendanceState {
       shiftEndTime = '--:--';
       status = 'ChuaXepCa';
       areaName = '';
+      lateMinutes = 0;
+      earlyLeaveMinutes = 0;
+      checkInStatus = 'ChuaDiemDanh';
+      checkOutStatus = 'ChuaKetThuc';
+      attendanceStatus = 'ChuaDiemDanh';
     }
   }
 
@@ -160,6 +207,24 @@ class AttendanceState {
     areaName =
         json['areaName']?.toString() ??
             '';
+
+    lateMinutes =
+        _parseInt(json['lateMinutes']);
+
+    earlyLeaveMinutes =
+        _parseInt(json['earlyLeaveMinutes']);
+
+    checkInStatus =
+        json['checkInStatus']?.toString() ??
+            'ChuaDiemDanh';
+
+    checkOutStatus =
+        json['checkOutStatus']?.toString() ??
+            'ChuaKetThuc';
+
+    attendanceStatus =
+        json['attendanceStatus']?.toString() ??
+            'ChuaDiemDanh';
 
     checkInTime =
         _parseDateTime(

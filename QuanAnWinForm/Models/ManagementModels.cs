@@ -64,12 +64,58 @@ public class ShiftAssignmentDto
     public TimeSpan ShiftEnd { get; set; }
     public DateTime WorkDate { get; set; }
 
+    // AreaId/AreaName được giữ để tương thích dữ liệu cũ.
+    // AreaIds/AreaNames là nguồn mới khi một ca phụ trách nhiều khu.
     public int? AreaId { get; set; }
     public string? AreaName { get; set; }
+    public List<int> AreaIds { get; set; } = new();
+    public List<string> AreaNames { get; set; } = new();
 
     public int Status { get; set; }
     public DateTime? CheckInTime { get; set; }
     public DateTime? CheckOutTime { get; set; }
+
+    public int LateMinutes { get; set; }
+    public int EarlyLeaveMinutes { get; set; }
+    public string CheckInStatus { get; set; } = "ChuaDiemDanh";
+    public string CheckOutStatus { get; set; } = "ChuaKetThuc";
+    public string AttendanceStatus { get; set; } = "ChuaDiemDanh";
+
+    public string AreaLabel =>
+        AreaNames.Count > 0
+            ? string.Join(", ", AreaNames)
+            : AreaName ?? "";
+
+    public string AttendanceStatusLabel => AttendanceStatus switch
+    {
+        "VangMat" => "Vắng mặt",
+        "DiTre_VeSom" => "Đi trễ & về sớm",
+        "DiTre" => "Đi trễ",
+        "VeSom" => "Về sớm",
+        "DungGio_DuGio" => "Đúng giờ · Đủ giờ",
+        "DangLam_DiTre" => LateMinutes > 0
+            ? $"Đang làm · Đi trễ {LateMinutes} phút"
+            : "Đang làm · Đi trễ",
+        "DangLam_DungGio" => "Đang làm · Đúng giờ",
+        _ => Status switch
+        {
+            2 => "Vắng mặt",
+            3 => "Đã hoàn thành",
+            1 => "Đã điểm danh",
+            _ => "Đã xếp lịch",
+        },
+    };
+}
+
+public class AttendanceLocationSettingsDto
+{
+    public bool IsConfigured { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public double RadiusMeters { get; set; } = 100;
+    public double MaxAccuracyMeters { get; set; } = 50;
+    public DateTime? UpdatedAt { get; set; }
+    public int? UpdatedBy { get; set; }
 }
 
 public class StaffTaskDto
