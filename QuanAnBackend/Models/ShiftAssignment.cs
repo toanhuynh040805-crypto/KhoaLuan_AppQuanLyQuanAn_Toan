@@ -24,6 +24,11 @@ public class ShiftAssignment
     public int? AreaId { get; set; }
     public Area? Area { get; set; }
 
+    // Một ca có thể phụ trách nhiều khu vực.
+    // AreaId được giữ lại để tương thích WinForms/API cũ.
+    public ICollection<ShiftAssignmentArea> AssignedAreas { get; set; }
+        = new List<ShiftAssignmentArea>();
+
     public DateOnly WorkDate { get; set; }
     public AssignmentStatus Status { get; set; } = AssignmentStatus.DaXepLich;
 
