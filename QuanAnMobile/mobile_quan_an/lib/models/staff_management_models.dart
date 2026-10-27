@@ -133,6 +133,8 @@ class ManagedShiftAssignment {
   final DateTime workDate;
   final int? areaId;
   final String? areaName;
+  final List<int> areaIds;
+  final List<String> areaNames;
   final int status;
   final DateTime? checkInTime;
   final DateTime? checkOutTime;
@@ -148,6 +150,8 @@ class ManagedShiftAssignment {
     required this.workDate,
     required this.areaId,
     required this.areaName,
+    required this.areaIds,
+    required this.areaNames,
     required this.status,
     required this.checkInTime,
     required this.checkOutTime,
@@ -165,6 +169,12 @@ class ManagedShiftAssignment {
       workDate: _asDate(json['workDate'] ?? json['WorkDate']) ?? DateTime.now(),
       areaId: _asNullableInt(json['areaId'] ?? json['AreaId']),
       areaName: (json['areaName'] ?? json['AreaName'])?.toString(),
+      areaIds: _asIntList(
+        json['areaIds'] ?? json['AreaIds'],
+      ),
+      areaNames: _asStringList(
+        json['areaNames'] ?? json['AreaNames'],
+      ),
       status: _asInt(json['status'] ?? json['Status']),
       checkInTime: _asDate(json['checkInTime'] ?? json['CheckInTime']),
       checkOutTime: _asDate(json['checkOutTime'] ?? json['CheckOutTime']),
@@ -172,6 +182,14 @@ class ManagedShiftAssignment {
   }
 
   String get shiftTimeLabel => '${_shortTime(shiftStart)} - ${_shortTime(shiftEnd)}';
+
+  String get areaLabel {
+    if (areaNames.isNotEmpty) {
+      return areaNames.join(', ');
+    }
+
+    return (areaName ?? '').trim();
+  }
 
   String get statusLabel => switch (status) {
     1 => 'Đã điểm danh',
@@ -226,6 +244,25 @@ int _asInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+List<int> _asIntList(dynamic value) {
+  if (value is! List) return <int>[];
+
+  return value
+      .map(_asInt)
+      .where((item) => item > 0)
+      .toSet()
+      .toList();
+}
+
+List<String> _asStringList(dynamic value) {
+  if (value is! List) return <String>[];
+
+  return value
+      .map((item) => item?.toString().trim() ?? '')
+      .where((item) => item.isNotEmpty)
+      .toList();
 }
 
 int? _asNullableInt(dynamic value) {
