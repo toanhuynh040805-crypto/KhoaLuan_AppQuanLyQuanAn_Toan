@@ -7,9 +7,12 @@ class LocationCheckResult {
   final bool serviceEnabled;
   final bool permissionGranted;
   final bool isInside;
+  final double? latitude;
+  final double? longitude;
   final double? distanceMeters;
   final double? accuracyMeters;
   final bool isMocked;
+  final bool requiresSecureContext;
   final String message;
 
   const LocationCheckResult({
@@ -17,22 +20,40 @@ class LocationCheckResult {
     required this.serviceEnabled,
     required this.permissionGranted,
     required this.isInside,
+    this.latitude,
+    this.longitude,
     this.distanceMeters,
     this.accuracyMeters,
     this.isMocked = false,
+    this.requiresSecureContext = false,
     required this.message,
   });
 
   bool get canAttend {
-    return isConfigured &&
-        serviceEnabled &&
+    return serviceEnabled &&
         permissionGranted &&
-        isInside;
+        latitude != null &&
+        longitude != null &&
+        (!isConfigured || isInside);
   }
 }
 
 class LocationService {
   const LocationService();
+
+  bool get _isInsecureWebContext {
+    if (!kIsWeb) return false;
+
+    final Uri uri = Uri.base;
+    final String host = uri.host.toLowerCase();
+    final bool localhost =
+        host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1';
+
+    return uri.scheme != 'https' &&
+        !localhost;
+  }
 
   static const String _envLatitudeRaw =
       String.fromEnvironment(
@@ -115,17 +136,16 @@ class LocationService {
       checkCurrentLocation({
     bool requestPermission = true,
   }) async {
-    final restaurant =
-        await _getRestaurantLocation();
-
-    if (restaurant == null) {
+    if (_isInsecureWebContext) {
       return const LocationCheckResult(
         isConfigured: false,
         serviceEnabled: true,
         permissionGranted: false,
         isInside: false,
+        requiresSecureContext: true,
         message:
-            'Chưa cấu hình tọa độ nhà hàng.',
+            'Bản Web đang mở bằng HTTP nên Safari không cho truy cập GPS. '
+            'Điểm danh trên iPhone Web cần mở ứng dụng bằng HTTPS.',
       );
     }
 
@@ -135,7 +155,7 @@ class LocationService {
 
     if (!serviceEnabled) {
       return const LocationCheckResult(
-        isConfigured: true,
+        isConfigured: false,
         serviceEnabled: false,
         permissionGranted: false,
         isInside: false,
@@ -158,7 +178,7 @@ class LocationService {
     if (permission ==
         LocationPermission.denied) {
       return const LocationCheckResult(
-        isConfigured: true,
+        isConfigured: false,
         serviceEnabled: true,
         permissionGranted: false,
         isInside: false,
@@ -170,7 +190,7 @@ class LocationService {
     if (permission ==
         LocationPermission.deniedForever) {
       return const LocationCheckResult(
-        isConfigured: true,
+        isConfigured: false,
         serviceEnabled: true,
         permissionGranted: false,
         isInside: false,
@@ -189,6 +209,25 @@ class LocationService {
         ),
       ),
     );
+
+    final restaurant =
+        await _getRestaurantLocation();
+
+    if (restaurant == null) {
+      return LocationCheckResult(
+        isConfigured: false,
+        serviceEnabled: true,
+        permissionGranted: true,
+        isInside: false,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracyMeters:
+            position.accuracy,
+        isMocked: position.isMocked,
+        message:
+            'Đã lấy vị trí GPS. Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.',
+      );
+    }
 
     final double distance =
         Geolocator.distanceBetween(
@@ -209,6 +248,8 @@ class LocationService {
         serviceEnabled: true,
         permissionGranted: true,
         isInside: false,
+        latitude: position.latitude,
+        longitude: position.longitude,
         distanceMeters: distance,
         accuracyMeters:
             position.accuracy,
@@ -223,6 +264,8 @@ class LocationService {
       serviceEnabled: true,
       permissionGranted: true,
       isInside: inside,
+      latitude: position.latitude,
+      longitude: position.longitude,
       distanceMeters: distance,
       accuracyMeters:
           position.accuracy,
@@ -314,6 +357,8 @@ class LocationService {
       serviceEnabled: true,
       permissionGranted: true,
       isInside: true,
+      latitude: position.latitude,
+      longitude: position.longitude,
       distanceMeters: 0,
       accuracyMeters:
           position.accuracy,

@@ -9,6 +9,7 @@ import '../attendance/shift_history_screen.dart';
 import 'personal_info_screen.dart';
 import '../../models/notification_settings_state.dart';
 import 'notification_settings_screen.dart';
+import 'attendance_location_settings_screen.dart';
 import '../login/login_screen.dart';
 import '../invoices/invoice_history_screen.dart';
 import '../statistics/statistics_screen.dart';
@@ -320,12 +321,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     // Nếu đang trong ca thì kết thúc ca thật trên database
-    // trước khi đăng xuất.
+    // trước khi đăng xuất. Kết thúc ca cũng phải gửi GPS để Backend
+    // áp dụng cùng ràng buộc vị trí như màn Điểm danh.
     if (isWorking) {
       try {
+        final location =
+            await AppServices.locationService
+                .checkCurrentLocation(
+          requestPermission: true,
+        );
+
+        if (!context.mounted) return;
+
+        if (!location.serviceEnabled ||
+            !location.permissionGranted ||
+            location.latitude == null ||
+            location.longitude == null ||
+            location.accuracyMeters == null) {
+          TopMessage.show(
+            context,
+            message:
+                'Cần bật GPS và cấp quyền vị trí để kết thúc ca trước khi đăng xuất.',
+            type: TopMessageType.warning,
+          );
+          return;
+        }
+
         await AppServices.attendanceService.checkOut(
           employeeCode: appEmployee.employeeCode,
           state: appAttendanceState,
+          location: location,
         );
       } on ApiException catch (error) {
         if (!context.mounted) return;
@@ -559,6 +584,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 setState(() {});
               },
             ),
+
+            if (MobileAccessPolicy.canConfigureAccess()) ...[
+              const SizedBox(height: 10),
+              _buildMenuItem(
+                context: context,
+                icon: Icons.location_on_outlined,
+                iconBackground: const Color(0xFFE8F4FF),
+                iconColor: Colors.blue,
+                title: 'Vị trí điểm danh',
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const AttendanceLocationSettingsScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
 
             if (MobileAccessPolicy.canManageStaff()) ...[
               const SizedBox(height: 10),

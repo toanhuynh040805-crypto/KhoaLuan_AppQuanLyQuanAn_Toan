@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
@@ -120,10 +119,19 @@ class _AttendanceScreenState
       });
 
       if (showMessage) {
+        final bool gpsReady =
+            result.serviceEnabled &&
+            result.permissionGranted &&
+            result.latitude != null &&
+            result.longitude != null &&
+            result.accuracyMeters != null;
+
         TopMessage.show(
           context,
-          message: result.message,
-          type: result.canAttend
+          message: gpsReady
+              ? 'Đã lấy vị trí GPS hiện tại. Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.'
+              : result.message,
+          type: gpsReady
               ? TopMessageType.success
               : TopMessageType.warning,
         );
@@ -152,7 +160,8 @@ class _AttendanceScreenState
     }
   }
 
-  Future<bool> _validateLocationForAttendance() async {
+  Future<LocationCheckResult?>
+      _validateLocationForAttendance() async {
     final LocationCheckResult? result =
         await _refreshLocation(
       showMessage: false,
@@ -160,17 +169,16 @@ class _AttendanceScreenState
     );
 
     if (!mounted || result == null) {
-      return false;
+      return null;
     }
 
-    if (!result.isConfigured) {
+    if (result.requiresSecureContext) {
       TopMessage.show(
         context,
-        message:
-            'Chưa cấu hình vị trí nhà hàng nên chưa thể điểm danh bằng GPS.',
+        message: result.message,
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
     if (!result.serviceEnabled) {
@@ -180,7 +188,7 @@ class _AttendanceScreenState
             'Hãy bật GPS/Dịch vụ vị trí trước khi điểm danh.',
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
     if (!result.permissionGranted) {
@@ -189,72 +197,117 @@ class _AttendanceScreenState
         message: result.message,
         type: TopMessageType.warning,
       );
-      return false;
+      return null;
     }
 
-    if (!result.isInside) {
-      final double? distance =
-          result.distanceMeters;
-
-      TopMessage.show(
-        context,
-        message: distance == null
-            ? result.message
-            : 'Bạn đang cách nhà hàng khoảng '
-                '${distance.round()} m. '
-                'Chỉ được điểm danh trong bán kính '
-                '${LocationService.geofenceRadiusMeters.round()} m.',
-        type: TopMessageType.warning,
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  Future<void> _calibrateDebugLocation() async {
-    if (!kDebugMode ||
-        _isCheckingLocation) {
-      return;
-    }
-
-    setState(() {
-      _isCheckingLocation = true;
-    });
-
-    try {
-      final LocationCheckResult result =
-          await AppServices.locationService
-              .calibrateDebugRestaurantLocation();
-
-      if (!mounted) return;
-
-      setState(() {
-        _locationResult = result;
-        _isCheckingLocation = false;
-      });
-
-      TopMessage.show(
-        context,
-        message: result.message,
-        type: result.canAttend
-            ? TopMessageType.success
-            : TopMessageType.warning,
-      );
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        _isCheckingLocation = false;
-      });
-
+    if (result.latitude == null ||
+        result.longitude == null ||
+        result.accuracyMeters == null) {
       TopMessage.show(
         context,
         message:
-            'Không thể lưu vị trí test. Hãy kiểm tra GPS.',
-        type: TopMessageType.error,
+            'Không thể lấy tọa độ GPS hiện tại. Hãy thử lại.',
+        type: TopMessageType.warning,
+      );
+      return null;
+    }
+
+    return result;
+  }
+
+  DateTime? get _shiftStartDateTime {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.hasShift) {
+      return null;
+    }
+
+    final DateTime baseDate =
+        state.attendanceDate ??
+            _currentTime;
+
+    return _shiftDateTime(
+      baseDate,
+      state.shiftStartTime,
+    );
+  }
+
+  DateTime? get _shiftEndDateTime {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.hasShift) {
+      return null;
+    }
+
+    final DateTime baseDate =
+        state.attendanceDate ??
+            _currentTime;
+
+    final DateTime? start =
+        _shiftStartDateTime;
+
+    DateTime? end = _shiftDateTime(
+      baseDate,
+      state.shiftEndTime,
+    );
+
+    if (start != null &&
+        end != null &&
+        !end.isAfter(start)) {
+      end = end.add(
+        const Duration(days: 1),
       );
     }
+
+    return end;
+  }
+
+  DateTime? get _checkInAllowedFrom {
+    return _shiftStartDateTime?.subtract(
+      const Duration(minutes: 30),
+    );
+  }
+
+  bool get _isTooEarlyToCheckIn {
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    return allowedFrom != null &&
+        _currentTime.isBefore(allowedFrom);
+  }
+
+  bool get _isShiftEndedBeforeCheckIn {
+    final DateTime? shiftEnd =
+        _shiftEndDateTime;
+
+    return !widget.attendanceState.checkedIn &&
+        shiftEnd != null &&
+        !_currentTime.isBefore(shiftEnd);
+  }
+
+  String get _checkInButtonLabel {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (state.status == 'VangMat') {
+      return 'Ca đã đánh dấu vắng mặt';
+    }
+
+    if (_isShiftEndedBeforeCheckIn) {
+      return 'Ca đã kết thúc';
+    }
+
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    if (_isTooEarlyToCheckIn &&
+        allowedFrom != null) {
+      return 'Điểm danh từ ${_formatTime(allowedFrom)}';
+    }
+
+    return 'Điểm danh vào ca';
   }
 
   Future<void> _checkIn() async {
@@ -265,10 +318,49 @@ class _AttendanceScreenState
       return;
     }
 
-    final bool locationValid =
+    if (widget.attendanceState.status ==
+        'VangMat') {
+      TopMessage.show(
+        context,
+        message:
+            'Ca làm đã được đánh dấu vắng mặt. '
+            'Vui lòng liên hệ quản lý nếu cần điều chỉnh.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    if (_isShiftEndedBeforeCheckIn) {
+      TopMessage.show(
+        context,
+        message:
+            'Ca làm đã kết thúc. '
+            'Không thể điểm danh vào ca này.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    final DateTime? allowedFrom =
+        _checkInAllowedFrom;
+
+    if (allowedFrom != null &&
+        _currentTime.isBefore(allowedFrom)) {
+      TopMessage.show(
+        context,
+        message:
+            'Chưa đến thời gian điểm danh. '
+            'Bạn có thể điểm danh từ '
+            '${_formatTime(allowedFrom)}.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    final LocationCheckResult? location =
         await _validateLocationForAttendance();
 
-    if (!locationValid || !mounted) {
+    if (location == null || !mounted) {
       return;
     }
 
@@ -280,6 +372,7 @@ class _AttendanceScreenState
       await AppServices.attendanceService.checkIn(
         employeeCode: appEmployee.employeeCode,
         state: widget.attendanceState,
+        location: location,
       );
 
       if (!mounted) return;
@@ -316,10 +409,10 @@ class _AttendanceScreenState
       return;
     }
 
-    final bool locationValid =
+    final LocationCheckResult? location =
         await _validateLocationForAttendance();
 
-    if (!locationValid || !mounted) {
+    if (location == null || !mounted) {
       return;
     }
 
@@ -331,6 +424,7 @@ class _AttendanceScreenState
       await AppServices.attendanceService.checkOut(
         employeeCode: appEmployee.employeeCode,
         state: widget.attendanceState,
+        location: location,
       );
 
       if (!mounted) return;
@@ -440,105 +534,113 @@ class _AttendanceScreenState
   }
 
   String _getCheckInStatus() {
-    final DateTime? checkIn =
-        widget.attendanceState.checkInTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkIn == null) {
+    if (state.status == 'VangMat') {
+      return 'Vắng mặt';
+    }
+
+    if (!state.checkedIn) {
       return 'Chưa điểm danh';
     }
 
-    final DateTime? shiftStart =
-        _shiftDateTime(
-      checkIn,
-      widget.attendanceState.shiftStartTime,
-    );
-
-    if (shiftStart == null) {
-      return 'Đã điểm danh';
-    }
-
-    if (checkIn.isAfter(shiftStart)) {
-      final int lateMinutes =
-          checkIn.difference(shiftStart).inMinutes;
-
-      return 'Đi trễ $lateMinutes phút';
+    if (state.lateMinutes > 0) {
+      return 'Đi trễ ${state.lateMinutes} phút';
     }
 
     return 'Đúng giờ';
   }
 
   String _getCheckOutStatus() {
-    final DateTime? checkOut =
-        widget.attendanceState.checkOutTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkOut == null) {
+    if (state.status == 'VangMat') {
+      return 'Không áp dụng';
+    }
+
+    if (!state.checkedOut) {
       return 'Chưa kết thúc ca';
     }
 
-    final DateTime? shiftEnd =
-        _shiftDateTime(
-      checkOut,
-      widget.attendanceState.shiftEndTime,
-    );
-
-    if (shiftEnd == null) {
-      return 'Đã kết thúc';
-    }
-
-    if (checkOut.isBefore(shiftEnd)) {
-      final int earlyMinutes =
-          shiftEnd.difference(checkOut).inMinutes;
-
-      return 'Về sớm $earlyMinutes phút';
+    if (state.earlyLeaveMinutes > 0) {
+      return 'Về sớm ${state.earlyLeaveMinutes} phút';
     }
 
     return 'Đủ giờ';
   }
 
-  Color _getCheckInStatusColor() {
-    final DateTime? checkIn =
-        widget.attendanceState.checkInTime;
+  String _getAttendanceOverallStatus() {
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkIn == null) {
+    switch (state.attendanceStatus) {
+      case 'VangMat':
+        return 'Vắng mặt';
+      case 'DiTre_VeSom':
+        return 'Đi trễ & về sớm';
+      case 'DiTre':
+        return 'Đi trễ';
+      case 'VeSom':
+        return 'Về sớm';
+      case 'DungGio_DuGio':
+        return 'Đúng giờ • Đủ giờ';
+      case 'DangLam_DiTre':
+        return 'Đang làm • Đi trễ';
+      case 'DangLam_DungGio':
+        return 'Đang làm • Đúng giờ';
+      default:
+        return state.checkedIn
+            ? 'Đang trong ca'
+            : 'Chưa điểm danh';
+    }
+  }
+
+  Color _getCheckInStatusColor() {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (!state.checkedIn) {
       return Colors.grey;
     }
 
-    final DateTime? shiftStart =
-        _shiftDateTime(
-      checkIn,
-      widget.attendanceState.shiftStartTime,
-    );
-
-    if (shiftStart == null) {
-      return Colors.green;
-    }
-
-    return checkIn.isAfter(shiftStart)
+    return state.lateMinutes > 0
         ? Colors.red
         : Colors.green;
   }
 
   Color _getCheckOutStatusColor() {
-    final DateTime? checkOut =
-        widget.attendanceState.checkOutTime;
+    final AttendanceState state =
+        widget.attendanceState;
 
-    if (checkOut == null) {
+    if (!state.checkedOut) {
       return Colors.grey;
     }
 
-    final DateTime? shiftEnd =
-        _shiftDateTime(
-      checkOut,
-      widget.attendanceState.shiftEndTime,
-    );
-
-    if (shiftEnd == null) {
-      return Colors.green;
-    }
-
-    return checkOut.isBefore(shiftEnd)
+    return state.earlyLeaveMinutes > 0
         ? Colors.orange
         : Colors.green;
+  }
+
+  Color _getAttendanceOverallColor() {
+    final AttendanceState state =
+        widget.attendanceState;
+
+    if (state.status == 'VangMat') {
+      return Colors.red;
+    }
+
+    if (!state.checkedIn) {
+      return Colors.grey;
+    }
+
+    if (state.lateMinutes > 0 ||
+        state.earlyLeaveMinutes > 0) {
+      return Colors.red;
+    }
+
+    return Colors.green;
   }
 
   String get _shiftLabel {
@@ -700,7 +802,10 @@ class _AttendanceScreenState
                         onPressed:
                             _isSubmitting ||
                                     _isCheckingLocation ||
-                                    !state.hasShift
+                                    !state.hasShift ||
+                                    state.status ==
+                                        'VangMat' ||
+                                    _isShiftEndedBeforeCheckIn
                                 ? null
                                 : !state.checkedIn
                                     ? _checkIn
@@ -729,7 +834,7 @@ class _AttendanceScreenState
                               : !state.hasShift
                               ? 'Chưa được xếp ca'
                               : !state.checkedIn
-                                  ? 'Điểm danh vào ca'
+                                  ? _checkInButtonLabel
                                   : state.checkedOut
                                       ? 'Đã kết thúc ca'
                                       : 'Kết thúc ca',
@@ -886,7 +991,10 @@ class _AttendanceScreenState
                 Icons.calendar_today_outlined,
             title: 'Ngày',
             value:
-                _formatDate(_currentTime),
+                _formatDate(
+              state.attendanceDate ??
+                  _currentTime,
+            ),
           ),
           const Divider(height: 28),
           _buildInfoRow(
@@ -936,6 +1044,15 @@ class _AttendanceScreenState
             color:
                 _getCheckOutStatusColor(),
           ),
+          const Divider(height: 28),
+          _buildStatusRow(
+            icon: Icons.fact_check_outlined,
+            title: 'Trạng thái ca',
+            value:
+                _getAttendanceOverallStatus(),
+            color:
+                _getAttendanceOverallColor(),
+          ),
         ],
       ),
     );
@@ -955,19 +1072,44 @@ class _AttendanceScreenState
       icon = Icons.event_busy;
       color = Colors.grey;
       background = Colors.grey.shade100;
+    } else if (state.status == 'VangMat') {
+      text = 'Vắng mặt';
+      icon = Icons.person_off_outlined;
+      color = Colors.red;
+      background = Colors.red.shade50;
     } else if (state.checkedOut) {
-      text = 'Đã kết thúc ca';
-      icon = Icons.check_circle;
-      color = Colors.blueGrey;
-      background =
-          Colors.blueGrey.shade50;
+      text = _getAttendanceOverallStatus();
+      icon = state.lateMinutes > 0 ||
+              state.earlyLeaveMinutes > 0
+          ? Icons.warning_amber_rounded
+          : Icons.check_circle;
+      color = _getAttendanceOverallColor();
+      background = color.withValues(
+        alpha: 0.08,
+      );
     } else if (state.checkedIn) {
-      text = 'Đang trong ca làm';
-      icon =
-          Icons.check_circle_outline;
-      color = Colors.green;
+      text = _getAttendanceOverallStatus();
+      icon = state.lateMinutes > 0
+          ? Icons.warning_amber_rounded
+          : Icons.check_circle_outline;
+      color = _getAttendanceOverallColor();
+      background = color.withValues(
+        alpha: 0.08,
+      );
+    } else if (_isShiftEndedBeforeCheckIn) {
+      text =
+          'Ca đã kết thúc • Chưa điểm danh';
+      icon = Icons.event_busy_outlined;
+      color = Colors.red;
+      background = Colors.red.shade50;
+    } else if (_isTooEarlyToCheckIn) {
+      text =
+          'Có thể điểm danh từ '
+          '${_formatTime(_checkInAllowedFrom)}';
+      icon = Icons.schedule_outlined;
+      color = AppTheme.orangeColor;
       background =
-          Colors.green.shade50;
+          const Color(0xFFFFF1E8);
     } else {
       text = 'Chưa điểm danh';
       icon = Icons.schedule_outlined;
@@ -1023,14 +1165,12 @@ class _AttendanceScreenState
       statusColor = Colors.grey;
       statusIcon = Icons.location_searching;
       detailText =
-          'Bấm Kiểm tra vị trí để xác nhận phạm vi điểm danh.';
-    } else if (!result.isConfigured) {
-      statusText = 'Chưa cấu hình';
+          'Bấm Kiểm tra vị trí để lấy GPS hiện tại. Backend sẽ đối chiếu với vị trí quán do quản lý cấu hình.';
+    } else if (result.requiresSecureContext) {
+      statusText = 'Cần HTTPS';
       statusColor = Colors.orange;
-      statusIcon = Icons.settings_outlined;
-      detailText =
-          'Chưa có tọa độ nhà hàng. '
-          'Bản debug có thể dùng vị trí hiện tại làm mốc test.';
+      statusIcon = Icons.lock_outline;
+      detailText = result.message;
     } else if (!result.serviceEnabled) {
       statusText = 'GPS đang tắt';
       statusColor = Colors.red;
@@ -1042,26 +1182,23 @@ class _AttendanceScreenState
       statusColor = Colors.red;
       statusIcon = Icons.location_off_outlined;
       detailText = result.message;
-    } else if (result.isInside) {
-      statusText = 'Trong phạm vi';
+    } else if (result.latitude != null &&
+        result.longitude != null &&
+        result.accuracyMeters != null) {
+      statusText = 'GPS sẵn sàng';
       statusColor = Colors.green;
-      statusIcon = Icons.check_circle;
+      statusIcon = Icons.my_location;
       detailText =
-          'Khoảng cách: '
-          '${result.distanceMeters?.round() ?? 0} m'
-          ' • Sai số GPS: '
-          '${result.accuracyMeters?.round() ?? 0} m'
-          ' • Bán kính cho phép: '
-          '${LocationService.geofenceRadiusMeters.round()} m.';
+          'Đã lấy vị trí GPS hiện tại'
+          ' • Sai số: '
+          '${result.accuracyMeters!.round()} m. '
+          'Phạm vi hợp lệ sẽ được Backend kiểm tra theo cấu hình của quản lý.';
     } else {
-      statusText = 'Ngoài phạm vi';
-      statusColor = Colors.red;
-      statusIcon = Icons.cancel_outlined;
+      statusText = 'Không lấy được GPS';
+      statusColor = Colors.orange;
+      statusIcon = Icons.location_searching;
       detailText =
-          'Khoảng cách: '
-          '${result.distanceMeters?.round() ?? 0} m'
-          ' • Bán kính cho phép: '
-          '${LocationService.geofenceRadiusMeters.round()} m.';
+          'Không thể lấy tọa độ GPS hiện tại. Hãy thử lại.';
     }
 
     return Container(
@@ -1129,9 +1266,7 @@ class _AttendanceScreenState
               ),
             ],
           ),
-
           const SizedBox(height: 14),
-
           Row(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
@@ -1164,22 +1299,7 @@ class _AttendanceScreenState
               ),
             ],
           ),
-
-          if (result?.isMocked == true &&
-              kDebugMode) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Thiết bị đang dùng vị trí mô phỏng (được phép khi debug).',
-              style: TextStyle(
-                fontSize: 11,
-                color:
-                    Colors.orange.shade700,
-              ),
-            ),
-          ],
-
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -1208,30 +1328,7 @@ class _AttendanceScreenState
               ),
             ),
           ),
-
-          if (kDebugMode &&
-              (result == null ||
-                  !result.isConfigured)) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton.icon(
-                onPressed: _isCheckingLocation
-                    ? null
-                    : _calibrateDebugLocation,
-                icon: const Icon(
-                  Icons.developer_mode,
-                  size: 18,
-                ),
-                label: const Text(
-                  'Dùng vị trí hiện tại làm mốc nhà hàng (DEBUG)',
-                ),
-              ),
-            ),
-          ],
-
           if (result != null &&
-              result.isConfigured &&
               !result.serviceEnabled) ...[
             const SizedBox(height: 8),
             SizedBox(
@@ -1247,9 +1344,8 @@ class _AttendanceScreenState
               ),
             ),
           ],
-
           if (result != null &&
-              result.isConfigured &&
+              !result.requiresSecureContext &&
               result.serviceEnabled &&
               !result.permissionGranted) ...[
             const SizedBox(height: 8),

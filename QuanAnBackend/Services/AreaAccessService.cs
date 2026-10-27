@@ -43,29 +43,68 @@ public class AreaAccessService
 
         var day = (workDate ?? DateTime.Today).Date;
 
+        // Ưu tiên khu vực của ca làm trong ngày. Trước đây UNION cả
+        // EmployeeAreaAssignments (có thể là phân công cũ/toàn cục) với
+        // ShiftAssignments khiến nhân viên vừa được đổi từ T1 A sang T1 B vẫn
+        // được xem là có quyền ở cả T1 A và T1 B. Quy tắc mới:
+        //   1) Có khu theo ca hôm nay -> chỉ dùng khu theo ca hôm nay.
+        //   2) Không có -> dùng phân khu riêng đúng ngày.
+        //   3) Vẫn không có -> mới fallback phân khu toàn cục.
         var areaIds = await _db.Database
             .SqlQuery<int>($"""
-                SELECT DISTINCT x.AreaId AS Value
-                FROM (
-                    -- Phân công khu vực cấu hình riêng (Mobile).
-                    SELECT eaa.AreaId
-                    FROM EmployeeAreaAssignments eaa
-                    INNER JOIN Employees e ON e.EmployeeId = eaa.EmployeeId
+                WITH ShiftAreas AS (
+                    SELECT DISTINCT saa.AreaId
+                    FROM ShiftAssignments sa
+                    INNER JOIN Employees e
+                        ON e.EmployeeId = sa.EmployeeId
+                    INNER JOIN ShiftAssignmentAreas saa
+                        ON saa.ShiftAssignmentId = sa.ShiftAssignmentId
                     WHERE e.UserId = {userId.Value}
-                      AND eaa.IsActive = 1
-                      AND (eaa.WorkDate IS NULL OR eaa.WorkDate = {day})
+                      AND sa.WorkDate = {day}
+                      AND sa.Status <> N'VangMat'
 
                     UNION
 
-                    -- Khu vực phụ trách theo ca làm do WinForm xếp (Ca làm -> Khu vực).
-                    SELECT sa.AreaId
+                    SELECT DISTINCT sa.AreaId
                     FROM ShiftAssignments sa
-                    INNER JOIN Employees e ON e.EmployeeId = sa.EmployeeId
+                    INNER JOIN Employees e
+                        ON e.EmployeeId = sa.EmployeeId
                     WHERE e.UserId = {userId.Value}
                       AND sa.AreaId IS NOT NULL
                       AND sa.WorkDate = {day}
                       AND sa.Status <> N'VangMat'
-                ) x;
+                ),
+                DatedAreas AS (
+                    SELECT DISTINCT eaa.AreaId
+                    FROM EmployeeAreaAssignments eaa
+                    INNER JOIN Employees e ON e.EmployeeId = eaa.EmployeeId
+                    WHERE e.UserId = {userId.Value}
+                      AND eaa.IsActive = 1
+                      AND eaa.WorkDate = {day}
+                ),
+                GlobalAreas AS (
+                    SELECT DISTINCT eaa.AreaId
+                    FROM EmployeeAreaAssignments eaa
+                    INNER JOIN Employees e ON e.EmployeeId = eaa.EmployeeId
+                    WHERE e.UserId = {userId.Value}
+                      AND eaa.IsActive = 1
+                      AND eaa.WorkDate IS NULL
+                )
+                SELECT AreaId AS Value
+                FROM ShiftAreas
+
+                UNION
+
+                SELECT AreaId AS Value
+                FROM DatedAreas
+                WHERE NOT EXISTS (SELECT 1 FROM ShiftAreas)
+
+                UNION
+
+                SELECT AreaId AS Value
+                FROM GlobalAreas
+                WHERE NOT EXISTS (SELECT 1 FROM ShiftAreas)
+                  AND NOT EXISTS (SELECT 1 FROM DatedAreas);
                 """)
             .ToListAsync();
 

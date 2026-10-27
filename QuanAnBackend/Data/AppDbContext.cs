@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<ShiftAssignment> ShiftAssignments => Set<ShiftAssignment>();
+    public DbSet<ShiftAssignmentArea> ShiftAssignmentAreas => Set<ShiftAssignmentArea>();
     public DbSet<StaffTask> StaffTasks => Set<StaffTask>();
 
     public DbSet<Invoice> Invoices => Set<Invoice>();
@@ -66,6 +67,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<DishStatusHistory>().HasKey(h => h.HistoryId);
         modelBuilder.Entity<Shift>().HasKey(s => s.ShiftId);
         modelBuilder.Entity<ShiftAssignment>().HasKey(sa => sa.ShiftAssignmentId);
+        modelBuilder.Entity<ShiftAssignmentArea>()
+            .HasKey(x => new { x.ShiftAssignmentId, x.AreaId });
         modelBuilder.Entity<StaffTask>().HasKey(t => t.TaskId);
         modelBuilder.Entity<Invoice>().HasKey(i => i.InvoiceId);
         modelBuilder.Entity<Payment>().HasKey(p => p.PaymentId);
@@ -147,6 +150,18 @@ public class AppDbContext : DbContext
             .HasOne(sa => sa.Area)
             .WithMany()
             .HasForeignKey(sa => sa.AreaId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<ShiftAssignmentArea>()
+            .HasOne(x => x.ShiftAssignment)
+            .WithMany(x => x.AssignedAreas)
+            .HasForeignKey(x => x.ShiftAssignmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ShiftAssignmentArea>()
+            .HasOne(x => x.Area)
+            .WithMany()
+            .HasForeignKey(x => x.AreaId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Invoice>()

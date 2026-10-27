@@ -58,6 +58,7 @@ builder.Services.AddScoped<MobilePermissionService>();
 builder.Services.AddScoped<MobilePermissionSchemaService>();
 builder.Services.AddScoped<AreaAccessService>();
 builder.Services.AddScoped<AreaAssignmentSchemaService>();
+builder.Services.AddScoped<AttendanceSettingsService>();
 builder.Services.AddScoped<CustomerAccountSchemaService>();
 builder.Services.AddScoped<MobileOperationAuditService>();
 builder.Services.AddScoped<WinFormsCompatibilitySchemaService>();
@@ -262,6 +263,10 @@ using (var scope = app.Services.CreateScope())
     var areaAssignmentSchema =
         scope.ServiceProvider.GetRequiredService<AreaAssignmentSchemaService>();
     await areaAssignmentSchema.EnsureAsync();
+
+    var attendanceSettings =
+        scope.ServiceProvider.GetRequiredService<AttendanceSettingsService>();
+    await attendanceSettings.EnsureAsync();
 
     var customerAccountSchema =
         scope.ServiceProvider.GetRequiredService<CustomerAccountSchemaService>();

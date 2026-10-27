@@ -212,16 +212,8 @@ class _ShiftHistoryScreenState
   String _getCheckInStatus(
     ShiftRecord record,
   ) {
-    final DateTime start =
-        _shiftStart(record);
-
-    if (record.checkInTime.isAfter(start)) {
-      final int lateMinutes =
-          record.checkInTime
-              .difference(start)
-              .inMinutes;
-
-      return 'Đi trễ $lateMinutes phút';
+    if (record.lateMinutes > 0) {
+      return 'Đi trễ ${record.lateMinutes} phút';
     }
 
     return 'Đúng giờ';
@@ -230,28 +222,47 @@ class _ShiftHistoryScreenState
   String _getCheckOutStatus(
     ShiftRecord record,
   ) {
-    final DateTime end =
-        _shiftEnd(record);
-
-    if (record.checkOutTime.isBefore(end)) {
-      final int earlyMinutes =
-          end
-              .difference(record.checkOutTime)
-              .inMinutes;
-
-      return 'Về sớm $earlyMinutes phút';
+    if (record.earlyLeaveMinutes > 0) {
+      return 'Về sớm ${record.earlyLeaveMinutes} phút';
     }
 
     return 'Đủ giờ';
   }
 
+  String _getAttendanceOverallStatus(
+    ShiftRecord record,
+  ) {
+    switch (record.attendanceStatus) {
+      case 'DiTre_VeSom':
+        return 'Đi trễ & về sớm';
+      case 'DiTre':
+        return 'Đi trễ';
+      case 'VeSom':
+        return 'Về sớm';
+      case 'DungGio_DuGio':
+        return 'Đúng giờ • Đủ giờ';
+      default:
+        if (record.lateMinutes > 0 &&
+            record.earlyLeaveMinutes > 0) {
+          return 'Đi trễ & về sớm';
+        }
+
+        if (record.lateMinutes > 0) {
+          return 'Đi trễ';
+        }
+
+        if (record.earlyLeaveMinutes > 0) {
+          return 'Về sớm';
+        }
+
+        return 'Hoàn thành';
+    }
+  }
+
   Color _getCheckInColor(
     ShiftRecord record,
   ) {
-    final DateTime start =
-        _shiftStart(record);
-
-    return record.checkInTime.isAfter(start)
+    return record.lateMinutes > 0
         ? Colors.red
         : Colors.green;
   }
@@ -259,12 +270,20 @@ class _ShiftHistoryScreenState
   Color _getCheckOutColor(
     ShiftRecord record,
   ) {
-    final DateTime end =
-        _shiftEnd(record);
-
-    return record.checkOutTime.isBefore(end)
+    return record.earlyLeaveMinutes > 0
         ? Colors.orange
         : Colors.green;
+  }
+
+  Color _getAttendanceOverallColor(
+    ShiftRecord record,
+  ) {
+    if (record.lateMinutes > 0 ||
+        record.earlyLeaveMinutes > 0) {
+      return Colors.red;
+    }
+
+    return Colors.green;
   }
 
   Widget _buildStatusBadge({
@@ -300,25 +319,13 @@ class _ShiftHistoryScreenState
 
   int _getOnTimeShifts() {
     return _getFilteredRecords().where(
-      (record) {
-        final DateTime start =
-            _shiftStart(record);
-
-        return !record.checkInTime
-            .isAfter(start);
-      },
+      (record) => record.lateMinutes == 0,
     ).length;
   }
 
   int _getLateShifts() {
     return _getFilteredRecords().where(
-      (record) {
-        final DateTime start =
-            _shiftStart(record);
-
-        return record.checkInTime
-            .isAfter(start);
-      },
+      (record) => record.lateMinutes > 0,
     ).length;
   }
 
@@ -553,13 +560,8 @@ class _ShiftHistoryScreenState
 
   int _getEarlyLeaveShifts() {
     return _getFilteredRecords().where(
-      (record) {
-        final DateTime end =
-            _shiftEnd(record);
-
-        return record.checkOutTime
-            .isBefore(end);
-      },
+      (record) =>
+          record.earlyLeaveMinutes > 0,
     ).length;
   }
 
@@ -872,39 +874,14 @@ class _ShiftHistoryScreenState
                               ),
                             ),
 
-                            Container(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                horizontal: 10,
-                                vertical: 5,
+                            _buildStatusBadge(
+                              text:
+                                  _getAttendanceOverallStatus(
+                                record,
                               ),
-
-                              decoration:
-                                  BoxDecoration(
-                                color: Colors
-                                    .green
-                                    .shade50,
-
-                                borderRadius:
-                                    BorderRadius
-                                        .circular(
-                                  14,
-                                ),
-                              ),
-
-                              child:
-                                  const Text(
-                                'Hoàn thành',
-                                style:
-                                    TextStyle(
-                                  color:
-                                      Colors.green,
-                                  fontSize: 11,
-                                  fontWeight:
-                                      FontWeight
-                                          .w600,
-                                ),
+                              color:
+                                  _getAttendanceOverallColor(
+                                record,
                               ),
                             ),
                           ],
