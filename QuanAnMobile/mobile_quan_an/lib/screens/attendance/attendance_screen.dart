@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
@@ -120,10 +119,19 @@ class _AttendanceScreenState
       });
 
       if (showMessage) {
+        final bool gpsReady =
+            result.serviceEnabled &&
+            result.permissionGranted &&
+            result.latitude != null &&
+            result.longitude != null &&
+            result.accuracyMeters != null;
+
         TopMessage.show(
           context,
-          message: result.message,
-          type: result.canAttend
+          message: gpsReady
+              ? 'Đã lấy vị trí GPS hiện tại. Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.'
+              : result.message,
+          type: gpsReady
               ? TopMessageType.success
               : TopMessageType.warning,
         );
@@ -195,70 +203,7 @@ class _AttendanceScreenState
       return null;
     }
 
-    if (result.isConfigured &&
-        !result.isInside) {
-      final double? distance =
-          result.distanceMeters;
-
-      TopMessage.show(
-        context,
-        message: distance == null
-            ? result.message
-            : 'Bạn đang cách nhà hàng khoảng '
-                '${distance.round()} m. '
-                'Chỉ được điểm danh trong bán kính '
-                '${LocationService.geofenceRadiusMeters.round()} m.',
-        type: TopMessageType.warning,
-      );
-      return null;
-    }
-
     return result;
-  }
-
-  Future<void> _calibrateDebugLocation() async {
-    if (!kDebugMode ||
-        _isCheckingLocation) {
-      return;
-    }
-
-    setState(() {
-      _isCheckingLocation = true;
-    });
-
-    try {
-      final LocationCheckResult result =
-          await AppServices.locationService
-              .calibrateDebugRestaurantLocation();
-
-      if (!mounted) return;
-
-      setState(() {
-        _locationResult = result;
-        _isCheckingLocation = false;
-      });
-
-      TopMessage.show(
-        context,
-        message: result.message,
-        type: result.canAttend
-            ? TopMessageType.success
-            : TopMessageType.warning,
-      );
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        _isCheckingLocation = false;
-      });
-
-      TopMessage.show(
-        context,
-        message:
-            'Không thể lưu vị trí test. Hãy kiểm tra GPS.',
-        type: TopMessageType.error,
-      );
-    }
   }
 
   DateTime? get _shiftStartDateTime {
@@ -1211,25 +1156,7 @@ class _AttendanceScreenState
       statusColor = Colors.grey;
       statusIcon = Icons.location_searching;
       detailText =
-          'Bấm Kiểm tra vị trí để xác nhận phạm vi điểm danh.';
-    } else if (!result.isConfigured &&
-        result.permissionGranted &&
-        result.latitude != null &&
-        result.longitude != null) {
-      statusText = 'GPS sẵn sàng';
-      statusColor = Colors.green;
-      statusIcon = Icons.my_location;
-      detailText =
-          'Đã lấy vị trí GPS hiện tại'
-          ' • Sai số: '
-          '${result.accuracyMeters?.round() ?? 0} m. '
-          'Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.';
-    } else if (!result.isConfigured) {
-      statusText = 'Chưa cấu hình';
-      statusColor = Colors.orange;
-      statusIcon = Icons.settings_outlined;
-      detailText =
-          'Chưa lấy được vị trí GPS hiện tại.';
+          'Bấm Kiểm tra vị trí để lấy GPS hiện tại. Backend sẽ đối chiếu với vị trí quán do quản lý cấu hình.';
     } else if (!result.serviceEnabled) {
       statusText = 'GPS đang tắt';
       statusColor = Colors.red;
@@ -1241,26 +1168,23 @@ class _AttendanceScreenState
       statusColor = Colors.red;
       statusIcon = Icons.location_off_outlined;
       detailText = result.message;
-    } else if (result.isInside) {
-      statusText = 'Trong phạm vi';
+    } else if (result.latitude != null &&
+        result.longitude != null &&
+        result.accuracyMeters != null) {
+      statusText = 'GPS sẵn sàng';
       statusColor = Colors.green;
-      statusIcon = Icons.check_circle;
+      statusIcon = Icons.my_location;
       detailText =
-          'Khoảng cách: '
-          '${result.distanceMeters?.round() ?? 0} m'
-          ' • Sai số GPS: '
-          '${result.accuracyMeters?.round() ?? 0} m'
-          ' • Bán kính cho phép: '
-          '${LocationService.geofenceRadiusMeters.round()} m.';
+          'Đã lấy vị trí GPS hiện tại'
+          ' • Sai số: '
+          '${result.accuracyMeters!.round()} m. '
+          'Phạm vi hợp lệ sẽ được Backend kiểm tra theo cấu hình của quản lý.';
     } else {
-      statusText = 'Ngoài phạm vi';
-      statusColor = Colors.red;
-      statusIcon = Icons.cancel_outlined;
+      statusText = 'Không lấy được GPS';
+      statusColor = Colors.orange;
+      statusIcon = Icons.location_searching;
       detailText =
-          'Khoảng cách: '
-          '${result.distanceMeters?.round() ?? 0} m'
-          ' • Bán kính cho phép: '
-          '${LocationService.geofenceRadiusMeters.round()} m.';
+          'Không thể lấy tọa độ GPS hiện tại. Hãy thử lại.';
     }
 
     return Container(
@@ -1328,9 +1252,7 @@ class _AttendanceScreenState
               ),
             ],
           ),
-
           const SizedBox(height: 14),
-
           Row(
             crossAxisAlignment:
                 CrossAxisAlignment.start,
@@ -1363,22 +1285,7 @@ class _AttendanceScreenState
               ),
             ],
           ),
-
-          if (result?.isMocked == true &&
-              kDebugMode) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Thiết bị đang dùng vị trí mô phỏng (được phép khi debug).',
-              style: TextStyle(
-                fontSize: 11,
-                color:
-                    Colors.orange.shade700,
-              ),
-            ),
-          ],
-
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -1407,30 +1314,7 @@ class _AttendanceScreenState
               ),
             ),
           ),
-
-          if (kDebugMode &&
-              (result == null ||
-                  !result.isConfigured)) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton.icon(
-                onPressed: _isCheckingLocation
-                    ? null
-                    : _calibrateDebugLocation,
-                icon: const Icon(
-                  Icons.developer_mode,
-                  size: 18,
-                ),
-                label: const Text(
-                  'Dùng vị trí hiện tại làm mốc nhà hàng (DEBUG)',
-                ),
-              ),
-            ),
-          ],
-
           if (result != null &&
-              result.isConfigured &&
               !result.serviceEnabled) ...[
             const SizedBox(height: 8),
             SizedBox(
@@ -1446,9 +1330,7 @@ class _AttendanceScreenState
               ),
             ),
           ],
-
           if (result != null &&
-              result.isConfigured &&
               result.serviceEnabled &&
               !result.permissionGranted) ...[
             const SizedBox(height: 8),
