@@ -178,6 +178,14 @@ public partial class KitchenBoardControl : UserControl
             if (row is null) continue;
 
             row.CurrentStatus = payload.Status;
+
+            if (payload.Quantity.HasValue &&
+                payload.Quantity.Value > 0)
+            {
+                row.QuantityLabel.Text =
+                    $"{payload.Quantity.Value}x";
+            }
+
             ApplyItemStatusUI(row);
             ApplyBulkActionUI(card);
 
@@ -516,6 +524,7 @@ public partial class KitchenBoardControl : UserControl
             ItemId = item.Id,
             CreatedAt = item.CreatedAt,
             CurrentStatus = item.Status,
+            QuantityLabel = lblQty,
             NameLabel = lblName,
             ActionButton = btnAction,
             RowPanel = row
@@ -654,6 +663,7 @@ public partial class KitchenBoardControl : UserControl
         public required DateTime CreatedAt;
         public int CurrentStatus;
         public string? CancelReason;
+        public required Label QuantityLabel;
         public required Label NameLabel;
         public required Button ActionButton;
         public required Panel RowPanel;
