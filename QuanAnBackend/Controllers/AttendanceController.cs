@@ -24,7 +24,12 @@ public record AttendanceTodayDto(
     DateTime? CheckInTime,
     DateTime? CheckOutTime,
     string? WorkDate,
-    string? AreaName = null
+    string? AreaName = null,
+    int LateMinutes = 0,
+    int EarlyLeaveMinutes = 0,
+    string CheckInStatus = "ChuaDiemDanh",
+    string CheckOutStatus = "ChuaKetThuc",
+    string AttendanceStatus = "ChuaDiemDanh"
 );
 
 public record AttendanceHistoryDto(
@@ -35,7 +40,12 @@ public record AttendanceHistoryDto(
     string EndTime,
     string Status,
     DateTime CheckInTime,
-    DateTime CheckOutTime
+    DateTime CheckOutTime,
+    int LateMinutes,
+    int EarlyLeaveMinutes,
+    string CheckInStatus,
+    string CheckOutStatus,
+    string AttendanceStatus
 );
 
 [ApiController]
@@ -148,6 +158,35 @@ public class AttendanceController : ControllerBase
                 );
             }
 
+            var workDate = reader.GetDateTime(7);
+            var startTime = ReadSqlTime(reader.GetValue(2));
+            var endTime = ReadSqlTime(reader.GetValue(3));
+            var checkInTime = reader.IsDBNull(5)
+                ? (DateTime?)null
+                : reader.GetDateTime(5);
+            var checkOutTime = reader.IsDBNull(6)
+                ? (DateTime?)null
+                : reader.GetDateTime(6);
+
+            var shiftStart = BuildShiftDateTime(
+                workDate,
+                startTime
+            );
+            var shiftEnd = BuildShiftDateTime(
+                workDate,
+                endTime
+            );
+
+            if (shiftEnd <= shiftStart)
+                shiftEnd = shiftEnd.AddDays(1);
+
+            var attendance = BuildAttendanceStatus(
+                shiftStart,
+                shiftEnd,
+                checkInTime,
+                checkOutTime
+            );
+
             return Ok(
                 new AttendanceTodayDto(
                     true,
@@ -156,17 +195,17 @@ public class AttendanceController : ControllerBase
                     FormatSqlTime(reader.GetValue(2)),
                     FormatSqlTime(reader.GetValue(3)),
                     reader.GetString(4),
-                    reader.IsDBNull(5)
-                        ? null
-                        : reader.GetDateTime(5),
-                    reader.IsDBNull(6)
-                        ? null
-                        : reader.GetDateTime(6),
-                    reader.GetDateTime(7)
-                        .ToString("yyyy-MM-dd"),
+                    checkInTime,
+                    checkOutTime,
+                    workDate.ToString("yyyy-MM-dd"),
                     reader.IsDBNull(8)
                         ? null
-                        : reader.GetString(8)
+                        : reader.GetString(8),
+                    attendance.LateMinutes,
+                    attendance.EarlyLeaveMinutes,
+                    attendance.CheckInStatus,
+                    attendance.CheckOutStatus,
+                    attendance.AttendanceStatus
                 )
             );
         }
@@ -232,6 +271,18 @@ public class AttendanceController : ControllerBase
                     {
                         message =
                             "Ca làm hôm nay đã kết thúc"
+                    }
+                );
+            }
+
+            if (assignment.Status == "VangMat")
+            {
+                return Conflict(
+                    new
+                    {
+                        message =
+                            "Ca làm đã được đánh dấu vắng mặt. " +
+                            "Vui lòng liên hệ quản lý nếu cần điều chỉnh."
                     }
                 );
             }
@@ -320,6 +371,13 @@ public class AttendanceController : ControllerBase
 
             await transaction.CommitAsync();
 
+            var attendance = BuildAttendanceStatus(
+                assignment.ShiftStartTime,
+                assignment.ShiftEndTime,
+                checkInTime,
+                null
+            );
+
             return Ok(
                 new
                 {
@@ -328,7 +386,12 @@ public class AttendanceController : ControllerBase
                     status = "DaDiemDanh",
                     checkInTime,
                     checkOutTime =
-                        (DateTime?)null
+                        (DateTime?)null,
+                    attendance.LateMinutes,
+                    attendance.EarlyLeaveMinutes,
+                    attendance.CheckInStatus,
+                    attendance.CheckOutStatus,
+                    attendance.AttendanceStatus
                 }
             );
         }
@@ -462,6 +525,13 @@ public class AttendanceController : ControllerBase
 
             await transaction.CommitAsync();
 
+            var attendance = BuildAttendanceStatus(
+                assignment.ShiftStartTime,
+                assignment.ShiftEndTime,
+                assignment.CheckInTime,
+                checkOutTime
+            );
+
             return Ok(
                 new
                 {
@@ -470,7 +540,12 @@ public class AttendanceController : ControllerBase
                     status = "DaHoanThanh",
                     checkInTime =
                         assignment.CheckInTime,
-                    checkOutTime
+                    checkOutTime,
+                    attendance.LateMinutes,
+                    attendance.EarlyLeaveMinutes,
+                    attendance.CheckInStatus,
+                    attendance.CheckOutStatus,
+                    attendance.AttendanceStatus
                 }
             );
         }
@@ -551,21 +626,46 @@ public class AttendanceController : ControllerBase
 
             while (await reader.ReadAsync())
             {
+                var workDate = reader.GetDateTime(2);
+                var startTime = ReadSqlTime(reader.GetValue(3));
+                var endTime = ReadSqlTime(reader.GetValue(4));
+                var checkInTime = reader.GetDateTime(6);
+                var checkOutTime = reader.GetDateTime(7);
+
+                var shiftStart = BuildShiftDateTime(
+                    workDate,
+                    startTime
+                );
+                var shiftEnd = BuildShiftDateTime(
+                    workDate,
+                    endTime
+                );
+
+                if (shiftEnd <= shiftStart)
+                    shiftEnd = shiftEnd.AddDays(1);
+
+                var attendance = BuildAttendanceStatus(
+                    shiftStart,
+                    shiftEnd,
+                    checkInTime,
+                    checkOutTime
+                );
+
                 result.Add(
                     new AttendanceHistoryDto(
                         reader.GetInt32(0),
                         reader.GetString(1),
-                        reader.GetDateTime(2)
-                            .ToString("yyyy-MM-dd"),
-                        FormatSqlTime(
-                            reader.GetValue(3)
-                        ),
-                        FormatSqlTime(
-                            reader.GetValue(4)
-                        ),
+                        workDate.ToString("yyyy-MM-dd"),
+                        FormatSqlTime(reader.GetValue(3)),
+                        FormatSqlTime(reader.GetValue(4)),
                         reader.GetString(5),
-                        reader.GetDateTime(6),
-                        reader.GetDateTime(7)
+                        checkInTime,
+                        checkOutTime,
+                        attendance.LateMinutes,
+                        attendance.EarlyLeaveMinutes,
+                        attendance.CheckInStatus,
+                        attendance.CheckOutStatus,
+                        attendance.AttendanceStatus
                     )
                 );
             }
@@ -604,6 +704,31 @@ public class AttendanceController : ControllerBase
                     ),
                     CAST(sa.WorkDate AS datetime2)
                 ) AS ShiftStartTime,
+                CASE
+                    WHEN s.EndTime <= s.StartTime
+                    THEN DATEADD(
+                        DAY,
+                        1,
+                        DATEADD(
+                            SECOND,
+                            DATEDIFF(
+                                SECOND,
+                                CAST('00:00:00' AS time),
+                                s.EndTime
+                            ),
+                            CAST(sa.WorkDate AS datetime2)
+                        )
+                    )
+                    ELSE DATEADD(
+                        SECOND,
+                        DATEDIFF(
+                            SECOND,
+                            CAST('00:00:00' AS time),
+                            s.EndTime
+                        ),
+                        CAST(sa.WorkDate AS datetime2)
+                    )
+                END AS ShiftEndTime,
                 GETDATE() AS DatabaseNow
             FROM ShiftAssignments sa
             INNER JOIN Employees e
@@ -637,7 +762,8 @@ public class AttendanceController : ControllerBase
                 ? null
                 : reader.GetDateTime(3),
             reader.GetDateTime(4),
-            reader.GetDateTime(5)
+            reader.GetDateTime(5),
+            reader.GetDateTime(6)
         );
     }
 
@@ -778,6 +904,99 @@ public class AttendanceController : ControllerBase
         return earthRadiusMeters * c;
     }
 
+    private static TimeSpan ReadSqlTime(
+        object value)
+    {
+        if (value is TimeSpan time)
+            return time;
+
+        return TimeSpan.TryParse(
+            value.ToString(),
+            out var parsed)
+            ? parsed
+            : TimeSpan.Zero;
+    }
+
+    private static DateTime BuildShiftDateTime(
+        DateTime workDate,
+        TimeSpan time)
+    {
+        return workDate.Date.Add(time);
+    }
+
+    private static AttendanceStatusResult
+        BuildAttendanceStatus(
+            DateTime shiftStart,
+            DateTime shiftEnd,
+            DateTime? checkInTime,
+            DateTime? checkOutTime)
+    {
+        var lateMinutes = 0;
+        var earlyLeaveMinutes = 0;
+
+        if (checkInTime.HasValue &&
+            checkInTime.Value > shiftStart)
+        {
+            lateMinutes = Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    (checkInTime.Value - shiftStart)
+                    .TotalMinutes
+                )
+            );
+        }
+
+        if (checkOutTime.HasValue &&
+            checkOutTime.Value < shiftEnd)
+        {
+            earlyLeaveMinutes = Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    (shiftEnd - checkOutTime.Value)
+                    .TotalMinutes
+                )
+            );
+        }
+
+        var checkInStatus =
+            !checkInTime.HasValue
+                ? "ChuaDiemDanh"
+                : lateMinutes > 0
+                    ? $"DiTre:{lateMinutes}"
+                    : "DungGio";
+
+        var checkOutStatus =
+            !checkOutTime.HasValue
+                ? "ChuaKetThuc"
+                : earlyLeaveMinutes > 0
+                    ? $"VeSom:{earlyLeaveMinutes}"
+                    : "DuGio";
+
+        var attendanceStatus =
+            !checkInTime.HasValue
+                ? "ChuaDiemDanh"
+                : !checkOutTime.HasValue
+                    ? lateMinutes > 0
+                        ? "DangLam_DiTre"
+                        : "DangLam_DungGio"
+                    : lateMinutes > 0 &&
+                        earlyLeaveMinutes > 0
+                        ? "DiTre_VeSom"
+                        : lateMinutes > 0
+                            ? "DiTre"
+                            : earlyLeaveMinutes > 0
+                                ? "VeSom"
+                                : "DungGio_DuGio";
+
+        return new AttendanceStatusResult(
+            lateMinutes,
+            earlyLeaveMinutes,
+            checkInStatus,
+            checkOutStatus,
+            attendanceStatus
+        );
+    }
+
     private static string FormatSqlTime(
         object value)
     {
@@ -871,6 +1090,15 @@ public class AttendanceController : ControllerBase
         DateTime? CheckInTime,
         DateTime? CheckOutTime,
         DateTime ShiftStartTime,
+        DateTime ShiftEndTime,
         DateTime DatabaseNow
+    );
+
+    private sealed record AttendanceStatusResult(
+        int LateMinutes,
+        int EarlyLeaveMinutes,
+        string CheckInStatus,
+        string CheckOutStatus,
+        string AttendanceStatus
     );
 }
