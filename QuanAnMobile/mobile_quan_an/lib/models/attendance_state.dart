@@ -65,9 +65,18 @@ class ShiftRecord {
           json['endTime']?.toString() ??
               '17:00',
       lateMinutes:
-          _parseInt(json['lateMinutes']),
+          int.tryParse(
+                json['lateMinutes']?.toString() ??
+                    '',
+              ) ??
+              0,
       earlyLeaveMinutes:
-          _parseInt(json['earlyLeaveMinutes']),
+          int.tryParse(
+                json['earlyLeaveMinutes']
+                        ?.toString() ??
+                    '',
+              ) ??
+              0,
       checkInStatus:
           json['checkInStatus']?.toString() ??
               'DungGio',
