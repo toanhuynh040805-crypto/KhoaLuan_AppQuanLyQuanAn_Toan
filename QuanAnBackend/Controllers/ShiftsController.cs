@@ -30,7 +30,12 @@ public record ShiftAssignmentDto(
     List<string> AreaNames,
     AssignmentStatus Status,
     DateTime? CheckInTime,
-    DateTime? CheckOutTime);
+    DateTime? CheckOutTime,
+    int LateMinutes,
+    int EarlyLeaveMinutes,
+    string CheckInStatus,
+    string CheckOutStatus,
+    string AttendanceStatus);
 
 [ApiController]
 [Route("api/[controller]")]
@@ -729,6 +734,103 @@ public class ShiftsController : ControllerBase
             .ToListAsync();
     }
 
+    private sealed record PunctualityStatus(
+        int LateMinutes,
+        int EarlyLeaveMinutes,
+        string CheckInStatus,
+        string CheckOutStatus,
+        string AttendanceStatus);
+
+    private static PunctualityStatus
+        BuildPunctualityStatus(
+            AssignmentStatus status,
+            DateTime shiftStart,
+            DateTime shiftEnd,
+            DateTime? checkInTime,
+            DateTime? checkOutTime)
+    {
+        if (status ==
+            AssignmentStatus.VangMat)
+        {
+            return new PunctualityStatus(
+                0,
+                0,
+                "VangMat",
+                "KhongApDung",
+                "VangMat"
+            );
+        }
+
+        var lateMinutes = 0;
+        var earlyLeaveMinutes = 0;
+
+        if (checkInTime.HasValue &&
+            checkInTime.Value > shiftStart)
+        {
+            lateMinutes = Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    (
+                        checkInTime.Value -
+                        shiftStart
+                    ).TotalMinutes
+                )
+            );
+        }
+
+        if (checkOutTime.HasValue &&
+            checkOutTime.Value < shiftEnd)
+        {
+            earlyLeaveMinutes = Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    (
+                        shiftEnd -
+                        checkOutTime.Value
+                    ).TotalMinutes
+                )
+            );
+        }
+
+        var checkInStatus =
+            !checkInTime.HasValue
+                ? "ChuaDiemDanh"
+                : lateMinutes > 0
+                    ? $"DiTre:{lateMinutes}"
+                    : "DungGio";
+
+        var checkOutStatus =
+            !checkOutTime.HasValue
+                ? "ChuaKetThuc"
+                : earlyLeaveMinutes > 0
+                    ? $"VeSom:{earlyLeaveMinutes}"
+                    : "DuGio";
+
+        var attendanceStatus =
+            !checkInTime.HasValue
+                ? "ChuaDiemDanh"
+                : !checkOutTime.HasValue
+                    ? lateMinutes > 0
+                        ? "DangLam_DiTre"
+                        : "DangLam_DungGio"
+                    : lateMinutes > 0 &&
+                        earlyLeaveMinutes > 0
+                        ? "DiTre_VeSom"
+                        : lateMinutes > 0
+                            ? "DiTre"
+                            : earlyLeaveMinutes > 0
+                                ? "VeSom"
+                                : "DungGio_DuGio";
+
+        return new PunctualityStatus(
+            lateMinutes,
+            earlyLeaveMinutes,
+            checkInStatus,
+            checkOutStatus,
+            attendanceStatus
+        );
+    }
+
     private static ShiftAssignmentDto
         ToAssignmentDto(
             ShiftAssignment a)
@@ -775,6 +877,36 @@ public class ShiftsController : ControllerBase
                     }
                     : new List<string>();
 
+        var workDate =
+            a.WorkDate.ToDateTime(
+                TimeOnly.MinValue
+            );
+
+        var shiftStart =
+            workDate +
+            (a.Shift?.StartTime ??
+                TimeSpan.Zero);
+
+        var shiftEnd =
+            workDate +
+            (a.Shift?.EndTime ??
+                TimeSpan.Zero);
+
+        if (shiftEnd <= shiftStart)
+        {
+            shiftEnd =
+                shiftEnd.AddDays(1);
+        }
+
+        var punctuality =
+            BuildPunctualityStatus(
+                a.Status,
+                shiftStart,
+                shiftEnd,
+                a.CheckInTime,
+                a.CheckOutTime
+            );
+
         return new ShiftAssignmentDto(
             a.ShiftAssignmentId,
             a.Employee?.User
@@ -787,9 +919,7 @@ public class ShiftsController : ControllerBase
                 TimeSpan.Zero,
             a.Shift?.EndTime ??
                 TimeSpan.Zero,
-            a.WorkDate.ToDateTime(
-                TimeOnly.MinValue
-            ),
+            workDate,
             areaIds
                 .Cast<int?>()
                 .FirstOrDefault(),
@@ -798,7 +928,12 @@ public class ShiftsController : ControllerBase
             areaNames,
             a.Status,
             a.CheckInTime,
-            a.CheckOutTime
+            a.CheckOutTime,
+            punctuality.LateMinutes,
+            punctuality.EarlyLeaveMinutes,
+            punctuality.CheckInStatus,
+            punctuality.CheckOutStatus,
+            punctuality.AttendanceStatus
         );
     }
 }
