@@ -697,16 +697,21 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       ),
     );
 
-    fullName.dispose();
-    employeeCode.dispose();
-    username.dispose();
-    password.dispose();
-    confirmPassword.dispose();
-    phone.dispose();
-    email.dispose();
-
+    // Không dispose controller tại đây: Future của modal có thể hoàn tất
+    // trong lúc animation đóng BottomSheet vẫn còn render vài frame cuối.
+    // Dispose ngay lúc này có thể làm TextField đọc controller đã dispose
+    // và kích hoạt ErrorWidget toàn màn hình.
     if (saved == true) {
+      // Chờ BottomSheet hoàn tất frame đóng trước khi reload danh sách.
+      await Future<void>.delayed(
+        const Duration(milliseconds: 250),
+      );
+
+      if (!mounted) return;
+
       await _reloadEmployees();
+
+      if (!mounted) return;
 
       _show(
         'Đã tạo nhân viên mới',
