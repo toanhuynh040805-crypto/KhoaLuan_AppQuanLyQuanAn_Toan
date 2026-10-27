@@ -431,32 +431,21 @@ public partial class OrderManagementControl : UserControl
         };
         row.Height = ItemRowPanel.HeightFor(note.Length > 0);
 
-        // Đồng bộ Mobile: món Mới gọi có SL > 1 thì giảm từng 1;
-        // khi chỉ còn SL = 1 mới chuyển sang hủy toàn bộ món.
+        // Món Mới gọi có thể mở hộp chỉnh số lượng rồi xác nhận.
         if (orderStatus == 0 && statusIndex == 0)
         {
-            var canDecrease = item.Quantity > 1;
             var btn = new Button
             {
-                Text = canDecrease ? "Giảm 1" : "Hủy món",
+                Text = "Sửa SL",
                 Size = new Size(76, 26),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.White,
-                ForeColor = canDecrease ? AppColors.Primary : AppColors.Error,
+                ForeColor = AppColors.Primary,
                 Font = FontCaption,
                 Cursor = Cursors.Hand,
             };
-            btn.FlatAppearance.BorderColor =
-                canDecrease ? AppColors.Primary : AppColors.Error;
-
-            btn.Click += async (s, e) =>
-            {
-                if (item.Quantity > 1)
-                    await DecrementItemAsync(item, btn);
-                else
-                    await CancelItemAsync(item, btn);
-            };
-
+            btn.FlatAppearance.BorderColor = AppColors.Primary;
+            btn.Click += async (s, e) => await EditItemQuantityAsync(item, btn);
             row.AttachCancelButton(btn);
         }
         return row;
@@ -486,39 +475,149 @@ public partial class OrderManagementControl : UserControl
         }
     }
 
-    private async Task DecrementItemAsync(OrderItemDto item, Button btn)
+    private async Task EditItemQuantityAsync(
+        OrderItemDto item,
+        Button sourceButton)
     {
-        if (item.Quantity <= 1)
+        using var dialog = new Form
         {
-            await CancelItemAsync(item, btn);
-            return;
-        }
+            Text = $"Chỉnh món - {item.MenuItem?.Name ?? "Món"}",
+            Width = 380,
+            Height = 230,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White,
+        };
 
-        btn.Enabled = false;
-
-        try
+        var lblName = new Label
         {
-            var newQuantity =
-                await _api.DecrementOrderItemQuantityAsync(item.Id);
+            Text = item.MenuItem?.Name ?? "(Món đã xóa)",
+            Font = AppFonts.HeadlineSm,
+            Location = new Point(20, 18),
+            Size = new Size(320, 30),
+            AutoEllipsis = true,
+        };
 
-            await LoadOrdersAsync();
-
-            MessageBox.Show(
-                $"Đã giảm \"{item.MenuItem?.Name}\" còn {newQuantity} phần.",
-                "Cập nhật số lượng",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-        catch (Exception ex)
+        var lblQty = new Label
         {
-            MessageBox.Show(
-                $"Không giảm được số lượng món: {ex.Message}",
-                "Lỗi / Cảnh báo",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+            Text = "Số lượng",
+            Font = AppFonts.BodyMd,
+            Location = new Point(20, 64),
+            AutoSize = true,
+        };
 
-            btn.Enabled = true;
-        }
+        var quantity = new NumericUpDown
+        {
+            Minimum = 1,
+            Maximum = 99,
+            Value = Math.Clamp(item.Quantity, 1, 99),
+            Location = new Point(120, 60),
+            Width = 110,
+            Font = AppFonts.LabelLg,
+            TextAlign = HorizontalAlignment.Center,
+        };
+
+        var btnCancelItem = new Button
+        {
+            Text = "Hủy món",
+            Location = new Point(20, 120),
+            Size = new Size(120, 36),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.White,
+            ForeColor = AppColors.Error,
+            Font = AppFonts.LabelLg,
+        };
+        btnCancelItem.FlatAppearance.BorderColor = AppColors.Error;
+
+        var btnSave = new Button
+        {
+            Text = "Lưu",
+            Location = new Point(220, 120),
+            Size = new Size(120, 36),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+            Font = AppFonts.LabelLg,
+        };
+        btnSave.FlatAppearance.BorderSize = 0;
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblName,
+            lblQty,
+            quantity,
+            btnCancelItem,
+            btnSave,
+        });
+
+        btnSave.Click += async (s, e) =>
+        {
+            btnSave.Enabled = false;
+            btnCancelItem.Enabled = false;
+
+            try
+            {
+                await _api.UpdateOrderItemQuantityAsync(
+                    item.Id,
+                    (int)quantity.Value);
+
+                dialog.Close();
+                await LoadOrdersAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Không cập nhật được số lượng món: {ex.Message}",
+                    "Lỗi / Cảnh báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                btnSave.Enabled = true;
+                btnCancelItem.Enabled = true;
+            }
+        };
+
+        btnCancelItem.Click += async (s, e) =>
+        {
+            var reason = PromptForCancelReason(
+                "Hủy món",
+                $"Nhập lý do hủy món \"{item.MenuItem?.Name}\":");
+
+            if (string.IsNullOrWhiteSpace(reason))
+                return;
+
+            btnSave.Enabled = false;
+            btnCancelItem.Enabled = false;
+
+            try
+            {
+                await _api.CancelOrderItemAsync(
+                    item.Id,
+                    _userId,
+                    reason,
+                    item.RowVer);
+
+                dialog.Close();
+                await LoadOrdersAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Không hủy được món: {ex.Message}",
+                    "Lỗi / Cảnh báo",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                btnSave.Enabled = true;
+                btnCancelItem.Enabled = true;
+            }
+        };
+
+        sourceButton.Enabled = false;
+        dialog.ShowDialog(this);
+        sourceButton.Enabled = true;
     }
 
     private async Task CancelItemAsync(OrderItemDto item, Button btn)
