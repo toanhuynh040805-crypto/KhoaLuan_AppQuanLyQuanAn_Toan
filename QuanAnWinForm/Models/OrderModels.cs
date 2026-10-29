@@ -273,4 +273,6 @@ public class PaymentPreviewOrderDto
     public string BankAccountName { get; set; } = "";
     public string BankBranch { get; set; } = "";
     public string TransferContent { get; set; } = "";
+    public string ShopName { get; set; } = "";
+    public string ShopAddress { get; set; } = "";
 }
