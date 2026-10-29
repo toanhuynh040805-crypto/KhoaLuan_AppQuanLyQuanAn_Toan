@@ -39,6 +39,11 @@ public class Invoice
     public int? RequestedByUserId { get; set; }
     public User? RequestedByUser { get; set; }
 
+    // Người thực sự bấm xác nhận thanh toán (Thu ngân/Quản lý).
+    // Tách riêng khỏi CreatedBy legacy để không còn nhập nhằng ý nghĩa.
+    public int? ConfirmedByUserId { get; set; }
+    public User? ConfirmedByUser { get; set; }
+
     public byte[]? RowVer { get; set; }
 
     public ICollection<Payment> Payments { get; set; } = new List<Payment>();
