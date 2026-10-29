@@ -136,11 +136,7 @@ public class ApiService
         using var response = await _http.GetAsync(url);
         if (!response.IsSuccessStatusCode)
         {
-            var message = await ReadErrorAsync(response);
-            throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(message)
-                    ? $"Không tải được QR ({(int)response.StatusCode})."
-                    : message);
+            await EnsureSuccessOrThrowMessageAsync(response);
         }
 
         return await response.Content.ReadAsByteArrayAsync();
