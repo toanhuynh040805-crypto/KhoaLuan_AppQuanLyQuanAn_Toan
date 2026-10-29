@@ -194,6 +194,55 @@ public class WinFormsCompatibilitySchemaService
                 SET OrderType = N'TaiBan'
                 WHERE OrderType IS NULL OR LTRIM(RTRIM(OrderType)) = N'';
             END;
+
+            -- Backfill actor audit cho dữ liệu đã có trước bản nâng cấp.
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'CreatedBy') IS NOT NULL
+            BEGIN
+                UPDATE dbo.Invoices
+                SET ConfirmedByUserId = CreatedBy
+                WHERE ConfirmedByUserId IS NULL
+                  AND CreatedBy IS NOT NULL;
+            END;
+
+            IF OBJECT_ID(N'dbo.Notifications', N'U') IS NOT NULL
+               AND OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedAt') IS NOT NULL
+            BEGIN
+                UPDATE o
+                SET
+                    PaymentRequestedByUserId = req.TargetUserId,
+                    PaymentRequestedAt = req.CreatedAt
+                FROM dbo.Orders o
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        n.TargetUserId,
+                        n.CreatedAt
+                    FROM dbo.Notifications n
+                    WHERE n.Title = N'Đã gửi yêu cầu thanh toán'
+                      AND n.RelatedEntityType = N'Order'
+                      AND n.RelatedEntityId = o.OrderId
+                      AND n.TargetUserId IS NOT NULL
+                    ORDER BY n.CreatedAt DESC, n.NotificationId DESC
+                ) req
+                WHERE o.PaymentRequestedByUserId IS NULL
+                  AND req.TargetUserId IS NOT NULL;
+            END;
+
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+            BEGIN
+                UPDATE i
+                SET RequestedByUserId = o.PaymentRequestedByUserId
+                FROM dbo.Invoices i
+                INNER JOIN dbo.Orders o ON o.OrderId = i.OrderId
+                WHERE i.RequestedByUserId IS NULL
+                  AND o.PaymentRequestedByUserId IS NOT NULL;
+            END;
             """);
 
         // Phase 4: constraints/indexes for the completed Orders schema.
