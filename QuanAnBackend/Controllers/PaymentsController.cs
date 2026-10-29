@@ -458,7 +458,10 @@ public class PaymentsController : ControllerBase
         {
             orderId = order.OrderId,
             tableId = request.TableId,
-            requestedByUserId = requesterUserId
+            requestedByUserId = requesterUserId,
+            requestedAt = order.PaymentRequestedAt,
+            lockUntil = order.PaymentRequestedAt?.AddMinutes(5),
+            retryAfterSeconds = 300
         });
     }
 
