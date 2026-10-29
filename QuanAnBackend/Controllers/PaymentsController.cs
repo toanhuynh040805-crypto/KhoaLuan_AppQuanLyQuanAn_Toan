@@ -154,6 +154,44 @@ public class PaymentsController : ControllerBase
         ));
     }
 
+    // Dùng cho bill tạm tính WinForms khi giỏ hàng có món chưa lưu.
+    // Amount chỉ dùng để dựng QR xem trước, không dùng để ghi Payment.
+    [HttpGet("receipt-preview")]
+    public IActionResult ReceiptPreview(
+        [FromQuery] decimal amount,
+        [FromQuery] int orderId = 0)
+    {
+        if (amount < 0)
+            return BadRequest(new { message = "Số tiền không hợp lệ" });
+
+        var referenceOrderId = Math.Max(0, orderId);
+        var transferContent = referenceOrderId > 0
+            ? ReceiptProfile.TransferContent(referenceOrderId)
+            : "THANH TOAN TAM TINH";
+
+        var roundedAmount = decimal.ToInt64(
+            decimal.Round(amount, 0, MidpointRounding.AwayFromZero));
+        var description = Uri.EscapeDataString(transferContent);
+        var accountName = Uri.EscapeDataString(ReceiptProfile.BankAccountName);
+        var qrImageUrl =
+            $"https://img.vietqr.io/image/{ReceiptProfile.BankCode}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
+            $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
+
+        return Ok(new
+        {
+            orderId = referenceOrderId,
+            totalAmount = amount,
+            qrImageUrl,
+            bankName = ReceiptProfile.BankCode,
+            bankAccountNo = ReceiptProfile.BankAccountNo,
+            bankAccountName = ReceiptProfile.BankAccountName,
+            bankBranch = ReceiptProfile.BankBranch,
+            transferContent,
+            shopName = ReceiptProfile.ShopName,
+            shopAddress = ReceiptProfile.ShopAddress
+        });
+    }
+
     // WinForms: xem trước đúng số tiền trước khi xác nhận QR.
     // Chưa tạo Invoice/Payment ở bước này.
     [HttpGet("preview/order/{orderId:int}")]
