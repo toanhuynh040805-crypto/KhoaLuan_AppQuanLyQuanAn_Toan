@@ -1,6 +1,8 @@
 class PaymentPreview {
   final int orderId;
   final int tableId;
+  final DateTime? orderTime;
+  final String waiterName;
   final int subTotal;
   final double discountPercent;
   final int discountAmount;
@@ -11,9 +13,20 @@ class PaymentPreview {
   final int vipMinimumGap;
   final int totalAmount;
 
+  final String qrImageUrl;
+  final String bankName;
+  final String bankAccountNo;
+  final String bankAccountName;
+  final String bankBranch;
+  final String transferContent;
+  final String shopName;
+  final String shopAddress;
+
   const PaymentPreview({
     required this.orderId,
     required this.tableId,
+    this.orderTime,
+    required this.waiterName,
     required this.subTotal,
     required this.discountPercent,
     required this.discountAmount,
@@ -23,6 +36,14 @@ class PaymentPreview {
     required this.vipRoomFee,
     required this.vipMinimumGap,
     required this.totalAmount,
+    required this.qrImageUrl,
+    required this.bankName,
+    required this.bankAccountNo,
+    required this.bankAccountName,
+    required this.bankBranch,
+    required this.transferContent,
+    required this.shopName,
+    required this.shopAddress,
   });
 
   factory PaymentPreview.fromJson(
@@ -31,6 +52,11 @@ class PaymentPreview {
     return PaymentPreview(
       orderId: _parseInt(json['orderId']),
       tableId: _parseInt(json['tableId']),
+      orderTime: DateTime.tryParse(
+        json['orderTime']?.toString() ?? '',
+      ),
+      waiterName:
+          json['waiterName']?.toString() ?? '',
       subTotal: _parseInt(json['subTotal']),
       discountPercent:
           _parseDouble(json['discountPercent']),
@@ -49,6 +75,22 @@ class PaymentPreview {
       vipMinimumGap:
           _parseInt(json['vipMinimumGap']),
       totalAmount: _parseInt(json['totalAmount']),
+      qrImageUrl:
+          json['qrImageUrl']?.toString() ?? '',
+      bankName:
+          json['bankName']?.toString() ?? '',
+      bankAccountNo:
+          json['bankAccountNo']?.toString() ?? '',
+      bankAccountName:
+          json['bankAccountName']?.toString() ?? '',
+      bankBranch:
+          json['bankBranch']?.toString() ?? '',
+      transferContent:
+          json['transferContent']?.toString() ?? '',
+      shopName:
+          json['shopName']?.toString() ?? 'Quán Ăn GustoPOS',
+      shopAddress:
+          json['shopAddress']?.toString() ?? '',
     );
   }
 
