@@ -67,6 +67,18 @@ public class WinFormsCompatibilitySchemaService
                AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NULL
                 ALTER TABLE dbo.Invoices ADD RequestedByUserId INT NULL;
 
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NULL
+                ALTER TABLE dbo.Invoices ADD ConfirmedByUserId INT NULL;
+
+            IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NULL
+                ALTER TABLE dbo.Orders ADD PaymentRequestedByUserId INT NULL;
+
+            IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedAt') IS NULL
+                ALTER TABLE dbo.Orders ADD PaymentRequestedAt DATETIME2 NULL;
+
             IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
             BEGIN
                 IF EXISTS (
@@ -118,6 +130,22 @@ public class WinFormsCompatibilitySchemaService
                 ALTER TABLE dbo.Invoices
                     ADD CONSTRAINT FK_Invoices_RequestedByUser
                     FOREIGN KEY (RequestedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF OBJECT_ID(N'dbo.FK_Invoices_ConfirmedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Invoices
+                    ADD CONSTRAINT FK_Invoices_ConfirmedByUser
+                    FOREIGN KEY (ConfirmedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF OBJECT_ID(N'dbo.FK_Orders_PaymentRequestedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Orders
+                    ADD CONSTRAINT FK_Orders_PaymentRequestedByUser
+                    FOREIGN KEY (PaymentRequestedByUserId) REFERENCES dbo.Users(UserId);
             END;
 
             IF NOT EXISTS (
