@@ -88,7 +88,7 @@ class PaymentPreview {
       transferContent:
           json['transferContent']?.toString() ?? '',
       shopName:
-          json['shopName']?.toString() ?? 'Quán Ăn GustoPOS',
+          json['shopName']?.toString() ?? 'Lẩu Bò Nhà Gỗ Sài Gòn',
       shopAddress:
           json['shopAddress']?.toString() ?? '',
     );
