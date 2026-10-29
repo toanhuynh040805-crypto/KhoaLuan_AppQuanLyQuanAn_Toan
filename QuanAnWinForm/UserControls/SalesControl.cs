@@ -953,7 +953,7 @@ public partial class SalesControl : UserControl
             {
                 var invoiceDetail = await _api.GetInvoiceAsync(payment.InvoiceId);
                 if (invoiceDetail is not null)
-                    ShowInvoiceReceiptDialog(invoiceDetail);
+                    await ShowInvoiceReceiptDialogAsync(invoiceDetail);
                 else
                     MessageBox.Show($"Đã thanh toán thành công. Tổng tiền: {payment.TotalAmount:N0}đ");
             }
@@ -1135,93 +1135,196 @@ public partial class SalesControl : UserControl
     // Hoa don day du kieu bien lai: liet ke tung mon (da loai bo mon bi huy o
     // Backend), tam tinh/giam gia/thue/tong cong, phuong thuc + thoi diem thanh
     // toan. Dung chung cho ca 2 luong: vua thanh toan xong VA tra cuu lai tu lich su.
-    private void ShowInvoiceReceiptDialog(InvoiceDetailDto invoice)
+    private async Task ShowInvoiceReceiptDialogAsync(
+        InvoiceDetailDto invoice)
     {
         using var dialog = new Form
         {
-            Text = $"Hóa đơn #{invoice.Id}",
-            ClientSize = new Size(480, 660),
+            Text = $"Bill #{invoice.Id}",
+            ClientSize = new Size(460, 790),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
+            BackColor = Color.FromArgb(238, 238, 238),
         };
 
-        var lblShop = new Label { Text = "QUÁN ĂN - HÓA ĐƠN THANH TOÁN", Font = AppFonts.LabelLg, Location = new Point(20, 16), AutoSize = true };
-
-        var statusIndex = Math.Clamp(invoice.Status, 0, InvoiceStatusLabels.Length - 1);
-        var lblStatus = new Label
+        var paper = new Panel
         {
-            Text = InvoiceStatusLabels[statusIndex],
-            Font = AppFonts.LabelMd,
-            ForeColor = statusIndex == 1 ? AppColors.Success : AppColors.Outline,
-            Location = new Point(20, 42),
-            AutoSize = true,
+            Location = new Point(18, 14),
+            Size = new Size(424, 720),
+            BackColor = Color.White,
+            AutoScroll = true,
+        };
+        dialog.Controls.Add(paper);
+
+        var shopName = new Label
+        {
+            Text = string.IsNullOrWhiteSpace(invoice.ShopName)
+                ? "Quán Ăn GustoPOS"
+                : invoice.ShopName,
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(12, 14),
+            Size = new Size(400, 30),
         };
 
-        var lblMeta = new Label
+        var shopAddress = new Label
         {
-            Text = $"{(invoice.TableName.StartsWith("Mang về") ? invoice.TableName : $"Bàn: {invoice.TableName}")}    Thu ngân: {invoice.CashierName}\n{invoice.InvoiceDate:HH:mm dd/MM/yyyy}",
+            Text = invoice.ShopAddress,
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(20, 68),
-            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 44),
+            Size = new Size(384, 34),
+        };
+
+        var lblTitle = new Label
+        {
+            Text = "HÓA ĐƠN THANH TOÁN",
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(12, 82),
+            Size = new Size(400, 30),
+        };
+
+        var paymentTime = invoice.Payments
+            .OrderBy(p => p.PaymentTime)
+            .LastOrDefault()?.PaymentTime
+            ?? invoice.InvoiceDate;
+
+        var meta = new Label
+        {
+            Text =
+                $"Số HĐ: #{invoice.Id}\n" +
+                $"Bàn: {invoice.TableName}    Ngày: {paymentTime:dd/MM/yyyy}\n" +
+                $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {paymentTime:HH:mm}\n" +
+                $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}\n" +
+                $"Thu ngân: {(string.IsNullOrWhiteSpace(invoice.CashierName) ? "-" : invoice.CashierName)}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurface,
+            Location = new Point(20, 118),
+            Size = new Size(384, 88),
         };
 
         var flowItems = new FlowLayoutPanel
         {
-            Location = new Point(20, 120),
-            Size = new Size(440, 340),
+            Location = new Point(20, 214),
+            Size = new Size(384, 230),
             AutoScroll = true,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.White,
         };
 
         if (invoice.Items.Count == 0)
         {
-            flowItems.Controls.Add(new Label { Text = "(Không có món nào)", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(6) });
+            flowItems.Controls.Add(new Label
+            {
+                Text = "(Không có món nào)",
+                Font = AppFonts.BodyMd,
+                ForeColor = AppColors.OnSurfaceVariant,
+                AutoSize = true,
+                Margin = new Padding(6),
+            });
         }
         else
         {
             foreach (var line in invoice.Items)
-                flowItems.Controls.Add(BuildInvoiceLineRow(line, !string.Equals(invoice.OrderType, "MangVe", StringComparison.OrdinalIgnoreCase)));
+                flowItems.Controls.Add(
+                    BuildInvoiceLineRow(
+                        line,
+                        !string.Equals(
+                            invoice.OrderType,
+                            "MangVe",
+                            StringComparison.OrdinalIgnoreCase)));
         }
 
-        var lblSubtotal = new Label { Text = $"Tạm tính:            {invoice.SubTotal:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 474), AutoSize = true };
-        var lblDiscount = new Label { Text = $"Giảm giá:            {invoice.DiscountAmount:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 498), AutoSize = true };
-        var lblTax = new Label { Text = $"Thuế:                 {invoice.TaxAmount:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 522), AutoSize = true };
-        var lblTotal = new Label { Text = $"TỔNG CỘNG: {invoice.TotalAmount:N0}đ", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(20, 550), AutoSize = true };
-
-        var paymentText = invoice.Payments.Count == 0
-            ? "Chưa ghi nhận thanh toán"
-            : string.Join(", ", invoice.Payments.Select(p =>
-                $"{PaymentMethodLabels[Math.Clamp(p.Method, 0, PaymentMethodLabels.Length - 1)]} · {p.Amount:N0}đ · {p.PaymentTime:HH:mm dd/MM}"));
-        var lblPayment = new Label
+        var totalQty = invoice.Items.Sum(x => x.Quantity);
+        var lblTotals = new Label
         {
-            Text = $"Thanh toán: {paymentText}",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(20, 588),
-            MaximumSize = new Size(440, 0),
-            AutoSize = true,
+            Text =
+                $"Tổng số món: {totalQty:N0}\n" +
+                $"Tạm tính: {invoice.SubTotal:N0}đ\n" +
+                (invoice.DiscountAmount > 0
+                    ? $"Giảm giá: -{invoice.DiscountAmount:N0}đ\n"
+                    : "") +
+                $"TỔNG TIỀN: {invoice.TotalAmount:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 454),
+            Size = new Size(384, invoice.DiscountAmount > 0 ? 82 : 64),
         };
 
-        var btnClose = new Button { Text = "Đóng", Location = new Point(170, 618), Size = new Size(140, 34), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var qrTop = invoice.DiscountAmount > 0 ? 542 : 524;
+        var picQr = new PictureBox
+        {
+            Location = new Point(122, qrTop),
+            Size = new Size(180, 180),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.White,
+        };
 
-        dialog.Controls.Add(lblShop);
-        dialog.Controls.Add(lblStatus);
-        dialog.Controls.Add(lblMeta);
-        dialog.Controls.Add(flowItems);
-        dialog.Controls.Add(lblSubtotal);
-        dialog.Controls.Add(lblDiscount);
-        dialog.Controls.Add(lblTax);
-        dialog.Controls.Add(lblTotal);
-        dialog.Controls.Add(lblPayment);
+        var lblBank = new Label
+        {
+            Text =
+                $"{invoice.BankAccountName}\n" +
+                $"{invoice.BankName} · {invoice.BankAccountNo}\n" +
+                $"{invoice.BankBranch}\n" +
+                $"Nội dung: {invoice.TransferContent}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, qrTop + 184),
+            Size = new Size(384, 72),
+        };
+
+        paper.Controls.Add(shopName);
+        paper.Controls.Add(shopAddress);
+        paper.Controls.Add(lblTitle);
+        paper.Controls.Add(meta);
+        paper.Controls.Add(flowItems);
+        paper.Controls.Add(lblTotals);
+        paper.Controls.Add(picQr);
+        paper.Controls.Add(lblBank);
+
+        if (!string.IsNullOrWhiteSpace(invoice.QrImageUrl))
+        {
+            try
+            {
+                using var http = new HttpClient();
+                var bytes = await http.GetByteArrayAsync(invoice.QrImageUrl);
+                using var ms = new MemoryStream(bytes);
+                using var raw = Image.FromStream(ms);
+                picQr.Image = new Bitmap(raw);
+            }
+            catch
+            {
+                picQr.Controls.Add(new Label
+                {
+                    Text = "Không tải được QR",
+                    Dock = DockStyle.Fill,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    ForeColor = AppColors.Error,
+                });
+            }
+        }
+
+        var btnClose = new Button
+        {
+            Text = "Đóng",
+            Location = new Point(150, 744),
+            Size = new Size(160, 36),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnClose.FlatAppearance.BorderSize = 0;
+
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
-
-        dialog.ShowDialog();
+        dialog.ShowDialog(FindForm());
     }
 
     private Panel BuildInvoiceLineRow(InvoiceLineDto line, bool showTakeawayTag = false)
@@ -1305,7 +1408,16 @@ public partial class SalesControl : UserControl
         row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
 
         var lblId = new Label { Text = $"Hóa đơn #{inv.Id}", Font = AppFonts.LabelLg, Location = new Point(12, 8), AutoSize = true, Cursor = Cursors.Hand };
-        var lblMeta = new Label { Text = $"{inv.TableName} · {inv.InvoiceDate:HH:mm}", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(12, 30), AutoSize = true, Cursor = Cursors.Hand };
+        var lblMeta = new Label
+        {
+            Text = $"{inv.TableName} · {inv.InvoiceDate:HH:mm} · PV: {(string.IsNullOrWhiteSpace(inv.WaiterName) ? "-" : inv.WaiterName)} · TN: {(string.IsNullOrWhiteSpace(inv.CashierName) ? "-" : inv.CashierName)}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(12, 30),
+            Size = new Size(260, 20),
+            AutoEllipsis = true,
+            Cursor = Cursors.Hand
+        };
         var lblTotal = new Label { Text = $"{inv.TotalAmount:N0}đ", Font = AppFonts.LabelLg, ForeColor = AppColors.Primary, Location = new Point(280, 16), AutoSize = true, Cursor = Cursors.Hand };
 
         row.Controls.Add(lblId);
@@ -1317,7 +1429,7 @@ public partial class SalesControl : UserControl
             try
             {
                 var detail = await _api.GetInvoiceAsync(inv.Id);
-                if (detail is not null) ShowInvoiceReceiptDialog(detail);
+                if (detail is not null) await ShowInvoiceReceiptDialogAsync(detail);
                 else MessageBox.Show("Không tìm thấy hóa đơn này.");
             }
             catch (Exception ex)
