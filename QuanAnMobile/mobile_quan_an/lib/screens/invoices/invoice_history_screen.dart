@@ -249,7 +249,7 @@ class _InvoiceHistoryScreenState
           shopName:
               detail['shopName']
                       ?.toString() ??
-                  'Quán Ăn GustoPOS',
+                  'Lẩu Bò Nhà Gỗ Sài Gòn',
           shopAddress:
               detail['shopAddress']
                       ?.toString() ??
