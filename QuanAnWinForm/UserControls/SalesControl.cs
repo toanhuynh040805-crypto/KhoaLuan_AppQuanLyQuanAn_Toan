@@ -912,15 +912,38 @@ public partial class SalesControl : UserControl
                 return;
             }
 
-            var payment = await _api.CreatePaymentAsync(orderId.Value, method, GetSelectedCampaignId(), _selectedCustomer?.Id);
+            var campaignId = GetSelectedCampaignId();
+            PaymentPreviewOrderDto? qrPreview = null;
+
+            if (method == 1)
+            {
+                qrPreview = await _api.GetPaymentPreviewAsync(
+                    orderId.Value,
+                    campaignId);
+
+                if (qrPreview is null)
+                {
+                    MessageBox.Show("Không tải được thông tin QR thanh toán.");
+                    return;
+                }
+
+                var confirmedTransfer = await ShowVietQrDialogAsync(qrPreview);
+                if (!confirmedTransfer)
+                    return;
+            }
+
+            var payment = await _api.CreatePaymentAsync(
+                orderId.Value,
+                method,
+                campaignId,
+                _selectedCustomer?.Id,
+                transactionRef: method == 1 ? qrPreview?.TransferContent : null);
+
             if (payment is null)
             {
                 MessageBox.Show("Thanh toán thất bại. Vui lòng thử lại.");
                 return;
             }
-
-            if (method == 1 && !string.IsNullOrEmpty(payment.QRCodeContent))
-                ShowVietQrDialog(payment.QRCodeContent, payment.TotalAmount);
 
             // Hien hoa don chi tiet (itemized) cho CA HAI phuong thuc thanh toan -
             // Backend da tao san Invoice + Payment trong CUNG 1 luot goi
@@ -975,22 +998,131 @@ public partial class SalesControl : UserControl
         }
     }
 
-    // Hien QR that nhan tu Backend (PaymentsController.GenerateVietQrPayload), khong con
-    // dung noi dung demo bia dat nhu truoc.
-    private void ShowVietQrDialog(string qrContent, decimal totalAmount)
+    // Hiển thị QR ngân hàng thật theo số tiền Backend vừa preview.
+    // Chỉ khi Thu ngân xác nhận đã nhận chuyển khoản thì mới tạo Payment/Invoice.
+    private async Task<bool> ShowVietQrDialogAsync(
+        PaymentPreviewOrderDto preview)
     {
-        using var generator = new QRCodeGenerator();
-        using var data = generator.CreateQrCode(qrContent, QRCodeGenerator.ECCLevel.Q);
-        using var qrCode = new PngByteQRCode(data);
-        var bytes = qrCode.GetGraphic(8);
-        using var ms = new MemoryStream(bytes);
+        using var dialog = new Form
+        {
+            Text = "Thanh toán QR / Chuyển khoản",
+            Width = 420,
+            Height = 610,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White,
+        };
 
-        using var dialog = new Form { Text = "Thanh toán VietQR", Width = 300, Height = 380, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false };
-        var pic = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Image = Image.FromStream(ms) };
-        var lblAmount = new Label { Text = $"{totalAmount:N0}đ", Dock = DockStyle.Bottom, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary };
-        dialog.Controls.Add(pic);
-        dialog.Controls.Add(lblAmount);
-        dialog.ShowDialog();
+        var lblTitle = new Label
+        {
+            Text = "QUÉT QR ĐỂ THANH TOÁN",
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 18),
+            Size = new Size(360, 30),
+        };
+
+        var pic = new PictureBox
+        {
+            Location = new Point(75, 58),
+            Size = new Size(260, 260),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+
+        var lblAmount = new Label
+        {
+            Text = $"{preview.TotalAmount:N0}đ",
+            Font = AppFonts.HeadlineSm,
+            ForeColor = AppColors.Primary,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 326),
+            Size = new Size(360, 34),
+        };
+
+        var lblBank = new Label
+        {
+            Text =
+                $"{preview.BankAccountName}\n" +
+                $"{preview.BankName} · {preview.BankAccountNo}\n" +
+                $"{preview.BankBranch}\n" +
+                $"Nội dung: {preview.TransferContent}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(30, 368),
+            Size = new Size(340, 90),
+        };
+
+        var lblHint = new Label
+        {
+            Text = "Chỉ bấm xác nhận sau khi đã kiểm tra tiền vào tài khoản.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.Error,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(30, 462),
+            Size = new Size(340, 42),
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(44, 515),
+            Size = new Size(130, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnConfirm = new Button
+        {
+            Text = "Đã nhận tiền",
+            DialogResult = DialogResult.OK,
+            Location = new Point(210, 515),
+            Size = new Size(150, 38),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnConfirm.FlatAppearance.BorderSize = 0;
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblTitle,
+            pic,
+            lblAmount,
+            lblBank,
+            lblHint,
+            btnCancel,
+            btnConfirm,
+        });
+
+        dialog.AcceptButton = btnConfirm;
+        dialog.CancelButton = btnCancel;
+
+        try
+        {
+            using var http = new HttpClient();
+            var bytes = await http.GetByteArrayAsync(preview.QrImageUrl);
+            using var ms = new MemoryStream(bytes);
+            using var raw = Image.FromStream(ms);
+            pic.Image = new Bitmap(raw);
+        }
+        catch
+        {
+            pic.Controls.Add(new Label
+            {
+                Text = "Không tải được QR.\nKiểm tra kết nối Internet.",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = AppColors.Error,
+            });
+            btnConfirm.Enabled = false;
+        }
+
+        return dialog.ShowDialog(FindForm()) == DialogResult.OK;
     }
 
     // =====================================================================
