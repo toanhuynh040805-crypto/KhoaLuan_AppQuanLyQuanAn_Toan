@@ -79,8 +79,7 @@ public class PaymentsController : ControllerBase
         var order = orderId.HasValue
             ? await _db.Orders
                 .AsNoTracking()
-                .Include(o => o.Employee)!
-                    .ThenInclude(e => e!.User)
+                .Include(o => o.PaymentRequestedByUser)
                 .FirstOrDefaultAsync(
                     o => o.OrderId == orderId.Value)
             : null;
@@ -101,33 +100,11 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
-        var requestedByUserId = await _db.Notifications
-            .AsNoTracking()
-            .Where(n =>
-                n.Title == "Đã gửi yêu cầu thanh toán" &&
-                n.RelatedEntityType == "Order" &&
-                n.RelatedEntityId == order.OrderId &&
-                n.TargetUserId.HasValue)
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => n.TargetUserId)
-            .FirstOrDefaultAsync();
-
-        string waiterName;
-        if (requestedByUserId.HasValue)
-        {
-            waiterName = await _db.Users
-                .AsNoTracking()
-                .Where(u => u.UserId == requestedByUserId.Value)
-                .Select(u => u.FullName)
-                .FirstOrDefaultAsync()
-                ?? "";
-        }
-        else
-        {
-            waiterName =
-                order.Employee?.User?.FullName
-                ?? "";
-        }
+        // Phục vụ chỉ là người thực sự bấm "Gọi thanh toán".
+        // Không fallback sang người tạo Order vì có thể là Quản lý mở bàn hộ.
+        var waiterName =
+            order.PaymentRequestedByUser?.FullName
+            ?? "";
 
         return Ok(new PaymentPreviewDto(
             order.OrderId,
@@ -275,8 +252,7 @@ public class PaymentsController : ControllerBase
     {
         var order = await _db.Orders
             .AsNoTracking()
-            .Include(o => o.Employee)!
-                .ThenInclude(e => e!.User)
+            .Include(o => o.PaymentRequestedByUser)
             .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
         if (order is null)
@@ -328,7 +304,7 @@ public class PaymentsController : ControllerBase
         {
             orderId,
             orderTime = order.OrderTime,
-            waiterName = order.Employee?.User?.FullName ?? "",
+            waiterName = order.PaymentRequestedByUser?.FullName ?? "",
             subTotal,
             discountAmount,
             totalAmount,
@@ -349,11 +325,22 @@ public class PaymentsController : ControllerBase
     public async Task<IActionResult> RequestPaymentForMobile(
         [FromBody] RequestPaymentRequest request)
     {
+        if (!int.TryParse(
+                User.FindFirstValue(ClaimTypes.NameIdentifier),
+                out var requesterUserId))
+        {
+            return Unauthorized(new
+            {
+                message = "Không xác định được tài khoản gọi thanh toán"
+            });
+        }
+
         var employee = await _db.Employees
-            .FirstOrDefaultAsync(e => e.EmployeeCode == request.EmployeeCode);
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.UserId == requesterUserId);
 
         if (employee is null)
-            return BadRequest(new { message = "Không tìm thấy nhân viên đang đăng nhập" });
+            return BadRequest(new { message = "Tài khoản hiện tại không gắn với nhân viên" });
 
         var requestOrderId = await FindOpenOrderIdForTableAsync(request.TableId);
                 var order = requestOrderId.HasValue
@@ -384,6 +371,11 @@ public class PaymentsController : ControllerBase
 
         var tableName = order.Table?.TableName ?? $"Bàn #{request.TableId}";
 
+        // Lưu audit ngay trên Order: đây là nguồn duy nhất để xác định "Phục vụ".
+        order.PaymentRequestedByUserId = requesterUserId;
+        order.PaymentRequestedAt = DateTime.Now;
+        await _db.SaveChangesAsync();
+
         await _notifications.CreateForPermissionAsync(
             "Yêu cầu thanh toán",
             $"{tableName} đang yêu cầu thanh toán",
@@ -397,7 +389,7 @@ public class PaymentsController : ControllerBase
             "Đã gửi yêu cầu thanh toán",
             $"{tableName} đã gửi yêu cầu thanh toán đến Thu ngân.",
             NotificationType.DonHang,
-            targetUserId: employee.UserId,
+            targetUserId: requesterUserId,
             relatedEntityType: "Order",
             relatedEntityId: order.OrderId
         );
@@ -414,7 +406,7 @@ public class PaymentsController : ControllerBase
         {
             orderId = order.OrderId,
             tableId = request.TableId,
-            requestedByUserId = employee.UserId
+            requestedByUserId = requesterUserId
         });
     }
 
@@ -440,25 +432,9 @@ public class PaymentsController : ControllerBase
             return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
         }
 
-        // Ưu tiên đúng người vừa gửi yêu cầu thanh toán của order.
-        // Nếu order được thanh toán trực tiếp tại quầy mà chưa qua bước yêu cầu,
-        // dùng nhân viên tạo order làm người phục vụ.
-        var requestedByUserId = await _db.Notifications
-            .AsNoTracking()
-            .Where(n =>
-                n.Title == "Đã gửi yêu cầu thanh toán" &&
-                n.RelatedEntityType == "Order" &&
-                n.RelatedEntityId == order.OrderId &&
-                n.TargetUserId.HasValue)
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => n.TargetUserId)
-            .FirstOrDefaultAsync();
-
-        requestedByUserId ??= await _db.Employees
-            .AsNoTracking()
-            .Where(e => e.EmployeeId == order.EmployeeId)
-            .Select(e => (int?)e.UserId)
-            .FirstOrDefaultAsync();
+        // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
+        // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
+        var requestedByUserId = order.PaymentRequestedByUserId;
 
         // Tinh truc tiep tu OrderItems de khong phu thuoc vao du lieu TotalAmount
         // cu/stale trong cac database da seed hoac nang cap truoc day.
@@ -544,8 +520,9 @@ public class PaymentsController : ControllerBase
             TaxAmount = 0,
             TotalAmount = netTotal,
             Status = InvoiceStatus.DaThanhToan,
-            CreatedBy = cashierUserId,
-            RequestedByUserId = requestedByUserId
+            CreatedBy = cashierUserId, // legacy compatibility
+            RequestedByUserId = requestedByUserId,
+            ConfirmedByUserId = cashierUserId
         };
         _db.Invoices.Add(invoice);
         await _db.SaveChangesAsync();
