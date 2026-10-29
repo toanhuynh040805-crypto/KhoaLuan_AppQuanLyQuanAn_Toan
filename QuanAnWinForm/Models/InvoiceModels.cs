@@ -30,6 +30,7 @@ public class InvoicePaymentInfoDto
 public class InvoiceDetailDto
 {
     public int Id { get; set; }
+    public int OrderId { get; set; }
     public DateTime InvoiceDate { get; set; }
     public DateTime? OrderTime { get; set; }
     public string TableName { get; set; } = "";
