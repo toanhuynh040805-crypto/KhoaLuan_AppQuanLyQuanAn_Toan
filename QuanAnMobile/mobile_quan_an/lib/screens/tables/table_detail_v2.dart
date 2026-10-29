@@ -67,6 +67,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
   String _tableLockLostMessage = '';
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
+  Timer? _paymentRequestLockTimer;
+  int _paymentRequestRemainingSeconds = 0;
 
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
@@ -113,6 +115,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
     isPaymentRequested = widget.initialPaymentRequested;
 
     unawaited(_loadMemberCustomer());
+    if (_canRequestPayment && !_canCompletePayment) {
+      unawaited(_loadPaymentRequestLock());
+    }
 
     _dishStatusSubscription = AppServices.realtimeService.dishStatusChanges
         .listen(_handleDishStatus);
@@ -136,12 +141,77 @@ class _TableDetailV2State extends State<TableDetailV2> {
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
+    _paymentRequestLockTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
     super.dispose();
   }
 
+  Future<void> _loadPaymentRequestLock() async {
+    try {
+      final int remaining = await AppServices.paymentService
+          .getPaymentRequestLockRemainingSeconds(
+        tableId: currentTable.id,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _paymentRequestRemainingSeconds = remaining;
+        isPaymentRequested = remaining > 0;
+      });
+
+      if (remaining > 0) {
+        _startPaymentRequestLockTimer();
+      }
+    } catch (_) {
+      // Không chặn màn bàn nếu endpoint trạng thái khóa tạm mất kết nối.
+    }
+  }
+
+  void _startPaymentRequestLockTimer() {
+    _paymentRequestLockTimer?.cancel();
+
+    if (_paymentRequestRemainingSeconds <= 0) {
+      if (mounted && !_canCompletePayment) {
+        setState(() => isPaymentRequested = false);
+      }
+      return;
+    }
+
+    _paymentRequestLockTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_paymentRequestRemainingSeconds <= 1) {
+          timer.cancel();
+          setState(() {
+            _paymentRequestRemainingSeconds = 0;
+            if (!_canCompletePayment) {
+              isPaymentRequested = false;
+            }
+          });
+          return;
+        }
+
+        setState(() {
+          _paymentRequestRemainingSeconds -= 1;
+        });
+      },
+    );
+  }
+
+  String get _paymentRequestCountdownLabel {
+    final int seconds = _paymentRequestRemainingSeconds;
+    final int minutes = seconds ~/ 60;
+    final int remain = seconds % 60;
+    return '$minutes:${remain.toString().padLeft(2, '0')}';
+  }
   Future<void> _heartbeatTableLock() async {
     final String token = widget.tableLockToken?.trim() ?? '';
     if (token.isEmpty || _closingAfterPayment || _tableLockLost) return;
@@ -341,6 +411,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _closingAfterPayment = true;
     paymentCompleted = true;
     isPaymentRequested = false;
+    _paymentRequestRemainingSeconds = 0;
+    _paymentRequestLockTimer?.cancel();
     orderItems.clear();
     currentAmount = 0;
 
@@ -972,7 +1044,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
 
     try {
-      await AppServices.paymentService.requestPayment(
+      final int lockSeconds =
+          await AppServices.paymentService.requestPayment(
         tableId: currentTable.id,
         employeeCode: appEmployee.employeeCode,
       );
@@ -981,7 +1054,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
       setState(() {
         isPaymentRequested = true;
+        _paymentRequestRemainingSeconds = lockSeconds;
       });
+      _startPaymentRequestLockTimer();
 
       TopMessage.show(
         context,
@@ -2351,9 +2426,13 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       ),
                     )
                   : isPaymentRequested
-                  ? const FilledButton(
+                  ? FilledButton(
                       onPressed: null,
-                      child: Text('Đang chờ Thu ngân xác nhận'),
+                      child: Text(
+                        _paymentRequestRemainingSeconds > 0
+                            ? 'Đang chờ Thu ngân ($_paymentRequestCountdownLabel)'
+                            : 'Đang chờ Thu ngân xác nhận',
+                      ),
                     )
                   : OutlinedButton(
                       onPressed:
