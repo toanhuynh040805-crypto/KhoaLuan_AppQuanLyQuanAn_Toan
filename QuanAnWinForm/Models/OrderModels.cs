@@ -264,6 +264,8 @@ public class OrderItemStatusResultDto
 public class PaymentPreviewOrderDto
 {
     public int OrderId { get; set; }
+    public DateTime? OrderTime { get; set; }
+    public string WaiterName { get; set; } = "";
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TotalAmount { get; set; }
