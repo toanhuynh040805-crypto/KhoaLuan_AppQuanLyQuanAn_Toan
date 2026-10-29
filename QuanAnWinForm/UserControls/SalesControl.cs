@@ -1273,20 +1273,28 @@ public partial class SalesControl : UserControl
 
         try
         {
-            var bytes = await _api.GetPaymentQrImageAsync(
-                preview.TotalAmount,
-                preview.OrderId);
+            if (string.IsNullOrWhiteSpace(preview.QrPayload))
+                throw new InvalidOperationException("Backend chưa trả payload VietQR.");
 
-            using var ms = new MemoryStream(bytes);
-            using var raw = Image.FromStream(ms);
-            pic.Image = new Bitmap(raw);
+            using var qrGenerator = new QRCodeGenerator();
+            using var qrData = qrGenerator.CreateQrCode(
+                preview.QrPayload,
+                QRCodeGenerator.ECCLevel.Q);
+            using var qrCode = new QRCode(qrData);
+
+            pic.Image?.Dispose();
+            pic.Image = qrCode.GetGraphic(
+                10,
+                Color.Black,
+                Color.White,
+                drawQuietZones: true);
         }
         catch (Exception ex)
         {
             pic.Controls.Add(new Label
             {
                 Text =
-                    "Không tải được QR.\n" +
+                    "Không tạo được QR.\n" +
                     ex.Message,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -1479,20 +1487,29 @@ public partial class SalesControl : UserControl
         {
             try
             {
-                var bytes = await _api.GetPaymentQrImageAsync(
-                    invoice.TotalAmount,
-                    invoice.OrderId);
+                var preview = await _api.GetPaymentPreviewAsync(invoice.OrderId);
+                if (preview is null || string.IsNullOrWhiteSpace(preview.QrPayload))
+                    throw new InvalidOperationException("Backend chưa trả payload VietQR.");
 
-                using var ms = new MemoryStream(bytes);
-                using var raw = Image.FromStream(ms);
-                picQr.Image = new Bitmap(raw);
+                using var qrGenerator = new QRCodeGenerator();
+                using var qrData = qrGenerator.CreateQrCode(
+                    preview.QrPayload,
+                    QRCodeGenerator.ECCLevel.Q);
+                using var qrCode = new QRCode(qrData);
+
+                picQr.Image?.Dispose();
+                picQr.Image = qrCode.GetGraphic(
+                    8,
+                    Color.Black,
+                    Color.White,
+                    drawQuietZones: true);
             }
             catch (Exception ex)
             {
                 picQr.Controls.Add(new Label
                 {
                     Text =
-                        "Không tải được QR.\n" +
+                        "Không tạo được QR.\n" +
                         ex.Message,
                     Dock = DockStyle.Fill,
                     TextAlign = ContentAlignment.MiddleCenter,
