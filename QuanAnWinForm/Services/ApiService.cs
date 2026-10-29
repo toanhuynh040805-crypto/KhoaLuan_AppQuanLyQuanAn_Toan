@@ -97,6 +97,19 @@ public class ApiService
         return res ?? new List<TakeawayOrderSummaryDto>();
     }
 
+    public async Task<PaymentPreviewOrderDto?> GetPaymentPreviewAsync(
+        int orderId,
+        int? campaignId = null)
+    {
+        var url = $"/api/payments/preview/order/{orderId}";
+        if (campaignId.HasValue)
+            url += $"?campaignId={campaignId.Value}";
+
+        return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
+            url,
+            JsonOpts);
+    }
+
     // customerId/redeemPoints (tùy chọn - BỔ SUNG cho module Khách hàng thân thiết):
     // gắn khách hàng thành viên vào hóa đơn này (tích điểm tự động) và/hoặc dùng
     // điểm sẵn có để giảm giá - xem PaymentsController.Create bên Backend.
