@@ -55,8 +55,10 @@ public class InvoicesController : ControllerBase
         // xác nhận thanh toán. Quản lý được xem toàn bộ.
         if (!IsManager)
         {
-            query = query.Where(
-                i => i.CreatedBy == currentUserId.Value);
+            query = query.Where(i =>
+                i.ConfirmedByUserId == currentUserId.Value ||
+                (i.ConfirmedByUserId == null &&
+                 i.CreatedBy == currentUserId.Value));
         }
 
         var rows = await query
@@ -77,17 +79,15 @@ public class InvoicesController : ControllerBase
                 i.TotalAmount,
                 Status = i.Status,
                 CashierName =
-                    i.CreatedByUser != null
-                        ? i.CreatedByUser.FullName
-                        : "",
+                    i.ConfirmedByUser != null
+                        ? i.ConfirmedByUser.FullName
+                        : i.CreatedByUser != null
+                            ? i.CreatedByUser.FullName
+                            : "",
                 WaiterName =
                     i.RequestedByUser != null
                         ? i.RequestedByUser.FullName
-                        : i.Order != null &&
-                          i.Order.Employee != null &&
-                          i.Order.Employee.User != null
-                            ? i.Order.Employee.User.FullName
-                            : ""
+                        : ""
             })
             .ToListAsync();
 
@@ -119,6 +119,7 @@ public class InvoicesController : ControllerBase
 
         var invoice = await _db.Invoices
             .Include(i => i.CreatedByUser)
+            .Include(i => i.ConfirmedByUser)
             .Include(i => i.RequestedByUser)
             .Include(i => i.Order)!
                 .ThenInclude(o => o!.Table)
@@ -137,7 +138,9 @@ public class InvoicesController : ControllerBase
             return NotFound();
 
         if (!IsManager &&
-            invoice.CreatedBy != currentUserId.Value)
+            invoice.ConfirmedByUserId != currentUserId.Value &&
+            !(invoice.ConfirmedByUserId is null &&
+              invoice.CreatedBy == currentUserId.Value))
         {
             return Forbid();
         }
@@ -151,11 +154,11 @@ public class InvoicesController : ControllerBase
 
         var waiterName =
             invoice.RequestedByUser?.FullName
-            ?? invoice.Order?.Employee?.User?.FullName
             ?? "";
 
         var cashierName =
-            invoice.CreatedByUser?.FullName
+            invoice.ConfirmedByUser?.FullName
+            ?? invoice.CreatedByUser?.FullName
             ?? "";
 
         return Ok(new
