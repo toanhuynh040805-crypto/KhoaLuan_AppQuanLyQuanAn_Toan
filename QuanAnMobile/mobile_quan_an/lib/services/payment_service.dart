@@ -9,17 +9,42 @@ class PaymentService {
     required ApiClient apiClient,
   }) : _apiClient = apiClient;
 
-  Future<void> requestPayment({
+  Future<int> requestPayment({
     required int tableId,
     required String employeeCode,
   }) async {
-    await _apiClient.post(
+    final dynamic response = await _apiClient.post(
       '/payments/request',
       body: {
         'tableId': tableId,
         'employeeCode': employeeCode,
       },
     );
+
+    if (response is Map) {
+      final dynamic value = response['retryAfterSeconds'];
+      if (value is int && value > 0) return value;
+      final int? parsed = int.tryParse(value?.toString() ?? '');
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    return 300;
+  }
+
+  Future<int> getPaymentRequestLockRemainingSeconds({
+    required int tableId,
+  }) async {
+    final dynamic response = await _apiClient.get(
+      '/mobile/payments/request-lock/$tableId',
+    );
+
+    if (response is! Map || response['isLocked'] != true) {
+      return 0;
+    }
+
+    final dynamic value = response['remainingSeconds'];
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   /// Lấy phương thức thanh toán từ backend dùng chung.
