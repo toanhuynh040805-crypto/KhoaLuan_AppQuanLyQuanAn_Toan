@@ -19,7 +19,9 @@ public static class ReceiptProfile
     public const string BankCode = BankName;
 
     public static string TransferContent(int orderId) =>
-        $"THANH TOAN HD{orderId}";
+        orderId > 0
+            ? $"THANH TOAN HD{orderId}"
+            : "THANH TOAN TAM TINH";
 
     public static string BuildVietQrPayload(
         decimal amount,
