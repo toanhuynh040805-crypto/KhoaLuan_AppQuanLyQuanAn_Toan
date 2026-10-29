@@ -68,6 +68,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
+  bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
@@ -150,19 +151,23 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
   Future<void> _loadPaymentRequestLock() async {
     try {
-      final int remaining = await AppServices.paymentService
-          .getPaymentRequestLockRemainingSeconds(
+      final PaymentRequestLockState state =
+          await AppServices.paymentService.getPaymentRequestLockState(
         tableId: currentTable.id,
       );
 
       if (!mounted) return;
 
       setState(() {
-        _paymentRequestRemainingSeconds = remaining;
-        isPaymentRequested = remaining > 0;
+        isPaymentRequested =
+            isPaymentRequested || state.hasRequest;
+        _paymentRequestLocked = state.isLocked;
+        _paymentRequestRemainingSeconds =
+            state.remainingSeconds;
       });
 
-      if (remaining > 0) {
+      if (state.isLocked &&
+          state.remainingSeconds > 0) {
         _startPaymentRequestLockTimer();
       }
     } catch (_) {
@@ -174,8 +179,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _paymentRequestLockTimer?.cancel();
 
     if (_paymentRequestRemainingSeconds <= 0) {
-      if (mounted && !_canCompletePayment) {
-        setState(() => isPaymentRequested = false);
+      if (mounted) {
+        setState(() => _paymentRequestLocked = false);
       }
       return;
     }
@@ -192,9 +197,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           timer.cancel();
           setState(() {
             _paymentRequestRemainingSeconds = 0;
-            if (!_canCompletePayment) {
-              isPaymentRequested = false;
-            }
+            _paymentRequestLocked = false;
           });
           return;
         }
@@ -411,6 +414,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _closingAfterPayment = true;
     paymentCompleted = true;
     isPaymentRequested = false;
+    _paymentRequestLocked = false;
     _paymentRequestRemainingSeconds = 0;
     _paymentRequestLockTimer?.cancel();
     orderItems.clear();
@@ -1054,6 +1058,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
       setState(() {
         isPaymentRequested = true;
+        _paymentRequestLocked = true;
         _paymentRequestRemainingSeconds = lockSeconds;
       });
       _startPaymentRequestLockTimer();
@@ -1065,10 +1070,18 @@ class _TableDetailV2State extends State<TableDetailV2> {
       );
     } on ApiException catch (error) {
       if (!mounted) return;
+
+      if (error.statusCode == 409) {
+        await _loadPaymentRequestLock();
+        if (!mounted) return;
+      }
+
       TopMessage.show(
         context,
         message: error.message,
-        type: TopMessageType.error,
+        type: error.statusCode == 409
+            ? TopMessageType.warning
+            : TopMessageType.error,
       );
     }
   }
@@ -2425,13 +2438,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
                             : 'Thanh toán',
                       ),
                     )
-                  : isPaymentRequested
+                  : _paymentRequestLocked
                   ? FilledButton(
                       onPressed: null,
                       child: Text(
-                        _paymentRequestRemainingSeconds > 0
-                            ? 'Đang chờ Thu ngân ($_paymentRequestCountdownLabel)'
-                            : 'Đang chờ Thu ngân xác nhận',
+                        'Đang chờ Thu ngân ($_paymentRequestCountdownLabel)',
                       ),
                     )
                   : OutlinedButton(
@@ -2442,9 +2453,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
                           ? _requestPayment
                           : null,
                       child: Text(
-                        _canRequestPayment
-                            ? 'Khách gọi thanh toán'
-                            : 'Không có quyền yêu cầu thanh toán',
+                        !_canRequestPayment
+                            ? 'Không có quyền yêu cầu thanh toán'
+                            : isPaymentRequested
+                                ? 'Gọi thanh toán lại'
+                                : 'Khách gọi thanh toán',
                       ),
                     ),
             ),
