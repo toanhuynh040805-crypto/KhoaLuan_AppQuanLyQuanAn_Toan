@@ -254,30 +254,14 @@ class _InvoiceHistoryScreenState
               detail['shopAddress']
                       ?.toString() ??
                   '',
-          bankName:
-              detail['bankName']
-                      ?.toString() ??
-                  '',
-          bankAccountNo:
-              detail['bankAccountNo']
-                      ?.toString() ??
-                  '',
-          bankAccountName:
-              detail['bankAccountName']
-                      ?.toString() ??
-                  '',
-          bankBranch:
-              detail['bankBranch']
-                      ?.toString() ??
-                  '',
-          transferContent:
-              detail['transferContent']
-                      ?.toString() ??
-                  '',
-          qrImageUrl:
-              detail['qrImageUrl']
-                      ?.toString() ??
-                  '',
+          // Hóa đơn đã thanh toán khi in/xem lại không còn QR
+          // hoặc thông tin tài khoản ngân hàng.
+          bankName: '',
+          bankAccountNo: '',
+          bankAccountName: '',
+          bankBranch: '',
+          transferContent: '',
+          qrImageUrl: '',
         ),
       ),
     );
