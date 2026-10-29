@@ -195,6 +195,7 @@ public class PaymentDto
     public int Method { get; set; }
     public string? QRCodeContent { get; set; }
     public string? QRCodeImageUrl { get; set; }
+    public string? QrPayload { get; set; }
     public string? BankName { get; set; }
     public string? BankAccountNo { get; set; }
     public string? BankAccountName { get; set; }
@@ -270,6 +271,7 @@ public class PaymentPreviewOrderDto
     public decimal DiscountAmount { get; set; }
     public decimal TotalAmount { get; set; }
     public string QrImageUrl { get; set; } = "";
+    public string QrPayload { get; set; } = "";
     public string BankName { get; set; } = "";
     public string BankAccountNo { get; set; } = "";
     public string BankAccountName { get; set; } = "";
