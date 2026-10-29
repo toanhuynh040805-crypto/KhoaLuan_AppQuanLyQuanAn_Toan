@@ -2,13 +2,21 @@ namespace QuanAnBackend.Services;
 
 public static class ReceiptProfile
 {
-    public const string ShopName = "Quán Ăn GustoPOS";
-    public const string ShopAddress = "TP. Hồ Chí Minh, Việt Nam";
+    // Thông tin cửa hàng trên bill.
+    // GustoPOS là tên phần mềm, không phải tên quán.
+    public const string ShopName = "Lẩu Bò Nhà Gỗ Sài Gòn";
+    public const string ShopAddress =
+        "Chi nhánh Lê Trọng Tấn - 479A Lê Trọng Tấn, Sơn Kỳ, Tân Phú, TP. Hồ Chí Minh";
+    public const string SoftwareName = "GustoPOS";
 
-    public const string BankCode = "BIDV";
+    public const string BankName = "BIDV";
+    public const string BankId = "970418";
     public const string BankAccountNo = "5811704638";
     public const string BankAccountName = "HUYNH DUC TOAN";
     public const string BankBranch = "BIDV - PGD Phú Phong";
+
+    // Giữ alias cũ để các client/DTO hiện tại không bị gãy.
+    public const string BankCode = BankName;
 
     public static string TransferContent(int orderId) =>
         $"THANH TOAN HD{orderId}";
@@ -25,7 +33,7 @@ public static class ReceiptProfile
         var accountName = Uri.EscapeDataString(BankAccountName);
 
         return
-            $"https://img.vietqr.io/image/{BankCode}-{BankAccountNo}-{template}.png" +
+            $"https://img.vietqr.io/image/{BankId}-{BankAccountNo}-{template}.png" +
             $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
     }
 }
