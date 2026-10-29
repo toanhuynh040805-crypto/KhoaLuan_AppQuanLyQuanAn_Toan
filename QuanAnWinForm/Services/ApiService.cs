@@ -122,6 +122,30 @@ public class ApiService
             JsonOpts);
     }
 
+    public async Task<byte[]> GetPaymentQrImageAsync(
+        decimal amount,
+        int orderId = 0)
+    {
+        var amountText = Uri.EscapeDataString(
+            amount.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+
+        var url =
+            $"/api/payments/qr-image?amount={amountText}&orderId={orderId}";
+
+        using var response = await _http.GetAsync(url);
+        if (!response.IsSuccessStatusCode)
+        {
+            var message = await ReadErrorAsync(response);
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(message)
+                    ? $"Không tải được QR ({(int)response.StatusCode})."
+                    : message);
+        }
+
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
     // customerId/redeemPoints (tùy chọn - BỔ SUNG cho module Khách hàng thân thiết):
     // gắn khách hàng thành viên vào hóa đơn này (tích điểm tự động) và/hoặc dùng
     // điểm sẵn có để giảm giá - xem PaymentsController.Create bên Backend.
