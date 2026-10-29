@@ -194,6 +194,12 @@ public class PaymentDto
     public decimal TotalAmount { get; set; }
     public int Method { get; set; }
     public string? QRCodeContent { get; set; }
+    public string? QRCodeImageUrl { get; set; }
+    public string? BankName { get; set; }
+    public string? BankAccountNo { get; set; }
+    public string? BankAccountName { get; set; }
+    public string? BankBranch { get; set; }
+    public string? TransferContent { get; set; }
     public bool IsPaid { get; set; }
 
     // Thông tin khách hàng thân thiết (null/0 nếu là khách vãng lai, không gắn khách)
@@ -253,4 +259,18 @@ public class OrderItemStatusResultDto
     public int OrderId { get; set; }
     public int KitchenStatus { get; set; }
     public byte[]? RowVer { get; set; }
+}
+
+public class PaymentPreviewOrderDto
+{
+    public int OrderId { get; set; }
+    public decimal SubTotal { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public decimal TotalAmount { get; set; }
+    public string QrImageUrl { get; set; } = "";
+    public string BankName { get; set; } = "";
+    public string BankAccountNo { get; set; } = "";
+    public string BankAccountName { get; set; } = "";
+    public string BankBranch { get; set; } = "";
+    public string TransferContent { get; set; } = "";
 }
