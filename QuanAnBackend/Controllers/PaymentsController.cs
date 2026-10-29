@@ -174,7 +174,7 @@ public class PaymentsController : ControllerBase
         var description = Uri.EscapeDataString(transferContent);
         var accountName = Uri.EscapeDataString(ReceiptProfile.BankAccountName);
         var qrImageUrl =
-            $"https://img.vietqr.io/image/{ReceiptProfile.BankCode}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
+            $"https://img.vietqr.io/image/{ReceiptProfile.BankId}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
             $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
 
         return Ok(new
@@ -190,6 +190,80 @@ public class PaymentsController : ControllerBase
             shopName = ReceiptProfile.ShopName,
             shopAddress = ReceiptProfile.ShopAddress
         });
+    }
+
+    // WinForms lấy ảnh QR qua Backend thay vì gọi VietQR trực tiếp.
+    // Cách này tránh lỗi TLS/redirect/User-Agent khác nhau trên máy desktop.
+    [HttpGet("qr-image")]
+    public async Task<IActionResult> GetQrImage(
+        [FromQuery] decimal amount,
+        [FromQuery] int orderId = 0)
+    {
+        if (amount <= 0)
+            return BadRequest(new { message = "Số tiền QR phải lớn hơn 0" });
+
+        var referenceOrderId = Math.Max(0, orderId);
+        var roundedAmount = decimal.ToInt64(
+            decimal.Round(amount, 0, MidpointRounding.AwayFromZero));
+
+        var transferContent = referenceOrderId > 0
+            ? ReceiptProfile.TransferContent(referenceOrderId)
+            : "THANH TOAN TAM TINH";
+
+        var description = Uri.EscapeDataString(transferContent);
+        var accountName = Uri.EscapeDataString(ReceiptProfile.BankAccountName);
+
+        var url =
+            $"https://img.vietqr.io/image/{ReceiptProfile.BankId}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
+            $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
+
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = true
+            };
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(15)
+            };
+
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 GustoPOS/1.0");
+            client.DefaultRequestHeaders.Accept.ParseAdd("image/png,image/*");
+
+            using var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        message =
+                            $"VietQR trả về lỗi {(int)response.StatusCode}"
+                    });
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            if (bytes.Length == 0)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new { message = "VietQR không trả về ảnh QR" });
+            }
+
+            return File(bytes, "image/png");
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new
+                {
+                    message =
+                        $"Không tải được QR từ VietQR: {ex.Message}"
+                });
+        }
     }
 
     // WinForms: xem trước đúng số tiền trước khi xác nhận QR.
