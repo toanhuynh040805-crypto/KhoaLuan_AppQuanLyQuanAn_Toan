@@ -110,6 +110,18 @@ public class ApiService
             JsonOpts);
     }
 
+    public async Task<PaymentPreviewOrderDto?> GetReceiptPreviewAsync(
+        decimal amount,
+        int orderId = 0)
+    {
+        var url =
+            $"/api/payments/receipt-preview?amount={Uri.EscapeDataString(amount.ToString(System.Globalization.CultureInfo.InvariantCulture))}&orderId={orderId}";
+
+        return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
+            url,
+            JsonOpts);
+    }
+
     // customerId/redeemPoints (tùy chọn - BỔ SUNG cho module Khách hàng thân thiết):
     // gắn khách hàng thành viên vào hóa đơn này (tích điểm tự động) và/hoặc dùng
     // điểm sẵn có để giảm giá - xem PaymentsController.Create bên Backend.
