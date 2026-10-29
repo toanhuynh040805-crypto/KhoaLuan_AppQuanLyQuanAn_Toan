@@ -371,10 +371,62 @@ public class PaymentsController : ControllerBase
 
         var tableName = order.Table?.TableName ?? $"Bàn #{request.TableId}";
 
+        // Một yêu cầu thanh toán giữ quyền trong 5 phút.
+        // Trong thời gian này KHÔNG ai (kể cả chính người vừa bấm) được gọi lại.
+        // Sau 5 phút mà Order vẫn chưa thanh toán thì người khác có thể tạo yêu cầu mới,
+        // và người đó trở thành "Phục vụ" của hóa đơn.
+        var now = DateTime.Now;
+        var requestLockDuration = TimeSpan.FromMinutes(5);
+
+        if (order.PaymentRequestedAt.HasValue)
+        {
+            var lockUntil = order.PaymentRequestedAt.Value.Add(requestLockDuration);
+            if (now < lockUntil)
+            {
+                var remaining = lockUntil - now;
+                var remainingSeconds = Math.Max(
+                    1,
+                    (int)Math.Ceiling(remaining.TotalSeconds));
+
+                return Conflict(new
+                {
+                    message =
+                        $"Bàn này đã có yêu cầu thanh toán. Vui lòng chờ {remainingSeconds / 60}:{remainingSeconds % 60:00} trước khi gọi lại.",
+                    retryAfterSeconds = remainingSeconds,
+                    lockUntil,
+                    requestedByUserId = order.PaymentRequestedByUserId
+                });
+            }
+        }
+
         // Lưu audit ngay trên Order: đây là nguồn duy nhất để xác định "Phục vụ".
         order.PaymentRequestedByUserId = requesterUserId;
-        order.PaymentRequestedAt = DateTime.Now;
-        await _db.SaveChangesAsync();
+        order.PaymentRequestedAt = now;
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Hai thiết bị bấm gần như cùng lúc: RowVer chỉ cho request đầu tiên thắng.
+            await _db.Entry(order).ReloadAsync();
+
+            var lockUntil = (order.PaymentRequestedAt ?? DateTime.Now)
+                .Add(requestLockDuration);
+            var remainingSeconds = Math.Max(
+                1,
+                (int)Math.Ceiling((lockUntil - DateTime.Now).TotalSeconds));
+
+            return Conflict(new
+            {
+                message =
+                    $"Bàn này vừa có người khác gọi thanh toán. Vui lòng chờ {remainingSeconds / 60}:{remainingSeconds % 60:00} trước khi gọi lại.",
+                retryAfterSeconds = remainingSeconds,
+                lockUntil,
+                requestedByUserId = order.PaymentRequestedByUserId
+            });
+        }
 
         await _notifications.CreateForPermissionAsync(
             "Yêu cầu thanh toán",
