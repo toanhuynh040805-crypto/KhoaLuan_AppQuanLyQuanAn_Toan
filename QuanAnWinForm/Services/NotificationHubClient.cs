@@ -23,6 +23,8 @@ public class NotificationHubClient
     public static event Action<TableStatusUpdatedPayload>? TableStatusUpdated;
     public static event Action<ItemStatusUpdatedPayload>? ItemStatusUpdated;
     public static event Action<OrderItemCancelledPayload>? OrderItemCancelled;
+    public static event Action<PaymentRequestedPayload>? PaymentRequested;
+    public static event Action<PaymentCompletedPayload>? PaymentCompleted;
 
     public async Task ConnectAsync(int userId, string roleName)
     {
@@ -53,6 +55,22 @@ public class NotificationHubClient
         {
             var payload = JsonSerializer.Deserialize<OrderItemCancelledPayload>(raw.GetRawText(), JsonOpts);
             if (payload is not null) OrderItemCancelled?.Invoke(payload);
+        });
+
+        _connection.On<JsonElement>("PaymentRequested", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<PaymentRequestedPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null) PaymentRequested?.Invoke(payload);
+        });
+
+        _connection.On<JsonElement>("PaymentCompleted", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<PaymentCompletedPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null) PaymentCompleted?.Invoke(payload);
         });
 
         // WithAutomaticReconnect() chi tu dong noi lai DUONG TRUYEN, KHONG tu
@@ -109,4 +127,20 @@ public class TableStatusJsonConverter : System.Text.Json.Serialization.JsonConve
 
     public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
         => writer.WriteNumberValue(value);
+}
+
+public class PaymentRequestedPayload
+{
+    public int? TableId { get; set; }
+    public string TableName { get; set; } = "";
+    public int OrderId { get; set; }
+    public decimal TotalAmount { get; set; }
+}
+
+public class PaymentCompletedPayload
+{
+    public int? TableId { get; set; }
+    public int OrderId { get; set; }
+    public int InvoiceId { get; set; }
+    public decimal TotalAmount { get; set; }
 }
