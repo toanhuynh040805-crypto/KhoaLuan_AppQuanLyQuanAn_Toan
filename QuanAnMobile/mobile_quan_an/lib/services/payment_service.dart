@@ -2,6 +2,19 @@ import '../models/payment_method_option.dart';
 import '../models/payment_preview.dart';
 import 'api_client.dart';
 
+class PaymentRequestLockState {
+  final bool hasRequest;
+  final bool isLocked;
+  final int remainingSeconds;
+
+  const PaymentRequestLockState({
+    required this.hasRequest,
+    required this.isLocked,
+    required this.remainingSeconds,
+  });
+}
+
+
 class PaymentService {
   final ApiClient _apiClient;
 
@@ -31,20 +44,36 @@ class PaymentService {
     return 300;
   }
 
-  Future<int> getPaymentRequestLockRemainingSeconds({
+  Future<PaymentRequestLockState> getPaymentRequestLockState({
     required int tableId,
   }) async {
     final dynamic response = await _apiClient.get(
       '/mobile/payments/request-lock/$tableId',
     );
 
-    if (response is! Map || response['isLocked'] != true) {
-      return 0;
+    if (response is! Map) {
+      return const PaymentRequestLockState(
+        hasRequest: false,
+        isLocked: false,
+        remainingSeconds: 0,
+      );
     }
 
+    final bool isLocked = response['isLocked'] == true;
+    final bool hasRequest =
+        response['requestedAt'] != null ||
+        response['requestedByUserId'] != null;
+
     final dynamic value = response['remainingSeconds'];
-    if (value is int) return value;
-    return int.tryParse(value?.toString() ?? '') ?? 0;
+    final int remaining = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '') ?? 0;
+
+    return PaymentRequestLockState(
+      hasRequest: hasRequest,
+      isLocked: isLocked,
+      remainingSeconds: remaining,
+    );
   }
 
   /// Lấy phương thức thanh toán từ backend dùng chung.
