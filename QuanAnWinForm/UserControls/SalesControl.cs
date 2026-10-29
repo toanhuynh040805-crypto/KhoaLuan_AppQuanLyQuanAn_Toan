@@ -42,6 +42,7 @@ public partial class SalesControl : UserControl
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
+    private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
     private bool CartIsEmpty => _cart.Count == 0 && _cartTake.Count == 0;
 
     public SalesControl() : this(0, null) { }
@@ -59,6 +60,7 @@ public partial class SalesControl : UserControl
         _preselectedTakeawayOrderId = preselectedTakeawayOrderId;
         InitializeComponent();
         BuildModeBar();
+        BuildReceiptPreviewButton();
 
         btnAllCategory.Click += (s, e) => FilterCategory(null);
 
@@ -227,7 +229,7 @@ public partial class SalesControl : UserControl
 
         // Nút "Gửi bếp - trả sau": chỉ hiện khi bán MANG VỀ (đơn mới). Tạo đơn + gửi bếp,
         // chưa thanh toán; đơn nằm ở tab "Mang về" chờ khách lấy đồ rồi thanh toán.
-        btnSendKitchen.SetBounds(0, 254, 370, 42);
+        btnSendKitchen.SetBounds(0, 302, 370, 42);
         btnSendKitchen.Font = btnVietQr.Font;
         btnSendKitchen.FlatStyle = FlatStyle.Flat;
         btnSendKitchen.Cursor = Cursors.Hand;
@@ -235,6 +237,26 @@ public partial class SalesControl : UserControl
         btnSendKitchen.Visible = false;
         btnSendKitchen.Click += async (s, e) => await SendTakeawayToKitchenAsync();
         panelTotals.Controls.Add(btnSendKitchen);
+    }
+
+    private void BuildReceiptPreviewButton()
+    {
+        // Chèn nút xem bill mà không sửa Designer thủ công.
+        btnReceiptPreview.SetBounds(0, 154, 370, 34);
+        btnReceiptPreview.Font = btnVietQr.Font;
+        btnReceiptPreview.FlatStyle = FlatStyle.Flat;
+        btnReceiptPreview.ForeColor = AppColors.OnSurfaceVariant;
+        btnReceiptPreview.Cursor = Cursors.Hand;
+        btnReceiptPreview.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+
+        // Dời hai nút thanh toán xuống để dành chỗ cho nút máy in.
+        btnVietQr.Top = 196;
+        btnThanhToan.Top = 246;
+        panelTotals.Controls.Add(btnReceiptPreview);
+        panelTotals.Height = 300;
+
+        btnReceiptPreview.Click += async (s, e) =>
+            await ShowTemporaryReceiptAsync();
     }
 
     private void SetMode(bool takeaway)
@@ -286,7 +308,7 @@ public partial class SalesControl : UserControl
     {
         var show = false;
         btnSendKitchen.Visible = show;
-        panelTotals.Height = show ? 306 : 258;
+        panelTotals.Height = show ? 350 : 300;
         FitLayout();
     }
 
@@ -875,6 +897,129 @@ public partial class SalesControl : UserControl
     //    Backend tu kich hoat OrderRoutingService (phan luong Bep/Quầy nước) ngay sau do.
     // 2. POST /api/payments voi OrderId vua nhan (+ CustomerId neu co gan khach) -> Backend tu
     //    tinh TotalAmount that, tich diem cho khach (neu co) va tra ve QRCodeContent that neu la VietQR.
+    private async Task ShowTemporaryReceiptAsync()
+    {
+        if (CartIsEmpty && _existingOrder is null)
+        {
+            MessageBox.Show("Chưa có món để xem bill tạm tính.");
+            return;
+        }
+
+        btnReceiptPreview.Enabled = false;
+        try
+        {
+            var lines = new List<InvoiceLineDto>();
+
+            if (_existingOrder is not null)
+            {
+                lines.AddRange(
+                    _existingOrder.Items
+                        .Where(i => i.Status != (int)KitchenStatus.DaHuy)
+                        .Select(i => new InvoiceLineDto
+                        {
+                            Name = i.Name,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice,
+                            LineTotal = i.UnitPrice * i.Quantity,
+                            IsTakeaway = i.IsTakeaway
+                        }));
+            }
+
+            lines.AddRange(
+                _cart.Values.Select(v => new InvoiceLineDto
+                {
+                    Name = v.Item.Name,
+                    Quantity = v.Qty,
+                    UnitPrice = v.Item.Price,
+                    LineTotal = v.Item.Price * v.Qty,
+                    IsTakeaway = _isTakeaway
+                }));
+
+            lines.AddRange(
+                _cartTake.Values.Select(v => new InvoiceLineDto
+                {
+                    Name = v.Item.Name,
+                    Quantity = v.Qty,
+                    UnitPrice = v.Item.Price,
+                    LineTotal = v.Item.Price * v.Qty,
+                    IsTakeaway = true
+                }));
+
+            var subtotal = lines.Sum(x => x.LineTotal);
+            var discount = GetEstimatedDiscount(subtotal);
+            var total = Math.Max(0m, subtotal - discount);
+            var orderId = _existingOrder?.OrderId ?? 0;
+
+            // Profile/QR lấy từ Backend dùng chung, không hard-code lại tài khoản.
+            var profile = await _api.GetReceiptPreviewAsync(total, orderId);
+            if (profile is null)
+            {
+                MessageBox.Show("Không tải được thông tin bill/QR.");
+                return;
+            }
+
+            // Nếu đã có order thì lấy đúng người phục vụ và giờ vào từ Backend.
+            PaymentPreviewOrderDto? orderMeta = null;
+            if (orderId > 0)
+            {
+                try
+                {
+                    orderMeta = await _api.GetPaymentPreviewAsync(orderId);
+                }
+                catch
+                {
+                    // Bill vẫn xem được; chỉ thiếu metadata phục vụ/giờ vào.
+                }
+            }
+
+            var tempInvoice = new InvoiceDetailDto
+            {
+                Id = orderId,
+                InvoiceDate = DateTime.Now,
+                OrderTime = orderMeta?.OrderTime,
+                TableName = _isTakeaway
+                    ? (_existingOrder?.TableName ?? "Mang về")
+                    : (cbTable.SelectedItem is TableDto t ? t.TableName : lblTableName.Text),
+                OrderType = _isTakeaway ? "MangVe" : "TaiBan",
+                WaiterName = !string.IsNullOrWhiteSpace(orderMeta?.WaiterName)
+                    ? orderMeta!.WaiterName
+                    : SessionContext.FullName,
+                CashierName = "",
+                Items = lines,
+                SubTotal = subtotal,
+                DiscountAmount = discount,
+                TaxAmount = 0,
+                TotalAmount = total,
+                Status = 0,
+                ShopName = profile.ShopName,
+                ShopAddress = profile.ShopAddress,
+                BankName = profile.BankName,
+                BankAccountNo = profile.BankAccountNo,
+                BankAccountName = profile.BankAccountName,
+                BankBranch = profile.BankBranch,
+                TransferContent = profile.TransferContent,
+                QrImageUrl = profile.QrImageUrl,
+            };
+
+            await ShowInvoiceReceiptDialogAsync(
+                tempInvoice,
+                "PHIẾU TẠM TÍNH");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không xem được bill tạm tính: {ex.Message}",
+                "Xem bill",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnReceiptPreview.IsDisposed)
+                btnReceiptPreview.Enabled = true;
+        }
+    }
+
     private async Task ProcessPaymentAsync(int method)
     {
         if (!_isTakeaway && _selectedTableId is null)
@@ -1136,7 +1281,8 @@ public partial class SalesControl : UserControl
     // Backend), tam tinh/giam gia/thue/tong cong, phuong thuc + thoi diem thanh
     // toan. Dung chung cho ca 2 luong: vua thanh toan xong VA tra cuu lai tu lich su.
     private async Task ShowInvoiceReceiptDialogAsync(
-        InvoiceDetailDto invoice)
+        InvoiceDetailDto invoice,
+        string receiptTitle = "HÓA ĐƠN THANH TOÁN")
     {
         using var dialog = new Form
         {
@@ -1181,7 +1327,7 @@ public partial class SalesControl : UserControl
 
         var lblTitle = new Label
         {
-            Text = "HÓA ĐƠN THANH TOÁN",
+            Text = receiptTitle,
             Font = AppFonts.HeadlineSm,
             TextAlign = ContentAlignment.MiddleCenter,
             Location = new Point(12, 82),
@@ -1193,14 +1339,22 @@ public partial class SalesControl : UserControl
             .LastOrDefault()?.PaymentTime
             ?? invoice.InvoiceDate;
 
+        var referenceText = invoice.Id > 0
+            ? $"Số HĐ/Order: #{invoice.Id}"
+            : "Phiếu tạm tính chưa tạo hóa đơn";
+
+        var cashierLine = string.IsNullOrWhiteSpace(invoice.CashierName)
+            ? ""
+            : $"\nThu ngân: {invoice.CashierName}";
+
         var meta = new Label
         {
             Text =
-                $"Số HĐ: #{invoice.Id}\n" +
+                $"{referenceText}\n" +
                 $"Bàn: {invoice.TableName}    Ngày: {paymentTime:dd/MM/yyyy}\n" +
-                $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {paymentTime:HH:mm}\n" +
-                $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}\n" +
-                $"Thu ngân: {(string.IsNullOrWhiteSpace(invoice.CashierName) ? "-" : invoice.CashierName)}",
+                $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {(receiptTitle == "PHIẾU TẠM TÍNH" ? "-" : paymentTime.ToString("HH:mm"))}\n" +
+                $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}" +
+                cashierLine,
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurface,
             Location = new Point(20, 118),
