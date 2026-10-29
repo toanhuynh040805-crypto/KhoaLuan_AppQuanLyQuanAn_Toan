@@ -201,6 +201,8 @@ public class PaymentsController : ControllerBase
     {
         var order = await _db.Orders
             .AsNoTracking()
+            .Include(o => o.Employee)!
+                .ThenInclude(e => e!.User)
             .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
         if (order is null)
@@ -251,6 +253,8 @@ public class PaymentsController : ControllerBase
         return Ok(new
         {
             orderId,
+            orderTime = order.OrderTime,
+            waiterName = order.Employee?.User?.FullName ?? "",
             subTotal,
             discountAmount,
             totalAmount,
@@ -259,7 +263,9 @@ public class PaymentsController : ControllerBase
             bankAccountNo = ReceiptProfile.BankAccountNo,
             bankAccountName = ReceiptProfile.BankAccountName,
             bankBranch = ReceiptProfile.BankBranch,
-            transferContent = ReceiptProfile.TransferContent(orderId)
+            transferContent = ReceiptProfile.TransferContent(orderId),
+            shopName = ReceiptProfile.ShopName,
+            shopAddress = ReceiptProfile.ShopAddress
         });
     }
 
