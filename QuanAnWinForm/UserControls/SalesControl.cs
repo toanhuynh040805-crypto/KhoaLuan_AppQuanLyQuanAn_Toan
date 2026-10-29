@@ -43,6 +43,25 @@ public partial class SalesControl : UserControl
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
+
+    private bool CanViewPaymentReceiptQr
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin"
+                or "thungan"
+                or "thungân";
+        }
+    }
+
     private bool CartIsEmpty => _cart.Count == 0 && _cartTake.Count == 0;
 
     public SalesControl() : this(0, null) { }
@@ -254,6 +273,10 @@ public partial class SalesControl : UserControl
         btnThanhToan.Top = 246;
         panelTotals.Controls.Add(btnReceiptPreview);
         panelTotals.Height = 300;
+
+        // Bill có QR thanh toán chỉ dành cho Quản lý / Thu ngân.
+        btnReceiptPreview.Visible = CanViewPaymentReceiptQr;
+        btnVietQr.Visible = CanViewPaymentReceiptQr;
 
         btnReceiptPreview.Click += async (s, e) =>
             await ShowTemporaryReceiptAsync();
@@ -1249,17 +1272,21 @@ public partial class SalesControl : UserControl
 
         try
         {
-            using var http = new HttpClient();
-            var bytes = await http.GetByteArrayAsync(preview.QrImageUrl);
+            var bytes = await _api.GetPaymentQrImageAsync(
+                preview.TotalAmount,
+                preview.OrderId);
+
             using var ms = new MemoryStream(bytes);
             using var raw = Image.FromStream(ms);
             pic.Image = new Bitmap(raw);
         }
-        catch
+        catch (Exception ex)
         {
             pic.Controls.Add(new Label
             {
-                Text = "Không tải được QR.\nKiểm tra kết nối Internet.",
+                Text =
+                    "Không tải được QR.\n" +
+                    ex.Message,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = AppColors.Error,
@@ -1439,24 +1466,32 @@ public partial class SalesControl : UserControl
         paper.Controls.Add(meta);
         paper.Controls.Add(flowItems);
         paper.Controls.Add(lblTotals);
-        paper.Controls.Add(picQr);
-        paper.Controls.Add(lblBank);
 
-        if (!string.IsNullOrWhiteSpace(invoice.QrImageUrl))
+        if (CanViewPaymentReceiptQr)
+        {
+            paper.Controls.Add(picQr);
+            paper.Controls.Add(lblBank);
+        }
+
+        if (CanViewPaymentReceiptQr && invoice.TotalAmount > 0)
         {
             try
             {
-                using var http = new HttpClient();
-                var bytes = await http.GetByteArrayAsync(invoice.QrImageUrl);
+                var bytes = await _api.GetPaymentQrImageAsync(
+                    invoice.TotalAmount,
+                    invoice.OrderId);
+
                 using var ms = new MemoryStream(bytes);
                 using var raw = Image.FromStream(ms);
                 picQr.Image = new Bitmap(raw);
             }
-            catch
+            catch (Exception ex)
             {
                 picQr.Controls.Add(new Label
                 {
-                    Text = "Không tải được QR",
+                    Text =
+                        "Không tải được QR.\n" +
+                        ex.Message,
                     Dock = DockStyle.Fill,
                     TextAlign = ContentAlignment.MiddleCenter,
                     ForeColor = AppColors.Error,
