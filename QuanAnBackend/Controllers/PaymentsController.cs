@@ -34,6 +34,8 @@ public record RequestPaymentRequest(int TableId, string EmployeeCode);
 public record PaymentPreviewDto(
     int OrderId,
     int TableId,
+    DateTime OrderTime,
+    string WaiterName,
     decimal SubTotal,
     decimal DiscountPercent,
     decimal DiscountAmount,
@@ -48,6 +50,7 @@ public record PaymentPreviewDto(
     string BankAccountNo,
     string BankAccountName,
     string BankBranch,
+    string TransferContent,
     string ShopName,
     string ShopAddress
 );
@@ -74,8 +77,12 @@ public class PaymentsController : ControllerBase
     {
         var orderId = await FindOpenOrderIdForTableAsync(tableId);
         var order = orderId.HasValue
-            ? await _db.Orders.AsNoTracking()
-                .FirstOrDefaultAsync(o => o.OrderId == orderId.Value)
+            ? await _db.Orders
+                .AsNoTracking()
+                .Include(o => o.Employee)!
+                    .ThenInclude(e => e!.User)
+                .FirstOrDefaultAsync(
+                    o => o.OrderId == orderId.Value)
             : null;
 
         if (order is null)
@@ -94,9 +101,39 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
+        var requestedByUserId = await _db.Notifications
+            .AsNoTracking()
+            .Where(n =>
+                n.Title == "Đã gửi yêu cầu thanh toán" &&
+                n.RelatedEntityType == "Order" &&
+                n.RelatedEntityId == order.OrderId &&
+                n.TargetUserId.HasValue)
+            .OrderByDescending(n => n.CreatedAt)
+            .Select(n => n.TargetUserId)
+            .FirstOrDefaultAsync();
+
+        string waiterName;
+        if (requestedByUserId.HasValue)
+        {
+            waiterName = await _db.Users
+                .AsNoTracking()
+                .Where(u => u.UserId == requestedByUserId.Value)
+                .Select(u => u.FullName)
+                .FirstOrDefaultAsync()
+                ?? "";
+        }
+        else
+        {
+            waiterName =
+                order.Employee?.User?.FullName
+                ?? "";
+        }
+
         return Ok(new PaymentPreviewDto(
             order.OrderId,
             tableId,
+            order.OrderTime,
+            waiterName,
             total,
             0,
             0,
@@ -111,6 +148,7 @@ public class PaymentsController : ControllerBase
             ReceiptProfile.BankAccountNo,
             ReceiptProfile.BankAccountName,
             ReceiptProfile.BankBranch,
+            ReceiptProfile.TransferContent(order.OrderId),
             ReceiptProfile.ShopName,
             ReceiptProfile.ShopAddress
         ));
