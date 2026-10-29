@@ -151,7 +151,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
   Future<void> _loadPaymentRequestLock() async {
     try {
-      final PaymentRequestLockState state =
+      final state =
           await AppServices.paymentService.getPaymentRequestLockState(
         tableId: currentTable.id,
       );
