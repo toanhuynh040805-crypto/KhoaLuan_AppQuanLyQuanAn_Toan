@@ -54,4 +54,5 @@ public class InvoiceDetailDto
     public string BankBranch { get; set; } = "";
     public string TransferContent { get; set; } = "";
     public string QrImageUrl { get; set; } = "";
+    public string QrPayload { get; set; } = "";
 }
