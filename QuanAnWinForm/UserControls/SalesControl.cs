@@ -998,6 +998,7 @@ public partial class SalesControl : UserControl
             var tempInvoice = new InvoiceDetailDto
             {
                 Id = orderId,
+                OrderId = orderId,
                 InvoiceDate = DateTime.Now,
                 OrderTime = orderMeta?.OrderTime,
                 TableName = _isTakeaway
@@ -1022,6 +1023,7 @@ public partial class SalesControl : UserControl
                 BankBranch = profile.BankBranch,
                 TransferContent = profile.TransferContent,
                 QrImageUrl = profile.QrImageUrl,
+                QrPayload = profile.QrPayload,
             };
 
             await ShowInvoiceReceiptDialogAsync(
@@ -1487,13 +1489,22 @@ public partial class SalesControl : UserControl
         {
             try
             {
-                var preview = await _api.GetPaymentPreviewAsync(invoice.OrderId);
-                if (preview is null || string.IsNullOrWhiteSpace(preview.QrPayload))
-                    throw new InvalidOperationException("Backend chưa trả payload VietQR.");
+                var qrPayload = invoice.QrPayload;
+
+                // Bill tạm tính đã nhận payload cùng lúc với tổng tiền.
+                // Chỉ fallback gọi preview order cho dữ liệu cũ chưa có QrPayload.
+                if (string.IsNullOrWhiteSpace(qrPayload) && invoice.OrderId > 0)
+                {
+                    var preview = await _api.GetPaymentPreviewAsync(invoice.OrderId);
+                    qrPayload = preview?.QrPayload ?? "";
+                }
+
+                if (string.IsNullOrWhiteSpace(qrPayload))
+                    throw new InvalidOperationException("Không có payload VietQR cho bill này.");
 
                 using var qrGenerator = new QRCodeGenerator();
                 using var qrData = qrGenerator.CreateQrCode(
-                    preview.QrPayload,
+                    qrPayload,
                     QRCodeGenerator.ECCLevel.Q);
                 using var qrCode = new QRCode(qrData);
 
