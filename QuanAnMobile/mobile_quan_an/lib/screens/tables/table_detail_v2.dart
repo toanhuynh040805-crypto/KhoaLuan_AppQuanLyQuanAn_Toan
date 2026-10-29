@@ -15,6 +15,7 @@ import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
 import '../../widgets/top_message.dart';
+import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
 import '../order_log/order_log_screen.dart';
 import 'payment_dialog.dart';
@@ -997,6 +998,93 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
   }
 
+  Future<void> _openReceiptPreview() async {
+    if (orderItems.isEmpty || _closingAfterPayment) {
+      return;
+    }
+
+    try {
+      final PaymentPreview preview =
+          await AppServices.paymentService
+              .getPreview(
+        tableId: currentTable.id,
+      );
+
+      if (!mounted) return;
+
+      final List<ReceiptLineView> lines =
+          orderItems
+              .where(
+                (item) =>
+                    item.status != 'Đã hủy',
+              )
+              .map(
+                (item) => ReceiptLineView(
+                  name: item.name,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  lineTotal: item.totalPrice,
+                ),
+              )
+              .toList();
+
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              ReceiptPreviewScreen(
+            title: 'PHIẾU TẠM TÍNH',
+            referenceId:
+                preview.orderId,
+            tableName:
+                _displayTableName(),
+            waiterName:
+                preview.waiterName
+                        .trim()
+                        .isNotEmpty
+                    ? preview.waiterName
+                    : appEmployee
+                        .fullName,
+            orderTime:
+                preview.orderTime,
+            paymentTime: null,
+            items: lines,
+            subTotal:
+                preview.subTotal,
+            discountAmount:
+                preview.discountAmount,
+            totalAmount:
+                preview.totalAmount,
+            shopName:
+                preview.shopName,
+            shopAddress:
+                preview.shopAddress,
+            bankName:
+                preview.bankName,
+            bankAccountNo:
+                preview.bankAccountNo,
+            bankAccountName:
+                preview.bankAccountName,
+            bankBranch:
+                preview.bankBranch,
+            transferContent:
+                preview.transferContent,
+            qrImageUrl:
+                preview.qrImageUrl,
+          ),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      TopMessage.show(
+        context,
+        message: error.message,
+        type: TopMessageType.error,
+      );
+    }
+  }
+
   Future<void> _confirmPayment() async {
     if (_closingAfterPayment) return;
 
@@ -1639,6 +1727,16 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
+            if (orderItems.isNotEmpty &&
+                !_closingAfterPayment)
+              IconButton(
+                tooltip: 'Xem / in bill tạm tính',
+                onPressed:
+                    _openReceiptPreview,
+                icon: const Icon(
+                  Icons.print_outlined,
+                ),
+              ),
             if (_canOrder && orderItems.isNotEmpty && !_closingAfterPayment)
               IconButton(
                 tooltip: 'Yêu cầu xuống bếp',
