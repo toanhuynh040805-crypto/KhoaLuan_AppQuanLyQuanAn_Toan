@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -41,7 +42,14 @@ public record PaymentPreviewDto(
     decimal TaxAmount,
     decimal VIPRoomFee,
     decimal VIPMinimumGap,
-    decimal TotalAmount
+    decimal TotalAmount,
+    string QrImageUrl,
+    string BankName,
+    string BankAccountNo,
+    string BankAccountName,
+    string BankBranch,
+    string ShopName,
+    string ShopAddress
 );
 
 [ApiController]
@@ -97,7 +105,14 @@ public class PaymentsController : ControllerBase
             0,
             0,
             0,
-            total
+            total,
+            ReceiptProfile.BuildVietQrImageUrl(total, order.OrderId),
+            ReceiptProfile.BankCode,
+            ReceiptProfile.BankAccountNo,
+            ReceiptProfile.BankAccountName,
+            ReceiptProfile.BankBranch,
+            ReceiptProfile.ShopName,
+            ReceiptProfile.ShopAddress
         ));
     }
 
@@ -191,6 +206,33 @@ public class PaymentsController : ControllerBase
         if (order.Status == OrderStatus.DaThanhToan)
             return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
 
+        if (!int.TryParse(
+                User.FindFirstValue(ClaimTypes.NameIdentifier),
+                out var cashierUserId))
+        {
+            return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
+        }
+
+        // Ưu tiên đúng người vừa gửi yêu cầu thanh toán của order.
+        // Nếu order được thanh toán trực tiếp tại quầy mà chưa qua bước yêu cầu,
+        // dùng nhân viên tạo order làm người phục vụ.
+        var requestedByUserId = await _db.Notifications
+            .AsNoTracking()
+            .Where(n =>
+                n.Title == "Đã gửi yêu cầu thanh toán" &&
+                n.RelatedEntityType == "Order" &&
+                n.RelatedEntityId == order.OrderId &&
+                n.TargetUserId.HasValue)
+            .OrderByDescending(n => n.CreatedAt)
+            .Select(n => n.TargetUserId)
+            .FirstOrDefaultAsync();
+
+        requestedByUserId ??= await _db.Employees
+            .AsNoTracking()
+            .Where(e => e.EmployeeId == order.EmployeeId)
+            .Select(e => (int?)e.UserId)
+            .FirstOrDefaultAsync();
+
         // Tinh truc tiep tu OrderItems de khong phu thuoc vao du lieu TotalAmount
         // cu/stale trong cac database da seed hoac nang cap truoc day.
         var total = await _db.OrderItems
@@ -274,7 +316,9 @@ public class PaymentsController : ControllerBase
             AppliedCampaignId = campaign?.CampaignId,
             TaxAmount = 0,
             TotalAmount = netTotal,
-            Status = InvoiceStatus.DaThanhToan
+            Status = InvoiceStatus.DaThanhToan,
+            CreatedBy = cashierUserId,
+            RequestedByUserId = requestedByUserId
         };
         _db.Invoices.Add(invoice);
         await _db.SaveChangesAsync();
@@ -328,9 +372,9 @@ public class PaymentsController : ControllerBase
             }
         }
 
-        var qrContent = method == PaymentMethod.ChuyenKhoan
-            ? GenerateVietQrPayload(netTotal, order.OrderId)
-            : null;
+        var qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(
+            netTotal,
+            order.OrderId);
 
         var payment = new Payment
         {
@@ -339,7 +383,7 @@ public class PaymentsController : ControllerBase
             Amount = netTotal,
             PaymentTime = DateTime.Now,
             Status = PaymentStatus.ThanhCong,
-            TransactionRef = request.TransactionRef ?? qrContent
+            TransactionRef = request.TransactionRef
         };
         _db.Payments.Add(payment);
 
@@ -508,7 +552,13 @@ public class PaymentsController : ControllerBase
             DiscountAmount = discountAmount + loyaltyDiscount,
             TotalAmount = netTotal,
             Method = request.Method,
-            QRCodeContent = qrContent,
+            QRCodeImageUrl = qrImageUrl,
+            QRCodeContent = qrImageUrl,
+            BankName = ReceiptProfile.BankCode,
+            BankAccountNo = ReceiptProfile.BankAccountNo,
+            BankAccountName = ReceiptProfile.BankAccountName,
+            BankBranch = ReceiptProfile.BankBranch,
+            TransferContent = ReceiptProfile.TransferContent(order.OrderId),
             IsPaid = payment.Status == PaymentStatus.ThanhCong,
             CustomerId = customer?.CustomerId,
             PointsEarned = earnedPoints,
@@ -517,12 +567,6 @@ public class PaymentsController : ControllerBase
             LoyaltyPointBalance = customer?.LoyaltyPoint,
             EmailSent = emailSent
         });
-    }
-
-    private string GenerateVietQrPayload(decimal amount, int orderId)
-    {
-        // Placeholder: thay bằng gọi API VietQR.io thật, truyền số tiền + nội dung "DH{orderId}"
-        return $"VIETQR|AMOUNT={amount}|CONTENT=DH{orderId}";
     }
 
     // Đơn mang về = OrderType MangVe (tạo ở WinForm) HOẶC bàn thuộc khu vực "Mang về" (tạo ở Mobile).
