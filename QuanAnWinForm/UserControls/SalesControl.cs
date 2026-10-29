@@ -1026,7 +1026,8 @@ public partial class SalesControl : UserControl
 
             await ShowInvoiceReceiptDialogAsync(
                 tempInvoice,
-                "PHIẾU TẠM TÍNH");
+                "PHIẾU TẠM TÍNH",
+                showPaymentQr: true);
         }
         catch (Exception ex)
         {
@@ -1309,7 +1310,8 @@ public partial class SalesControl : UserControl
     // toan. Dung chung cho ca 2 luong: vua thanh toan xong VA tra cuu lai tu lich su.
     private async Task ShowInvoiceReceiptDialogAsync(
         InvoiceDetailDto invoice,
-        string receiptTitle = "HÓA ĐƠN THANH TOÁN")
+        string receiptTitle = "HÓA ĐƠN THANH TOÁN",
+        bool showPaymentQr = false)
     {
         using var dialog = new Form
         {
@@ -1467,13 +1469,13 @@ public partial class SalesControl : UserControl
         paper.Controls.Add(flowItems);
         paper.Controls.Add(lblTotals);
 
-        if (CanViewPaymentReceiptQr)
+        if (showPaymentQr && CanViewPaymentReceiptQr)
         {
             paper.Controls.Add(picQr);
             paper.Controls.Add(lblBank);
         }
 
-        if (CanViewPaymentReceiptQr && invoice.TotalAmount > 0)
+        if (showPaymentQr && CanViewPaymentReceiptQr && invoice.TotalAmount > 0)
         {
             try
             {
