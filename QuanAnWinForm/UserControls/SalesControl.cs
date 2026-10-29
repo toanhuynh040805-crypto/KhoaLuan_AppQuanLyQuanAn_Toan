@@ -1334,7 +1334,7 @@ public partial class SalesControl : UserControl
         var shopName = new Label
         {
             Text = string.IsNullOrWhiteSpace(invoice.ShopName)
-                ? "Quán Ăn GustoPOS"
+                ? "Lẩu Bò Nhà Gỗ Sài Gòn"
                 : invoice.ShopName,
             Font = AppFonts.HeadlineSm,
             TextAlign = ContentAlignment.MiddleCenter,
