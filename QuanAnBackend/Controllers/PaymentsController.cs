@@ -154,6 +154,77 @@ public class PaymentsController : ControllerBase
         ));
     }
 
+    // WinForms: xem trước đúng số tiền trước khi xác nhận QR.
+    // Chưa tạo Invoice/Payment ở bước này.
+    [HttpGet("preview/order/{orderId:int}")]
+    public async Task<IActionResult> PreviewForOrder(
+        int orderId,
+        [FromQuery] int? campaignId = null)
+    {
+        var order = await _db.Orders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.OrderId == orderId);
+
+        if (order is null)
+            return NotFound(new { message = "Không tìm thấy đơn hàng" });
+
+        if (order.Status == OrderStatus.DaThanhToan)
+            return Conflict(new { message = "Đơn hàng đã được thanh toán" });
+
+        var subTotal = await _db.OrderItems
+            .Where(oi =>
+                oi.OrderId == orderId &&
+                oi.Status != KitchenStatus.DaHuy)
+            .SumAsync(oi => (decimal?)(
+                oi.Quantity *
+                (oi.UnitPrice > 0
+                    ? oi.UnitPrice
+                    : (oi.MenuItem != null
+                        ? oi.MenuItem.Price
+                        : 0))
+            )) ?? 0;
+
+        decimal discountAmount = 0;
+        if (campaignId.HasValue)
+        {
+            var campaign = await _db.DiscountCampaigns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CampaignId == campaignId.Value);
+
+            if (campaign is null)
+                return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
+            if (!campaign.IsActive)
+                return BadRequest(new { message = "Chương trình khuyến mãi đã bị tắt" });
+
+            var now = DateTime.Now;
+            if (now < campaign.StartDate || now > campaign.EndDate)
+                return BadRequest(new { message = "Chương trình khuyến mãi hiện không còn hiệu lực" });
+            if (campaign.RequireMembership)
+                return BadRequest(new { message = "Chương trình này yêu cầu khách hàng thành viên" });
+
+            discountAmount = Math.Round(
+                subTotal * campaign.DiscountPercent / 100m,
+                0,
+                MidpointRounding.AwayFromZero);
+        }
+
+        var totalAmount = Math.Max(0, subTotal - discountAmount);
+
+        return Ok(new
+        {
+            orderId,
+            subTotal,
+            discountAmount,
+            totalAmount,
+            qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(totalAmount, orderId),
+            bankName = ReceiptProfile.BankCode,
+            bankAccountNo = ReceiptProfile.BankAccountNo,
+            bankAccountName = ReceiptProfile.BankAccountName,
+            bankBranch = ReceiptProfile.BankBranch,
+            transferContent = ReceiptProfile.TransferContent(orderId)
+        });
+    }
+
     // Mobile compatibility: Phục vụ gửi yêu cầu tới Thu ngân, chưa thanh toán ngay.
     [HttpPost("request")]
     [RequireMobilePermission("payment.request")]
