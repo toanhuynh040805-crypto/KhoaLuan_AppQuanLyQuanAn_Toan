@@ -204,7 +204,9 @@ class ReceiptPreviewScreen
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Số HĐ: #$referenceId',
+                    title == 'PHIẾU TẠM TÍNH'
+                        ? 'Mã Order: #$referenceId'
+                        : 'Số HĐ: #$referenceId',
                     textAlign:
                         TextAlign.center,
                     style:
