@@ -171,6 +171,41 @@ public class ApiService
         return await res.Content.ReadFromJsonAsync<PaymentDto>(JsonOpts);
     }
 
+    public async Task<HashSet<int>> GetPendingPaymentTableIdsAsync()
+    {
+        using var res = await _http.GetAsync("/api/mobile/payments/pending");
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonElement>>(JsonOpts)
+            ?? new List<JsonElement>();
+
+        var result = new HashSet<int>();
+
+        foreach (var row in rows)
+        {
+            if (!row.TryGetProperty("tableId", out var tableIdElement))
+                continue;
+
+            int tableId;
+            if (tableIdElement.ValueKind == JsonValueKind.Number &&
+                tableIdElement.TryGetInt32(out tableId) &&
+                tableId > 0)
+            {
+                result.Add(tableId);
+                continue;
+            }
+
+            if (tableIdElement.ValueKind == JsonValueKind.String &&
+                int.TryParse(tableIdElement.GetString(), out tableId) &&
+                tableId > 0)
+            {
+                result.Add(tableId);
+            }
+        }
+
+        return result;
+    }
+
     public async Task<List<TableDto>> GetTablesAsync(int? areaId = null)
     {
         var url = areaId.HasValue ? $"/api/tables?areaId={areaId}" : "/api/tables";
