@@ -999,6 +999,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
   }
 
   Future<void> _openReceiptPreview() async {
+    if (!_canCompletePayment) {
+      _showRoleDenied('xem bill / mã QR thanh toán');
+      return;
+    }
+
     if (orderItems.isEmpty || _closingAfterPayment) {
       return;
     }
@@ -1727,7 +1732,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
-            if (orderItems.isNotEmpty &&
+            if (_canCompletePayment &&
+                orderItems.isNotEmpty &&
                 !_closingAfterPayment)
               IconButton(
                 tooltip: 'Xem / in bill tạm tính',
