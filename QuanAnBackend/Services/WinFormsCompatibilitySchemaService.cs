@@ -63,6 +63,10 @@ public class WinFormsCompatibilitySchemaService
             IF COL_LENGTH(N'dbo.MenuItems', N'ImageUrl') IS NULL
                 ALTER TABLE dbo.MenuItems ADD ImageUrl NVARCHAR(500) NULL;
 
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NULL
+                ALTER TABLE dbo.Invoices ADD RequestedByUserId INT NULL;
+
             IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
             BEGIN
                 IF EXISTS (
@@ -107,6 +111,24 @@ public class WinFormsCompatibilitySchemaService
                     ADD CONSTRAINT FK_ShiftAssignments_Areas
                     FOREIGN KEY (AreaId) REFERENCES dbo.Areas(AreaId);
             END;
+
+            IF OBJECT_ID(N'dbo.FK_Invoices_RequestedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Invoices
+                    ADD CONSTRAINT FK_Invoices_RequestedByUser
+                    FOREIGN KEY (RequestedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE name = N'IX_Invoices_CreatedBy_InvoiceDate'
+                  AND object_id = OBJECT_ID(N'dbo.Invoices')
+            )
+               AND COL_LENGTH(N'dbo.Invoices', N'CreatedBy') IS NOT NULL
+                CREATE INDEX IX_Invoices_CreatedBy_InvoiceDate
+                    ON dbo.Invoices(CreatedBy, InvoiceDate);
+
             IF NOT EXISTS (SELECT 1 FROM sys.indexes
                             WHERE name = N'IX_Reservations_Customer'
                              AND object_id = OBJECT_ID(N'dbo.Reservations'))
