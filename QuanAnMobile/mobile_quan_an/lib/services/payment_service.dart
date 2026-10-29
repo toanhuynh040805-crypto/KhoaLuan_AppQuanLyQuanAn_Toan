@@ -2,6 +2,19 @@ import '../models/payment_method_option.dart';
 import '../models/payment_preview.dart';
 import 'api_client.dart';
 
+class PaymentRequestLockState {
+  final bool hasRequest;
+  final bool isLocked;
+  final int remainingSeconds;
+
+  const PaymentRequestLockState({
+    required this.hasRequest,
+    required this.isLocked,
+    required this.remainingSeconds,
+  });
+}
+
+
 class PaymentService {
   final ApiClient _apiClient;
 
@@ -9,16 +22,57 @@ class PaymentService {
     required ApiClient apiClient,
   }) : _apiClient = apiClient;
 
-  Future<void> requestPayment({
+  Future<int> requestPayment({
     required int tableId,
     required String employeeCode,
   }) async {
-    await _apiClient.post(
+    final dynamic response = await _apiClient.post(
       '/payments/request',
       body: {
         'tableId': tableId,
         'employeeCode': employeeCode,
       },
+    );
+
+    if (response is Map) {
+      final dynamic value = response['retryAfterSeconds'];
+      if (value is int && value > 0) return value;
+      final int? parsed = int.tryParse(value?.toString() ?? '');
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    return 300;
+  }
+
+  Future<PaymentRequestLockState> getPaymentRequestLockState({
+    required int tableId,
+  }) async {
+    final dynamic response = await _apiClient.get(
+      '/mobile/payments/request-lock/$tableId',
+    );
+
+    if (response is! Map) {
+      return const PaymentRequestLockState(
+        hasRequest: false,
+        isLocked: false,
+        remainingSeconds: 0,
+      );
+    }
+
+    final bool isLocked = response['isLocked'] == true;
+    final bool hasRequest =
+        response['requestedAt'] != null ||
+        response['requestedByUserId'] != null;
+
+    final dynamic value = response['remainingSeconds'];
+    final int remaining = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '') ?? 0;
+
+    return PaymentRequestLockState(
+      hasRequest: hasRequest,
+      isLocked: isLocked,
+      remainingSeconds: remaining,
     );
   }
 

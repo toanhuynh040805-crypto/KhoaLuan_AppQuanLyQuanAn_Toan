@@ -42,6 +42,26 @@ public partial class SalesControl : UserControl
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
+    private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
+
+    private bool CanViewPaymentReceiptQr
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin"
+                or "thungan"
+                or "thungân";
+        }
+    }
+
     private bool CartIsEmpty => _cart.Count == 0 && _cartTake.Count == 0;
 
     public SalesControl() : this(0, null) { }
@@ -59,6 +79,7 @@ public partial class SalesControl : UserControl
         _preselectedTakeawayOrderId = preselectedTakeawayOrderId;
         InitializeComponent();
         BuildModeBar();
+        BuildReceiptPreviewButton();
 
         btnAllCategory.Click += (s, e) => FilterCategory(null);
 
@@ -227,7 +248,7 @@ public partial class SalesControl : UserControl
 
         // Nút "Gửi bếp - trả sau": chỉ hiện khi bán MANG VỀ (đơn mới). Tạo đơn + gửi bếp,
         // chưa thanh toán; đơn nằm ở tab "Mang về" chờ khách lấy đồ rồi thanh toán.
-        btnSendKitchen.SetBounds(0, 254, 370, 42);
+        btnSendKitchen.SetBounds(0, 302, 370, 42);
         btnSendKitchen.Font = btnVietQr.Font;
         btnSendKitchen.FlatStyle = FlatStyle.Flat;
         btnSendKitchen.Cursor = Cursors.Hand;
@@ -235,6 +256,30 @@ public partial class SalesControl : UserControl
         btnSendKitchen.Visible = false;
         btnSendKitchen.Click += async (s, e) => await SendTakeawayToKitchenAsync();
         panelTotals.Controls.Add(btnSendKitchen);
+    }
+
+    private void BuildReceiptPreviewButton()
+    {
+        // Chèn nút xem bill mà không sửa Designer thủ công.
+        btnReceiptPreview.SetBounds(0, 154, 370, 34);
+        btnReceiptPreview.Font = btnVietQr.Font;
+        btnReceiptPreview.FlatStyle = FlatStyle.Flat;
+        btnReceiptPreview.ForeColor = AppColors.OnSurfaceVariant;
+        btnReceiptPreview.Cursor = Cursors.Hand;
+        btnReceiptPreview.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+
+        // Dời hai nút thanh toán xuống để dành chỗ cho nút máy in.
+        btnVietQr.Top = 196;
+        btnThanhToan.Top = 246;
+        panelTotals.Controls.Add(btnReceiptPreview);
+        panelTotals.Height = 300;
+
+        // Bill có QR thanh toán chỉ dành cho Quản lý / Thu ngân.
+        btnReceiptPreview.Visible = CanViewPaymentReceiptQr;
+        btnVietQr.Visible = CanViewPaymentReceiptQr;
+
+        btnReceiptPreview.Click += async (s, e) =>
+            await ShowTemporaryReceiptAsync();
     }
 
     private void SetMode(bool takeaway)
@@ -286,7 +331,7 @@ public partial class SalesControl : UserControl
     {
         var show = false;
         btnSendKitchen.Visible = show;
-        panelTotals.Height = show ? 306 : 258;
+        panelTotals.Height = show ? 350 : 300;
         FitLayout();
     }
 
@@ -875,6 +920,132 @@ public partial class SalesControl : UserControl
     //    Backend tu kich hoat OrderRoutingService (phan luong Bep/Quầy nước) ngay sau do.
     // 2. POST /api/payments voi OrderId vua nhan (+ CustomerId neu co gan khach) -> Backend tu
     //    tinh TotalAmount that, tich diem cho khach (neu co) va tra ve QRCodeContent that neu la VietQR.
+    private async Task ShowTemporaryReceiptAsync()
+    {
+        if (CartIsEmpty && _existingOrder is null)
+        {
+            MessageBox.Show("Chưa có món để xem bill tạm tính.");
+            return;
+        }
+
+        btnReceiptPreview.Enabled = false;
+        try
+        {
+            var lines = new List<InvoiceLineDto>();
+
+            if (_existingOrder is not null)
+            {
+                lines.AddRange(
+                    _existingOrder.Items
+                        .Where(i => i.Status != (int)KitchenStatus.DaHuy)
+                        .Select(i => new InvoiceLineDto
+                        {
+                            Name = i.Name,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice,
+                            LineTotal = i.UnitPrice * i.Quantity,
+                            IsTakeaway = i.IsTakeaway
+                        }));
+            }
+
+            lines.AddRange(
+                _cart.Values.Select(v => new InvoiceLineDto
+                {
+                    Name = v.Item.Name,
+                    Quantity = v.Qty,
+                    UnitPrice = v.Item.Price,
+                    LineTotal = v.Item.Price * v.Qty,
+                    IsTakeaway = _isTakeaway
+                }));
+
+            lines.AddRange(
+                _cartTake.Values.Select(v => new InvoiceLineDto
+                {
+                    Name = v.Item.Name,
+                    Quantity = v.Qty,
+                    UnitPrice = v.Item.Price,
+                    LineTotal = v.Item.Price * v.Qty,
+                    IsTakeaway = true
+                }));
+
+            var subtotal = lines.Sum(x => x.LineTotal);
+            var discount = GetEstimatedDiscount(subtotal);
+            var total = Math.Max(0m, subtotal - discount);
+            var orderId = _existingOrder?.OrderId ?? 0;
+
+            // Profile/QR lấy từ Backend dùng chung, không hard-code lại tài khoản.
+            var profile = await _api.GetReceiptPreviewAsync(total, orderId);
+            if (profile is null)
+            {
+                MessageBox.Show("Không tải được thông tin bill/QR.");
+                return;
+            }
+
+            // Nếu đã có order thì lấy đúng người phục vụ và giờ vào từ Backend.
+            PaymentPreviewOrderDto? orderMeta = null;
+            if (orderId > 0)
+            {
+                try
+                {
+                    orderMeta = await _api.GetPaymentPreviewAsync(orderId);
+                }
+                catch
+                {
+                    // Bill vẫn xem được; chỉ thiếu metadata phục vụ/giờ vào.
+                }
+            }
+
+            var tempInvoice = new InvoiceDetailDto
+            {
+                Id = orderId,
+                OrderId = orderId,
+                InvoiceDate = DateTime.Now,
+                OrderTime = orderMeta?.OrderTime,
+                TableName = _isTakeaway
+                    ? (_existingOrder?.TableName ?? "Mang về")
+                    : (cbTable.SelectedItem is TableDto t ? t.TableName : lblTableName.Text),
+                OrderType = _isTakeaway ? "MangVe" : "TaiBan",
+                WaiterName = !string.IsNullOrWhiteSpace(orderMeta?.WaiterName)
+                    ? orderMeta!.WaiterName
+                    : SessionContext.FullName,
+                CashierName = "",
+                Items = lines,
+                SubTotal = subtotal,
+                DiscountAmount = discount,
+                TaxAmount = 0,
+                TotalAmount = total,
+                Status = 0,
+                ShopName = profile.ShopName,
+                ShopAddress = profile.ShopAddress,
+                BankName = profile.BankName,
+                BankAccountNo = profile.BankAccountNo,
+                BankAccountName = profile.BankAccountName,
+                BankBranch = profile.BankBranch,
+                TransferContent = profile.TransferContent,
+                QrImageUrl = profile.QrImageUrl,
+                QrPayload = profile.QrPayload,
+            };
+
+            await ShowInvoiceReceiptDialogAsync(
+                tempInvoice,
+                "PHIẾU TẠM TÍNH",
+                showPaymentQr: true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không xem được bill tạm tính: {ex.Message}",
+                "Xem bill",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnReceiptPreview.IsDisposed)
+                btnReceiptPreview.Enabled = true;
+        }
+    }
+
     private async Task ProcessPaymentAsync(int method)
     {
         if (!_isTakeaway && _selectedTableId is null)
@@ -912,15 +1083,38 @@ public partial class SalesControl : UserControl
                 return;
             }
 
-            var payment = await _api.CreatePaymentAsync(orderId.Value, method, GetSelectedCampaignId(), _selectedCustomer?.Id);
+            var campaignId = GetSelectedCampaignId();
+            PaymentPreviewOrderDto? qrPreview = null;
+
+            if (method == 1)
+            {
+                qrPreview = await _api.GetPaymentPreviewAsync(
+                    orderId.Value,
+                    campaignId);
+
+                if (qrPreview is null)
+                {
+                    MessageBox.Show("Không tải được thông tin QR thanh toán.");
+                    return;
+                }
+
+                var confirmedTransfer = await ShowVietQrDialogAsync(qrPreview);
+                if (!confirmedTransfer)
+                    return;
+            }
+
+            var payment = await _api.CreatePaymentAsync(
+                orderId.Value,
+                method,
+                campaignId,
+                _selectedCustomer?.Id,
+                transactionRef: method == 1 ? qrPreview?.TransferContent : null);
+
             if (payment is null)
             {
                 MessageBox.Show("Thanh toán thất bại. Vui lòng thử lại.");
                 return;
             }
-
-            if (method == 1 && !string.IsNullOrEmpty(payment.QRCodeContent))
-                ShowVietQrDialog(payment.QRCodeContent, payment.TotalAmount);
 
             // Hien hoa don chi tiet (itemized) cho CA HAI phuong thuc thanh toan -
             // Backend da tao san Invoice + Payment trong CUNG 1 luot goi
@@ -930,7 +1124,7 @@ public partial class SalesControl : UserControl
             {
                 var invoiceDetail = await _api.GetInvoiceAsync(payment.InvoiceId);
                 if (invoiceDetail is not null)
-                    ShowInvoiceReceiptDialog(invoiceDetail);
+                    await ShowInvoiceReceiptDialogAsync(invoiceDetail);
                 else
                     MessageBox.Show($"Đã thanh toán thành công. Tổng tiền: {payment.TotalAmount:N0}đ");
             }
@@ -975,22 +1169,143 @@ public partial class SalesControl : UserControl
         }
     }
 
-    // Hien QR that nhan tu Backend (PaymentsController.GenerateVietQrPayload), khong con
-    // dung noi dung demo bia dat nhu truoc.
-    private void ShowVietQrDialog(string qrContent, decimal totalAmount)
+    // Hiển thị QR ngân hàng thật theo số tiền Backend vừa preview.
+    // Chỉ khi Thu ngân xác nhận đã nhận chuyển khoản thì mới tạo Payment/Invoice.
+    private async Task<bool> ShowVietQrDialogAsync(
+        PaymentPreviewOrderDto preview)
     {
-        using var generator = new QRCodeGenerator();
-        using var data = generator.CreateQrCode(qrContent, QRCodeGenerator.ECCLevel.Q);
-        using var qrCode = new PngByteQRCode(data);
-        var bytes = qrCode.GetGraphic(8);
-        using var ms = new MemoryStream(bytes);
+        using var dialog = new Form
+        {
+            Text = "Thanh toán QR / Chuyển khoản",
+            Width = 420,
+            Height = 610,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White,
+        };
 
-        using var dialog = new Form { Text = "Thanh toán VietQR", Width = 300, Height = 380, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false };
-        var pic = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, Image = Image.FromStream(ms) };
-        var lblAmount = new Label { Text = $"{totalAmount:N0}đ", Dock = DockStyle.Bottom, Height = 40, TextAlign = ContentAlignment.MiddleCenter, Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary };
-        dialog.Controls.Add(pic);
-        dialog.Controls.Add(lblAmount);
-        dialog.ShowDialog();
+        var lblTitle = new Label
+        {
+            Text = "QUÉT QR ĐỂ THANH TOÁN",
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 18),
+            Size = new Size(360, 30),
+        };
+
+        var pic = new PictureBox
+        {
+            Location = new Point(75, 58),
+            Size = new Size(260, 260),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.White,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+
+        var lblAmount = new Label
+        {
+            Text = $"{preview.TotalAmount:N0}đ",
+            Font = AppFonts.HeadlineSm,
+            ForeColor = AppColors.Primary,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 326),
+            Size = new Size(360, 34),
+        };
+
+        var lblBank = new Label
+        {
+            Text =
+                $"{preview.BankAccountName}\n" +
+                $"{preview.BankName} · {preview.BankAccountNo}\n" +
+                $"{preview.BankBranch}\n" +
+                $"Nội dung: {preview.TransferContent}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(30, 368),
+            Size = new Size(340, 90),
+        };
+
+        var lblHint = new Label
+        {
+            Text = "Chỉ bấm xác nhận sau khi đã kiểm tra tiền vào tài khoản.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.Error,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(30, 462),
+            Size = new Size(340, 42),
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(44, 515),
+            Size = new Size(130, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnConfirm = new Button
+        {
+            Text = "Đã nhận tiền",
+            DialogResult = DialogResult.OK,
+            Location = new Point(210, 515),
+            Size = new Size(150, 38),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnConfirm.FlatAppearance.BorderSize = 0;
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblTitle,
+            pic,
+            lblAmount,
+            lblBank,
+            lblHint,
+            btnCancel,
+            btnConfirm,
+        });
+
+        dialog.AcceptButton = btnConfirm;
+        dialog.CancelButton = btnCancel;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(preview.QrPayload))
+                throw new InvalidOperationException("Backend chưa trả payload VietQR.");
+
+            using var qrGenerator = new QRCodeGenerator();
+            using var qrData = qrGenerator.CreateQrCode(
+                preview.QrPayload,
+                QRCodeGenerator.ECCLevel.Q);
+            using var qrCode = new QRCode(qrData);
+
+            pic.Image?.Dispose();
+            pic.Image = qrCode.GetGraphic(
+                10,
+                Color.Black,
+                Color.White,
+                true);
+        }
+        catch (Exception ex)
+        {
+            pic.Controls.Add(new Label
+            {
+                Text =
+                    "Không tạo được QR.\n" +
+                    ex.Message,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = AppColors.Error,
+            });
+            btnConfirm.Enabled = false;
+        }
+
+        return dialog.ShowDialog(FindForm()) == DialogResult.OK;
     }
 
     // =====================================================================
@@ -1003,93 +1318,232 @@ public partial class SalesControl : UserControl
     // Hoa don day du kieu bien lai: liet ke tung mon (da loai bo mon bi huy o
     // Backend), tam tinh/giam gia/thue/tong cong, phuong thuc + thoi diem thanh
     // toan. Dung chung cho ca 2 luong: vua thanh toan xong VA tra cuu lai tu lich su.
-    private void ShowInvoiceReceiptDialog(InvoiceDetailDto invoice)
+    private async Task ShowInvoiceReceiptDialogAsync(
+        InvoiceDetailDto invoice,
+        string receiptTitle = "HÓA ĐƠN THANH TOÁN",
+        bool showPaymentQr = false)
     {
         using var dialog = new Form
         {
-            Text = $"Hóa đơn #{invoice.Id}",
-            ClientSize = new Size(480, 660),
+            Text = $"Bill #{invoice.Id}",
+            ClientSize = new Size(460, 790),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
+            BackColor = Color.FromArgb(238, 238, 238),
         };
 
-        var lblShop = new Label { Text = "QUÁN ĂN - HÓA ĐƠN THANH TOÁN", Font = AppFonts.LabelLg, Location = new Point(20, 16), AutoSize = true };
-
-        var statusIndex = Math.Clamp(invoice.Status, 0, InvoiceStatusLabels.Length - 1);
-        var lblStatus = new Label
+        var paper = new Panel
         {
-            Text = InvoiceStatusLabels[statusIndex],
-            Font = AppFonts.LabelMd,
-            ForeColor = statusIndex == 1 ? AppColors.Success : AppColors.Outline,
-            Location = new Point(20, 42),
-            AutoSize = true,
+            Location = new Point(18, 14),
+            Size = new Size(424, 720),
+            BackColor = Color.White,
+            AutoScroll = true,
+        };
+        dialog.Controls.Add(paper);
+
+        var shopName = new Label
+        {
+            Text = string.IsNullOrWhiteSpace(invoice.ShopName)
+                ? "Lẩu Bò Nhà Gỗ Sài Gòn"
+                : invoice.ShopName,
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(12, 14),
+            Size = new Size(400, 30),
         };
 
-        var lblMeta = new Label
+        var shopAddress = new Label
         {
-            Text = $"{(invoice.TableName.StartsWith("Mang về") ? invoice.TableName : $"Bàn: {invoice.TableName}")}    Thu ngân: {invoice.CashierName}\n{invoice.InvoiceDate:HH:mm dd/MM/yyyy}",
+            Text = invoice.ShopAddress,
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(20, 68),
-            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, 44),
+            Size = new Size(384, 34),
+        };
+
+        var lblTitle = new Label
+        {
+            Text = receiptTitle,
+            Font = AppFonts.HeadlineSm,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(12, 82),
+            Size = new Size(400, 30),
+        };
+
+        var paymentTime = invoice.Payments
+            .OrderBy(p => p.PaymentTime)
+            .LastOrDefault()?.PaymentTime
+            ?? invoice.InvoiceDate;
+
+        var referenceText = invoice.Id > 0
+            ? $"Số HĐ/Order: #{invoice.Id}"
+            : "Phiếu tạm tính chưa tạo hóa đơn";
+
+        var cashierLine = string.IsNullOrWhiteSpace(invoice.CashierName)
+            ? ""
+            : $"\nThu ngân: {invoice.CashierName}";
+
+        var meta = new Label
+        {
+            Text =
+                $"{referenceText}\n" +
+                $"Bàn: {invoice.TableName}    Ngày: {paymentTime:dd/MM/yyyy}\n" +
+                $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {(receiptTitle == "PHIẾU TẠM TÍNH" ? "-" : paymentTime.ToString("HH:mm"))}\n" +
+                $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}" +
+                cashierLine,
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurface,
+            Location = new Point(20, 118),
+            Size = new Size(384, 88),
         };
 
         var flowItems = new FlowLayoutPanel
         {
-            Location = new Point(20, 120),
-            Size = new Size(440, 340),
+            Location = new Point(20, 214),
+            Size = new Size(384, 230),
             AutoScroll = true,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.White,
         };
 
         if (invoice.Items.Count == 0)
         {
-            flowItems.Controls.Add(new Label { Text = "(Không có món nào)", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(6) });
+            flowItems.Controls.Add(new Label
+            {
+                Text = "(Không có món nào)",
+                Font = AppFonts.BodyMd,
+                ForeColor = AppColors.OnSurfaceVariant,
+                AutoSize = true,
+                Margin = new Padding(6),
+            });
         }
         else
         {
             foreach (var line in invoice.Items)
-                flowItems.Controls.Add(BuildInvoiceLineRow(line, !string.Equals(invoice.OrderType, "MangVe", StringComparison.OrdinalIgnoreCase)));
+                flowItems.Controls.Add(
+                    BuildInvoiceLineRow(
+                        line,
+                        !string.Equals(
+                            invoice.OrderType,
+                            "MangVe",
+                            StringComparison.OrdinalIgnoreCase)));
         }
 
-        var lblSubtotal = new Label { Text = $"Tạm tính:            {invoice.SubTotal:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 474), AutoSize = true };
-        var lblDiscount = new Label { Text = $"Giảm giá:            {invoice.DiscountAmount:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 498), AutoSize = true };
-        var lblTax = new Label { Text = $"Thuế:                 {invoice.TaxAmount:N0}đ", Font = AppFonts.BodyMd, Location = new Point(20, 522), AutoSize = true };
-        var lblTotal = new Label { Text = $"TỔNG CỘNG: {invoice.TotalAmount:N0}đ", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(20, 550), AutoSize = true };
-
-        var paymentText = invoice.Payments.Count == 0
-            ? "Chưa ghi nhận thanh toán"
-            : string.Join(", ", invoice.Payments.Select(p =>
-                $"{PaymentMethodLabels[Math.Clamp(p.Method, 0, PaymentMethodLabels.Length - 1)]} · {p.Amount:N0}đ · {p.PaymentTime:HH:mm dd/MM}"));
-        var lblPayment = new Label
+        var totalQty = invoice.Items.Sum(x => x.Quantity);
+        var lblTotals = new Label
         {
-            Text = $"Thanh toán: {paymentText}",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(20, 588),
-            MaximumSize = new Size(440, 0),
-            AutoSize = true,
+            Text =
+                $"Tổng số món: {totalQty:N0}\n" +
+                $"Tạm tính: {invoice.SubTotal:N0}đ\n" +
+                (invoice.DiscountAmount > 0
+                    ? $"Giảm giá: -{invoice.DiscountAmount:N0}đ\n"
+                    : "") +
+                $"TỔNG TIỀN: {invoice.TotalAmount:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 454),
+            Size = new Size(384, invoice.DiscountAmount > 0 ? 82 : 64),
         };
 
-        var btnClose = new Button { Text = "Đóng", Location = new Point(170, 618), Size = new Size(140, 34), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var qrTop = invoice.DiscountAmount > 0 ? 542 : 524;
+        var picQr = new PictureBox
+        {
+            Location = new Point(122, qrTop),
+            Size = new Size(180, 180),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.White,
+        };
 
-        dialog.Controls.Add(lblShop);
-        dialog.Controls.Add(lblStatus);
-        dialog.Controls.Add(lblMeta);
-        dialog.Controls.Add(flowItems);
-        dialog.Controls.Add(lblSubtotal);
-        dialog.Controls.Add(lblDiscount);
-        dialog.Controls.Add(lblTax);
-        dialog.Controls.Add(lblTotal);
-        dialog.Controls.Add(lblPayment);
+        var lblBank = new Label
+        {
+            Text =
+                $"{invoice.BankAccountName}\n" +
+                $"{invoice.BankName} · {invoice.BankAccountNo}\n" +
+                $"{invoice.BankBranch}\n" +
+                $"Nội dung: {invoice.TransferContent}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(20, qrTop + 184),
+            Size = new Size(384, 72),
+        };
+
+        paper.Controls.Add(shopName);
+        paper.Controls.Add(shopAddress);
+        paper.Controls.Add(lblTitle);
+        paper.Controls.Add(meta);
+        paper.Controls.Add(flowItems);
+        paper.Controls.Add(lblTotals);
+
+        if (showPaymentQr && CanViewPaymentReceiptQr)
+        {
+            paper.Controls.Add(picQr);
+            paper.Controls.Add(lblBank);
+        }
+
+        if (showPaymentQr && CanViewPaymentReceiptQr && invoice.TotalAmount > 0)
+        {
+            try
+            {
+                var qrPayload = invoice.QrPayload;
+
+                // Bill tạm tính đã nhận payload cùng lúc với tổng tiền.
+                // Chỉ fallback gọi preview order cho dữ liệu cũ chưa có QrPayload.
+                if (string.IsNullOrWhiteSpace(qrPayload) && invoice.OrderId > 0)
+                {
+                    var preview = await _api.GetPaymentPreviewAsync(invoice.OrderId);
+                    qrPayload = preview?.QrPayload ?? "";
+                }
+
+                if (string.IsNullOrWhiteSpace(qrPayload))
+                    throw new InvalidOperationException("Không có payload VietQR cho bill này.");
+
+                using var qrGenerator = new QRCodeGenerator();
+                using var qrData = qrGenerator.CreateQrCode(
+                    qrPayload,
+                    QRCodeGenerator.ECCLevel.Q);
+                using var qrCode = new QRCode(qrData);
+
+                picQr.Image?.Dispose();
+                picQr.Image = qrCode.GetGraphic(
+                    8,
+                    Color.Black,
+                    Color.White,
+                    true);
+            }
+            catch (Exception ex)
+            {
+                picQr.Controls.Add(new Label
+                {
+                    Text =
+                        "Không tạo được QR.\n" +
+                        ex.Message,
+                    Dock = DockStyle.Fill,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    ForeColor = AppColors.Error,
+                });
+            }
+        }
+
+        var btnClose = new Button
+        {
+            Text = "Đóng",
+            Location = new Point(150, 744),
+            Size = new Size(160, 36),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnClose.FlatAppearance.BorderSize = 0;
+
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
-
-        dialog.ShowDialog();
+        dialog.ShowDialog(FindForm());
     }
 
     private Panel BuildInvoiceLineRow(InvoiceLineDto line, bool showTakeawayTag = false)
@@ -1173,7 +1627,16 @@ public partial class SalesControl : UserControl
         row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
 
         var lblId = new Label { Text = $"Hóa đơn #{inv.Id}", Font = AppFonts.LabelLg, Location = new Point(12, 8), AutoSize = true, Cursor = Cursors.Hand };
-        var lblMeta = new Label { Text = $"{inv.TableName} · {inv.InvoiceDate:HH:mm}", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(12, 30), AutoSize = true, Cursor = Cursors.Hand };
+        var lblMeta = new Label
+        {
+            Text = $"{inv.TableName} · {inv.InvoiceDate:HH:mm} · PV: {(string.IsNullOrWhiteSpace(inv.WaiterName) ? "-" : inv.WaiterName)} · TN: {(string.IsNullOrWhiteSpace(inv.CashierName) ? "-" : inv.CashierName)}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(12, 30),
+            Size = new Size(260, 20),
+            AutoEllipsis = true,
+            Cursor = Cursors.Hand
+        };
         var lblTotal = new Label { Text = $"{inv.TotalAmount:N0}đ", Font = AppFonts.LabelLg, ForeColor = AppColors.Primary, Location = new Point(280, 16), AutoSize = true, Cursor = Cursors.Hand };
 
         row.Controls.Add(lblId);
@@ -1185,7 +1648,7 @@ public partial class SalesControl : UserControl
             try
             {
                 var detail = await _api.GetInvoiceAsync(inv.Id);
-                if (detail is not null) ShowInvoiceReceiptDialog(detail);
+                if (detail is not null) await ShowInvoiceReceiptDialogAsync(detail);
                 else MessageBox.Show("Không tìm thấy hóa đơn này.");
             }
             catch (Exception ex)

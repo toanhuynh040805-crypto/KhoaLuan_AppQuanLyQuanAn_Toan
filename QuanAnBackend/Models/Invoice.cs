@@ -31,8 +31,18 @@ public class Invoice
     public decimal TotalAmount { get; set; }
     public InvoiceStatus Status { get; set; } = InvoiceStatus.ChuaThanhToan;
 
+    // Người thực sự xác nhận thanh toán / nhận tiền (Thu ngân).
     public int? CreatedBy { get; set; }
     public User? CreatedByUser { get; set; }
+
+    // Người gửi yêu cầu thanh toán (Phục vụ).
+    public int? RequestedByUserId { get; set; }
+    public User? RequestedByUser { get; set; }
+
+    // Người thực sự bấm xác nhận thanh toán (Thu ngân/Quản lý).
+    // Tách riêng khỏi CreatedBy legacy để không còn nhập nhằng ý nghĩa.
+    public int? ConfirmedByUserId { get; set; }
+    public User? ConfirmedByUser { get; set; }
 
     public byte[]? RowVer { get; set; }
 

@@ -170,6 +170,24 @@ public class AppDbContext : DbContext
             .HasForeignKey(i => i.CreatedBy)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<Invoice>()
+            .HasOne(i => i.RequestedByUser)
+            .WithMany()
+            .HasForeignKey(i => i.RequestedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Invoice>()
+            .HasOne(i => i.ConfirmedByUser)
+            .WithMany()
+            .HasForeignKey(i => i.ConfirmedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.PaymentRequestedByUser)
+            .WithMany()
+            .HasForeignKey(o => o.PaymentRequestedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<DiscountCampaign>()
             .HasOne(c => c.CreatedByUser)
             .WithMany()

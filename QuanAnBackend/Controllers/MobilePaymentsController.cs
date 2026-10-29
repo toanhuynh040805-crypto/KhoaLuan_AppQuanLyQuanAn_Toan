@@ -23,6 +23,60 @@ public class MobilePaymentsController : ControllerBase
         _db = db;
     }
 
+    [HttpGet("request-lock/{tableId:int}")]
+    [Authorize]
+    public async Task<IActionResult> GetRequestLock(int tableId)
+    {
+        var order = await _db.Orders
+            .AsNoTracking()
+            .Where(o =>
+                o.TableId == tableId &&
+                o.Status == OrderStatus.DangMo)
+            .OrderByDescending(o => o.OrderTime)
+            .Select(o => new
+            {
+                o.OrderId,
+                o.PaymentRequestedByUserId,
+                o.PaymentRequestedAt
+            })
+            .FirstOrDefaultAsync();
+
+        if (order is null)
+        {
+            return Ok(new
+            {
+                isLocked = false,
+                remainingSeconds = 0,
+                requestedByUserId = (int?)null,
+                requestedAt = (DateTime?)null
+            });
+        }
+
+        var now = DateTime.Now;
+        var lockUntil = order.PaymentRequestedAt?.AddMinutes(5);
+        var isLocked =
+            lockUntil.HasValue &&
+            now < lockUntil.Value;
+
+        var remainingSeconds = isLocked
+            ? Math.Max(
+                1,
+                (int)Math.Ceiling(
+                    (lockUntil!.Value - now).TotalSeconds))
+            : 0;
+
+        return Ok(new
+        {
+            orderId = order.OrderId,
+            isLocked,
+            remainingSeconds,
+            requestedByUserId =
+                order.PaymentRequestedByUserId,
+            requestedAt = order.PaymentRequestedAt,
+            lockUntil
+        });
+    }
+
     /// <summary>
     /// Thu ngân/Quản lý lấy danh sách bàn đang có yêu cầu thanh toán.
     /// Việc đã đọc thông báo không làm mất trạng thái chờ; trạng thái chỉ hết

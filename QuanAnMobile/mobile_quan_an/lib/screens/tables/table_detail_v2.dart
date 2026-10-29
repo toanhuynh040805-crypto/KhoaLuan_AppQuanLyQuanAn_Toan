@@ -15,6 +15,7 @@ import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
 import '../../widgets/top_message.dart';
+import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
 import '../order_log/order_log_screen.dart';
 import 'payment_dialog.dart';
@@ -66,6 +67,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
   String _tableLockLostMessage = '';
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
+  Timer? _paymentRequestLockTimer;
+  bool _paymentRequestLocked = false;
+  int _paymentRequestRemainingSeconds = 0;
 
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
@@ -112,6 +116,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
     isPaymentRequested = widget.initialPaymentRequested;
 
     unawaited(_loadMemberCustomer());
+    if (_canRequestPayment && !_canCompletePayment) {
+      unawaited(_loadPaymentRequestLock());
+    }
 
     _dishStatusSubscription = AppServices.realtimeService.dishStatusChanges
         .listen(_handleDishStatus);
@@ -135,12 +142,79 @@ class _TableDetailV2State extends State<TableDetailV2> {
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
+    _paymentRequestLockTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
     super.dispose();
   }
 
+  Future<void> _loadPaymentRequestLock() async {
+    try {
+      final state =
+          await AppServices.paymentService.getPaymentRequestLockState(
+        tableId: currentTable.id,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        isPaymentRequested =
+            isPaymentRequested || state.hasRequest;
+        _paymentRequestLocked = state.isLocked;
+        _paymentRequestRemainingSeconds =
+            state.remainingSeconds;
+      });
+
+      if (state.isLocked &&
+          state.remainingSeconds > 0) {
+        _startPaymentRequestLockTimer();
+      }
+    } catch (_) {
+      // Không chặn màn bàn nếu endpoint trạng thái khóa tạm mất kết nối.
+    }
+  }
+
+  void _startPaymentRequestLockTimer() {
+    _paymentRequestLockTimer?.cancel();
+
+    if (_paymentRequestRemainingSeconds <= 0) {
+      if (mounted) {
+        setState(() => _paymentRequestLocked = false);
+      }
+      return;
+    }
+
+    _paymentRequestLockTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_paymentRequestRemainingSeconds <= 1) {
+          timer.cancel();
+          setState(() {
+            _paymentRequestRemainingSeconds = 0;
+            _paymentRequestLocked = false;
+          });
+          return;
+        }
+
+        setState(() {
+          _paymentRequestRemainingSeconds -= 1;
+        });
+      },
+    );
+  }
+
+  String get _paymentRequestCountdownLabel {
+    final int seconds = _paymentRequestRemainingSeconds;
+    final int minutes = seconds ~/ 60;
+    final int remain = seconds % 60;
+    return '$minutes:${remain.toString().padLeft(2, '0')}';
+  }
   Future<void> _heartbeatTableLock() async {
     final String token = widget.tableLockToken?.trim() ?? '';
     if (token.isEmpty || _closingAfterPayment || _tableLockLost) return;
@@ -340,6 +414,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _closingAfterPayment = true;
     paymentCompleted = true;
     isPaymentRequested = false;
+    _paymentRequestLocked = false;
+    _paymentRequestRemainingSeconds = 0;
+    _paymentRequestLockTimer?.cancel();
     orderItems.clear();
     currentAmount = 0;
 
@@ -971,7 +1048,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
 
     try {
-      await AppServices.paymentService.requestPayment(
+      final int lockSeconds =
+          await AppServices.paymentService.requestPayment(
         tableId: currentTable.id,
         employeeCode: appEmployee.employeeCode,
       );
@@ -980,7 +1058,10 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
       setState(() {
         isPaymentRequested = true;
+        _paymentRequestLocked = true;
+        _paymentRequestRemainingSeconds = lockSeconds;
       });
+      _startPaymentRequestLockTimer();
 
       TopMessage.show(
         context,
@@ -989,6 +1070,106 @@ class _TableDetailV2State extends State<TableDetailV2> {
       );
     } on ApiException catch (error) {
       if (!mounted) return;
+
+      if (error.statusCode == 409) {
+        await _loadPaymentRequestLock();
+        if (!mounted) return;
+      }
+
+      TopMessage.show(
+        context,
+        message: error.message,
+        type: error.statusCode == 409
+            ? TopMessageType.warning
+            : TopMessageType.error,
+      );
+    }
+  }
+
+  Future<void> _openReceiptPreview() async {
+    if (!_canCompletePayment) {
+      _showRoleDenied('xem bill / mã QR thanh toán');
+      return;
+    }
+
+    if (orderItems.isEmpty || _closingAfterPayment) {
+      return;
+    }
+
+    try {
+      final PaymentPreview preview =
+          await AppServices.paymentService
+              .getPreview(
+        tableId: currentTable.id,
+      );
+
+      if (!mounted) return;
+
+      final List<ReceiptLineView> lines =
+          orderItems
+              .where(
+                (item) =>
+                    item.status != 'Đã hủy',
+              )
+              .map(
+                (item) => ReceiptLineView(
+                  name: item.name,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  lineTotal: item.totalPrice,
+                ),
+              )
+              .toList();
+
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              ReceiptPreviewScreen(
+            title: 'PHIẾU TẠM TÍNH',
+            referenceId:
+                preview.orderId,
+            tableName:
+                _displayTableName(),
+            waiterName:
+                preview.waiterName
+                        .trim()
+                        .isNotEmpty
+                    ? preview.waiterName
+                    : appEmployee
+                        .fullName,
+            orderTime:
+                preview.orderTime,
+            paymentTime: null,
+            items: lines,
+            subTotal:
+                preview.subTotal,
+            discountAmount:
+                preview.discountAmount,
+            totalAmount:
+                preview.totalAmount,
+            shopName:
+                preview.shopName,
+            shopAddress:
+                preview.shopAddress,
+            bankName:
+                preview.bankName,
+            bankAccountNo:
+                preview.bankAccountNo,
+            bankAccountName:
+                preview.bankAccountName,
+            bankBranch:
+                preview.bankBranch,
+            transferContent:
+                preview.transferContent,
+            qrImageUrl:
+                preview.qrImageUrl,
+          ),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
       TopMessage.show(
         context,
         message: error.message,
@@ -1639,6 +1820,17 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
+            if (_canCompletePayment &&
+                orderItems.isNotEmpty &&
+                !_closingAfterPayment)
+              IconButton(
+                tooltip: 'Xem / in bill tạm tính',
+                onPressed:
+                    _openReceiptPreview,
+                icon: const Icon(
+                  Icons.print_outlined,
+                ),
+              ),
             if (_canOrder && orderItems.isNotEmpty && !_closingAfterPayment)
               IconButton(
                 tooltip: 'Yêu cầu xuống bếp',
@@ -2246,10 +2438,12 @@ class _TableDetailV2State extends State<TableDetailV2> {
                             : 'Thanh toán',
                       ),
                     )
-                  : isPaymentRequested
-                  ? const FilledButton(
+                  : _paymentRequestLocked
+                  ? FilledButton(
                       onPressed: null,
-                      child: Text('Đang chờ Thu ngân xác nhận'),
+                      child: Text(
+                        'Đang chờ Thu ngân ($_paymentRequestCountdownLabel)',
+                      ),
                     )
                   : OutlinedButton(
                       onPressed:
@@ -2259,9 +2453,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
                           ? _requestPayment
                           : null,
                       child: Text(
-                        _canRequestPayment
-                            ? 'Khách gọi thanh toán'
-                            : 'Không có quyền yêu cầu thanh toán',
+                        !_canRequestPayment
+                            ? 'Không có quyền yêu cầu thanh toán'
+                            : isPaymentRequested
+                                ? 'Gọi thanh toán lại'
+                                : 'Khách gọi thanh toán',
                       ),
                     ),
             ),
