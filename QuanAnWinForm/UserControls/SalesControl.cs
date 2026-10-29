@@ -1287,7 +1287,7 @@ public partial class SalesControl : UserControl
                 10,
                 Color.Black,
                 Color.White,
-                drawQuietZones: true);
+                true);
         }
         catch (Exception ex)
         {
@@ -1502,7 +1502,7 @@ public partial class SalesControl : UserControl
                     8,
                     Color.Black,
                     Color.White,
-                    drawQuietZones: true);
+                    true);
             }
             catch (Exception ex)
             {
