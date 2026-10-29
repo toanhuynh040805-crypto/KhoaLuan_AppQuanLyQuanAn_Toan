@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme.dart';
 import '../../services/api_client.dart';
 import '../../services/app_services.dart';
+import '../../services/mobile_access_policy.dart';
 import '../../widgets/top_message.dart';
 import 'receipt_preview_screen.dart';
 
@@ -349,20 +350,22 @@ class _InvoiceHistoryScreenState
                         ),
                       ),
                     ),
-                    IconButton(
-                      tooltip:
-                          'Xem / in bill',
-                      onPressed: () =>
-                          _showReceipt(
-                        detail,
-                        rawItems,
-                        payments,
+                    if (MobileAccessPolicy
+                        .canCompletePayment(''))
+                      IconButton(
+                        tooltip:
+                            'Xem / in bill',
+                        onPressed: () =>
+                            _showReceipt(
+                          detail,
+                          rawItems,
+                          payments,
+                        ),
+                        icon: const Icon(
+                          Icons
+                              .print_outlined,
+                        ),
                       ),
-                      icon: const Icon(
-                        Icons
-                            .print_outlined,
-                      ),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 6),
