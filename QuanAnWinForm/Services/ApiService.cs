@@ -113,9 +113,25 @@ public class ApiService
     // customerId/redeemPoints (tùy chọn - BỔ SUNG cho module Khách hàng thân thiết):
     // gắn khách hàng thành viên vào hóa đơn này (tích điểm tự động) và/hoặc dùng
     // điểm sẵn có để giảm giá - xem PaymentsController.Create bên Backend.
-    public async Task<PaymentDto?> CreatePaymentAsync(int orderId, int method, int? campaignId = null, int? customerId = null, int? redeemPoints = null)
+    public async Task<PaymentDto?> CreatePaymentAsync(
+        int orderId,
+        int method,
+        int? campaignId = null,
+        int? customerId = null,
+        int? redeemPoints = null,
+        string? transactionRef = null)
     {
-        var res = await _http.PostAsJsonAsync("/api/payments", new { orderId, method, campaignId, customerId, redeemPoints });
+        var res = await _http.PostAsJsonAsync(
+            "/api/payments",
+            new
+            {
+                orderId,
+                method,
+                campaignId,
+                customerId,
+                redeemPoints,
+                transactionRef
+            });
         if (!res.IsSuccessStatusCode)
         {
             await EnsureSuccessOrThrowMessageAsync(res);
