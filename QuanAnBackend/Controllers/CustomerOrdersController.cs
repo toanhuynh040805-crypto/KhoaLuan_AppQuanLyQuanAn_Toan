@@ -1,5 +1,4 @@
 using System.Data;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -14,7 +13,7 @@ using QuanAnBackend.Services;
 namespace QuanAnBackend.Controllers;
 
 public record CustomerOrderItemRequest(int MenuItemId, int Quantity, string? Note);
-public record CustomerOrderRequest(int TableId, string? ClientRequestId, List<CustomerOrderItemRequest>? Items);
+public record CustomerOrderRequest(int TableId, Guid? ClientRequestId, List<CustomerOrderItemRequest>? Items);
 
 // Đặt món từ web cho khách đã đăng nhập. Giá luôn tính ở server.
 [ApiController]
@@ -27,8 +26,6 @@ public class CustomerOrdersController : ControllerBase
     private const int MaxQuantity = 99;
     private const int MaxNoteLength = 200;
     private const int MaxOpenWebOrders = 3;
-
-    private static readonly Regex RequestIdRegex = new("^[A-Za-z0-9_-]{8,64}$", RegexOptions.Compiled);
 
     private readonly AppDbContext _db;
     private readonly OrderRoutingService _routing;
@@ -84,8 +81,8 @@ public class CustomerOrdersController : ControllerBase
         var customerId = CustomerTokens.GetCustomerId(User);
         if (customerId is null) return Unauthorized();
 
-        var key = request.ClientRequestId?.Trim() ?? "";
-        if (!RequestIdRegex.IsMatch(key))
+        var key = request.ClientRequestId.GetValueOrDefault();
+        if (key == Guid.Empty)
             return Error(400, "INVALID_REQUEST_ID", "Mã yêu cầu không hợp lệ.");
         if (request.TableId <= 0)
             return Error(400, "INVALID_TABLE", "Vui lòng chọn bàn.");
@@ -267,14 +264,16 @@ public class CustomerOrdersController : ControllerBase
     }
 
     // GET api/orders/customer-order/{clientRequestId} -> tra lại đơn theo mã chống trùng (của chính khách)
-    [HttpGet("{clientRequestId}")]
-    public async Task<IActionResult> GetByRequestId(string clientRequestId)
+    [HttpGet("{clientRequestId:guid}")]
+    public async Task<IActionResult> GetByRequestId(Guid clientRequestId)
     {
         var customerId = CustomerTokens.GetCustomerId(User);
         if (customerId is null) return Unauthorized();
 
-        var key = clientRequestId?.Trim() ?? "";
-        var order = RequestIdRegex.IsMatch(key) ? await LoadOrderAsync(key) : null;
+        if (clientRequestId == Guid.Empty)
+            return Error(404, "ORDER_NOT_FOUND", "Không tìm thấy đơn hàng.");
+
+        var order = await LoadOrderAsync(clientRequestId);
 
         if (order is null || order.CustomerId != customerId.Value)
             return Error(404, "ORDER_NOT_FOUND", "Không tìm thấy đơn hàng.");
@@ -288,7 +287,7 @@ public class CustomerOrdersController : ControllerBase
     private ObjectResult Error(int status, string code, string message)
         => StatusCode(status, new { code, message });
 
-    private Task<Order?> LoadOrderAsync(string key)
+    private Task<Order?> LoadOrderAsync(Guid key)
         => _db.Orders.AsNoTracking()
             .Include(o => o.Table)
             .Include(o => o.OrderItems).ThenInclude(oi => oi.MenuItem)
