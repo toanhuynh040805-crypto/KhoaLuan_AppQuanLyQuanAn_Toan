@@ -38,10 +38,9 @@ public class ReservationsController : ControllerBase
     {
         if (User.IsInRole("Customer"))
         {
-            var claim = User.FindFirst("UserId")?.Value
-                ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            return int.TryParse(claim, out var customerId) && customerId > 0 &&
-                await _db.Customers.AnyAsync(customer => customer.CustomerId == customerId)
+            var customerId = CustomerTokens.GetCustomerId(User);
+            return customerId.HasValue &&
+                await _db.Customers.AnyAsync(customer => customer.CustomerId == customerId.Value)
                     ? customerId
                     : null;
         }
