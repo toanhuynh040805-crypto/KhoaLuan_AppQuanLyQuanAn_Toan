@@ -383,7 +383,7 @@ public partial class OrderManagementControl : UserControl
         DateTime? time = order?.CreatedAt ?? summary?.OrderTime;
         lblInfoTime.Text = time.HasValue
             ? time.Value.ToString("HH:mm dd/MM/yyyy") +
-              (status == 0 ? $" · Đã mở {TimeDisplay.FormatElapsed(time.Value)}" : "")
+              (status == 0 ? $" · {TimeDisplay.FormatElapsedCompact(time.Value)}" : "")
             : "—";
 
         string? source = order?.Source ?? summary?.Source;
@@ -433,7 +433,7 @@ public partial class OrderManagementControl : UserControl
             Cancelled = cancelled,
             Note = note,
             TimeText = item.CreatedAt > DateTime.MinValue
-                ? $"Gọi {TimeDisplay.FormatClock(item.CreatedAt)} · {TimeDisplay.FormatAgo(item.CreatedAt)}"
+                ? TimeDisplay.FormatClock(item.CreatedAt)
                 : "",
         };
         row.Height = ItemRowPanel.HeightFor(note.Length > 0);
