@@ -11,8 +11,12 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 
-[Route("api/auth")]
+// Legacy password-reset implementation that stored password hashes directly
+// on Customers. Canonical reset flow is CustomerPasswordResetController and
+// CustomerAccounts, matching CustomerAuthController.
+[Route("api/auth-legacy")]
 [ApiController]
+[ApiExplorerSettings(IgnoreApi = true)]
 [AllowAnonymous]
 public class WebPasswordController : ControllerBase
 {
