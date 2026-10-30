@@ -210,7 +210,7 @@ public class OrdersController : ControllerBase
             // Mỗi lần nhân viên bấm xác nhận gọi món là một đợt (batch).
             // Toàn bộ món trong cùng request dùng chung CreatedAt để Bếp/Quầy nước
             // gom đúng một phiếu. Gọi thêm lần sau sẽ có CreatedAt mới và xếp sau.
-            var batchCreatedAt = batchCreatedAt;
+            var batchCreatedAt = DateTime.Now;
 
             var addedItems = new List<AddedOrderItemDto>();
             var realtimeTickets = new List<(string StationName, int Id, string Name, int Quantity, string? Note, bool IsTakeaway)>();
