@@ -287,6 +287,8 @@ public partial class MainForm : Form
     // realtime theo màn hình, nên giữ instance để quay lại gần như tức thì.
     private static bool IsCacheableContent(string key) => key is
         "dashboard" or
+        "tables" or
+        "orders" or
         "menu" or
         "customers" or
         "staff" or
