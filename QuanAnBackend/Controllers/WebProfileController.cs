@@ -31,11 +31,7 @@ public class WebProfileController : ControllerBase
     }
 
     private int GetCurrentCustomerId()
-    {
-        var userIdStr = User.FindFirst("UserId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        int.TryParse(userIdStr, out int customerId);
-        return customerId;
-    }
+        => CustomerTokens.GetCustomerId(User) ?? 0;
 
     [HttpGet("me")]
     public async Task<IActionResult> GetMyProfile()
