@@ -114,8 +114,8 @@ public sealed class CustomerNotificationsController : ControllerBase
 
     private bool TryGetCustomerId(out int customerId)
     {
-        var value = User.FindFirst("UserId")?.Value
-            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return int.TryParse(value, out customerId) && customerId > 0;
+        var resolved = CustomerTokens.GetCustomerId(User);
+        customerId = resolved ?? 0;
+        return customerId > 0;
     }
 }
