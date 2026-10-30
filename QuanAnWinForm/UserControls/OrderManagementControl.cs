@@ -1,6 +1,7 @@
 ﻿using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
+using QuanAnWinForm.Utils;
 using System.Drawing.Drawing2D;
 
 namespace QuanAnWinForm.UserControls;
@@ -380,7 +381,10 @@ public partial class OrderManagementControl : UserControl
         lblInfoStaff.Text = string.IsNullOrWhiteSpace(summary?.EmployeeName) ? "—" : summary!.EmployeeName;
 
         DateTime? time = order?.CreatedAt ?? summary?.OrderTime;
-        lblInfoTime.Text = time.HasValue ? time.Value.ToString("HH:mm dd/MM/yyyy") : "—";
+        lblInfoTime.Text = time.HasValue
+            ? time.Value.ToString("HH:mm dd/MM/yyyy") +
+              (status == 0 ? $" · Đã mở {TimeDisplay.FormatElapsed(time.Value)}" : "")
+            : "—";
 
         string? source = order?.Source ?? summary?.Source;
         lblInfoSource.Text = DataSources.Label(source);
@@ -428,6 +432,9 @@ public partial class OrderManagementControl : UserControl
             Takeaway = item.IsTakeaway,
             Cancelled = cancelled,
             Note = note,
+            TimeText = item.CreatedAt > DateTime.MinValue
+                ? $"Gọi {TimeDisplay.FormatClock(item.CreatedAt)} · {TimeDisplay.FormatAgo(item.CreatedAt)}"
+                : "",
         };
         row.Height = ItemRowPanel.HeightFor(note.Length > 0);
 
@@ -814,9 +821,10 @@ public partial class OrderManagementControl : UserControl
         public bool Takeaway;
         public bool Cancelled;
         public string Note = "";
+        public string TimeText = "";
         private Button? _cancelButton;
 
-        public static int HeightFor(bool hasNote) => hasNote ? 84 : 64;
+        public static int HeightFor(bool hasNote) => hasNote ? 104 : 84;
 
         public ItemRowPanel()
         {
@@ -866,8 +874,11 @@ public partial class OrderManagementControl : UserControl
                 TextRenderer.DrawText(g, "Mang về", FontCaption, chip, AppColors.Primary, TfCenter);
             }
 
+            if (TimeText.Length > 0)
+                TextRenderer.DrawText(g, TimeText, FontSmall, new Rectangle(0, 58, Width, 20), AppColors.OnSurfaceVariant, Tf);
+
             if (Note.Length > 0)
-                TextRenderer.DrawText(g, Note, FontSmall, new Rectangle(0, 58, Width, 20), AppColors.OnSurfaceVariant, Tf);
+                TextRenderer.DrawText(g, Note, FontSmall, new Rectangle(0, 78, Width, 20), AppColors.OnSurfaceVariant, Tf);
 
             using var pen = new Pen(AppColors.OutlineVariant);
             g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
