@@ -388,7 +388,7 @@ public partial class TableManagementControl : UserControl
         var lblTime = new Label
         {
             Text = item.CreatedAt > DateTime.MinValue
-                ? $"Gọi {TimeDisplay.FormatClock(item.CreatedAt)} • {TimeDisplay.FormatAgo(item.CreatedAt)}"
+                ? TimeDisplay.FormatClock(item.CreatedAt)
                 : "",
             Font = AppFonts.LabelMd,
             ForeColor = AppColors.OnSurfaceVariant,
