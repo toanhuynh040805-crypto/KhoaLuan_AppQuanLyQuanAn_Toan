@@ -653,8 +653,15 @@ loginForm.addEventListener('submit', async (event) => {
         try {
             const customer = await profileApi.getMyProfile();
             setCurrentCustomer(customer);
-        } catch {
-            // Không chặn chuyển trang nếu request thông tin phụ gặp lỗi
+        } catch (error) {
+            // Không được chuyển sang Profile nếu Backend từ chối chính phiên vừa đăng nhập.
+            // Trước đây lỗi 401/403 bị nuốt nên token bị client xóa nhưng trang vẫn chuyển,
+            // gây hiện tượng Profile nháy một lần rồi quay lại Login.
+            if (error?.status === 401 || error?.status === 403) {
+                throw error;
+            }
+            // Lỗi phụ không liên quan xác thực (ví dụ mạng chập chờn) vẫn cho phép
+            // giữ phiên để người dùng có thể thử tải lại ở trang tiếp theo.
         }
 
         globalThis.dispatchEvent(new CustomEvent('gusto:session-updated'));
