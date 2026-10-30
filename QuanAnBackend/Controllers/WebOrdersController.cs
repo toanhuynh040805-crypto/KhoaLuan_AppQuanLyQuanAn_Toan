@@ -37,11 +37,7 @@ public class WebOrdersController : ControllerBase
     }
 
     private int GetCurrentCustomerId()
-    {
-        var userIdStr = User.FindFirst("UserId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        int.TryParse(userIdStr, out int customerId);
-        return customerId;
-    }
+        => CustomerTokens.GetCustomerId(User) ?? 0;
 
     [HttpPost("customer-order")]
     public async Task<IActionResult> CreateCustomerOrder([FromBody] WebOrderRequestDto request)
