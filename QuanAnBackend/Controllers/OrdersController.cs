@@ -1424,7 +1424,8 @@ public class OrdersController : ControllerBase
                 oi.IsTakeaway,
                 KitchenStatus = oi.Status,
                 oi.CancelReason,
-                oi.RowVer
+                oi.RowVer,
+                oi.CreatedAt
             })
         });
     }
