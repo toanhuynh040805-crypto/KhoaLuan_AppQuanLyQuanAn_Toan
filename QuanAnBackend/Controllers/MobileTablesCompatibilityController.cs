@@ -40,7 +40,8 @@ public class MobileTablesCompatibilityController : ControllerBase
     // PUT api/tables/{id}/receive
     // Nhan ban trong hoac nhan ban da dat.
     // =========================================================
-    [HttpPut("{id}/receive")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpPut("compat/{id}/receive")]
     public async Task<IActionResult> Receive(
         int id,
         [FromBody] ReceiveTableRequest request)
@@ -182,7 +183,8 @@ public class MobileTablesCompatibilityController : ControllerBase
     // PUT api/tables/{id}/release
     // Tra ban. Neu order dang mo van con mon thi chan de tranh mat du lieu.
     // =========================================================
-    [HttpPut("{id}/release")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpPut("compat/{id}/release")]
     public async Task<IActionResult> Release(int id)
     {
         var connection = _db.Database.GetDbConnection();
