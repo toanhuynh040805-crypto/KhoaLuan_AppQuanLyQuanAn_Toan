@@ -10,8 +10,11 @@ namespace QuanAnBackend.Controllers;
 
 // Hồ sơ + lịch sử đơn của khách web đang đăng nhập.
 // CustomerId luôn lấy từ JWT, không nhận từ client.
+// Legacy minimal profile API. Canonical Web profile endpoints live in
+// WebProfileController at /api/customers/me*.
 [ApiController]
-[Route("api/customers/me")]
+[ApiExplorerSettings(IgnoreApi = true)]
+[Route("api/customers-legacy/me")]
 [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
 [CustomerAccess]
 public class CustomerProfileController : ControllerBase

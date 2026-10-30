@@ -97,17 +97,113 @@ public class ApiService
         return res ?? new List<TakeawayOrderSummaryDto>();
     }
 
+    public async Task<PaymentPreviewOrderDto?> GetPaymentPreviewAsync(
+        int orderId,
+        int? campaignId = null)
+    {
+        var url = $"/api/payments/preview/order/{orderId}";
+        if (campaignId.HasValue)
+            url += $"?campaignId={campaignId.Value}";
+
+        return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
+            url,
+            JsonOpts);
+    }
+
+    public async Task<PaymentPreviewOrderDto?> GetReceiptPreviewAsync(
+        decimal amount,
+        int orderId = 0)
+    {
+        var url =
+            $"/api/payments/receipt-preview?amount={Uri.EscapeDataString(amount.ToString(System.Globalization.CultureInfo.InvariantCulture))}&orderId={orderId}";
+
+        return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
+            url,
+            JsonOpts);
+    }
+
+    public async Task<byte[]> GetPaymentQrImageAsync(
+        decimal amount,
+        int orderId = 0)
+    {
+        var amountText = Uri.EscapeDataString(
+            amount.ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+
+        var url =
+            $"/api/payments/qr-image?amount={amountText}&orderId={orderId}";
+
+        using var response = await _http.GetAsync(url);
+        if (!response.IsSuccessStatusCode)
+        {
+            await EnsureSuccessOrThrowMessageAsync(response);
+        }
+
+        return await response.Content.ReadAsByteArrayAsync();
+    }
+
     // customerId/redeemPoints (tùy chọn - BỔ SUNG cho module Khách hàng thân thiết):
     // gắn khách hàng thành viên vào hóa đơn này (tích điểm tự động) và/hoặc dùng
     // điểm sẵn có để giảm giá - xem PaymentsController.Create bên Backend.
-    public async Task<PaymentDto?> CreatePaymentAsync(int orderId, int method, int? campaignId = null, int? customerId = null, int? redeemPoints = null)
+    public async Task<PaymentDto?> CreatePaymentAsync(
+        int orderId,
+        int method,
+        int? campaignId = null,
+        int? customerId = null,
+        int? redeemPoints = null,
+        string? transactionRef = null)
     {
-        var res = await _http.PostAsJsonAsync("/api/payments", new { orderId, method, campaignId, customerId, redeemPoints });
+        var res = await _http.PostAsJsonAsync(
+            "/api/payments",
+            new
+            {
+                orderId,
+                method,
+                campaignId,
+                customerId,
+                redeemPoints,
+                transactionRef
+            });
         if (!res.IsSuccessStatusCode)
         {
             await EnsureSuccessOrThrowMessageAsync(res);
         }
         return await res.Content.ReadFromJsonAsync<PaymentDto>(JsonOpts);
+    }
+
+    public async Task<HashSet<int>> GetPendingPaymentTableIdsAsync()
+    {
+        using var res = await _http.GetAsync("/api/mobile/payments/pending");
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        var rows = await res.Content.ReadFromJsonAsync<List<JsonElement>>(JsonOpts)
+            ?? new List<JsonElement>();
+
+        var result = new HashSet<int>();
+
+        foreach (var row in rows)
+        {
+            if (!row.TryGetProperty("tableId", out var tableIdElement))
+                continue;
+
+            int tableId;
+            if (tableIdElement.ValueKind == JsonValueKind.Number &&
+                tableIdElement.TryGetInt32(out tableId) &&
+                tableId > 0)
+            {
+                result.Add(tableId);
+                continue;
+            }
+
+            if (tableIdElement.ValueKind == JsonValueKind.String &&
+                int.TryParse(tableIdElement.GetString(), out tableId) &&
+                tableId > 0)
+            {
+                result.Add(tableId);
+            }
+        }
+
+        return result;
     }
 
     public async Task<List<TableDto>> GetTablesAsync(int? areaId = null)

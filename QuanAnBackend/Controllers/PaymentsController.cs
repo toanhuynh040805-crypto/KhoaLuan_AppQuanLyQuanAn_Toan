@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -33,6 +34,8 @@ public record RequestPaymentRequest(int TableId, string EmployeeCode);
 public record PaymentPreviewDto(
     int OrderId,
     int TableId,
+    DateTime OrderTime,
+    string WaiterName,
     decimal SubTotal,
     decimal DiscountPercent,
     decimal DiscountAmount,
@@ -41,7 +44,16 @@ public record PaymentPreviewDto(
     decimal TaxAmount,
     decimal VIPRoomFee,
     decimal VIPMinimumGap,
-    decimal TotalAmount
+    decimal TotalAmount,
+    string QrImageUrl,
+    string QrPayload,
+    string BankName,
+    string BankAccountNo,
+    string BankAccountName,
+    string BankBranch,
+    string TransferContent,
+    string ShopName,
+    string ShopAddress
 );
 
 [ApiController]
@@ -52,12 +64,23 @@ public class PaymentsController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
-        public PaymentsController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications, IEmailService email)
+    private readonly IPaymentProvider _paymentProvider;
+    private readonly ILogger<PaymentsController> _logger;
+
+    public PaymentsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        IEmailService email,
+        IPaymentProvider paymentProvider,
+        ILogger<PaymentsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
         _email = email;
+        _paymentProvider = paymentProvider;
+        _logger = logger;
     }
 
     // Mobile compatibility: xem trước hóa đơn nhưng chưa ghi thanh toán.
@@ -66,8 +89,11 @@ public class PaymentsController : ControllerBase
     {
         var orderId = await FindOpenOrderIdForTableAsync(tableId);
         var order = orderId.HasValue
-            ? await _db.Orders.AsNoTracking()
-                .FirstOrDefaultAsync(o => o.OrderId == orderId.Value)
+            ? await _db.Orders
+                .AsNoTracking()
+                .Include(o => o.PaymentRequestedByUser)
+                .FirstOrDefaultAsync(
+                    o => o.OrderId == orderId.Value)
             : null;
 
         if (order is null)
@@ -86,9 +112,17 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
+        // Phục vụ chỉ là người thực sự bấm "Gọi thanh toán".
+        // Không fallback sang người tạo Order vì có thể là Quản lý mở bàn hộ.
+        var waiterName =
+            order.PaymentRequestedByUser?.FullName
+            ?? "";
+
         return Ok(new PaymentPreviewDto(
             order.OrderId,
             tableId,
+            order.OrderTime,
+            waiterName,
             total,
             0,
             0,
@@ -97,8 +131,207 @@ public class PaymentsController : ControllerBase
             0,
             0,
             0,
-            total
+            total,
+            ReceiptProfile.BuildVietQrImageUrl(total, order.OrderId),
+            ReceiptProfile.BuildVietQrPayload(total, order.OrderId),
+            ReceiptProfile.BankCode,
+            ReceiptProfile.BankAccountNo,
+            ReceiptProfile.BankAccountName,
+            ReceiptProfile.BankBranch,
+            ReceiptProfile.TransferContent(order.OrderId),
+            ReceiptProfile.ShopName,
+            ReceiptProfile.ShopAddress
         ));
+    }
+
+    // Dùng cho bill tạm tính WinForms khi giỏ hàng có món chưa lưu.
+    // Amount chỉ dùng để dựng QR xem trước, không dùng để ghi Payment.
+    [HttpGet("receipt-preview")]
+    public IActionResult ReceiptPreview(
+        [FromQuery] decimal amount,
+        [FromQuery] int orderId = 0)
+    {
+        if (amount < 0)
+            return BadRequest(new { message = "Số tiền không hợp lệ" });
+
+        var referenceOrderId = Math.Max(0, orderId);
+        var transferContent = referenceOrderId > 0
+            ? ReceiptProfile.TransferContent(referenceOrderId)
+            : "THANH TOAN TAM TINH";
+
+        var roundedAmount = decimal.ToInt64(
+            decimal.Round(amount, 0, MidpointRounding.AwayFromZero));
+        var description = Uri.EscapeDataString(transferContent);
+        var accountName = Uri.EscapeDataString(ReceiptProfile.BankAccountName);
+        var qrImageUrl =
+            $"https://img.vietqr.io/image/{ReceiptProfile.BankId}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
+            $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
+
+        return Ok(new
+        {
+            orderId = referenceOrderId,
+            totalAmount = amount,
+            qrImageUrl,
+            qrPayload = ReceiptProfile.BuildVietQrPayload(amount, referenceOrderId),
+            bankName = ReceiptProfile.BankCode,
+            bankAccountNo = ReceiptProfile.BankAccountNo,
+            bankAccountName = ReceiptProfile.BankAccountName,
+            bankBranch = ReceiptProfile.BankBranch,
+            transferContent,
+            shopName = ReceiptProfile.ShopName,
+            shopAddress = ReceiptProfile.ShopAddress
+        });
+    }
+
+    // WinForms lấy ảnh QR qua Backend thay vì gọi VietQR trực tiếp.
+    // Cách này tránh lỗi TLS/redirect/User-Agent khác nhau trên máy desktop.
+    [HttpGet("qr-image")]
+    public async Task<IActionResult> GetQrImage(
+        [FromQuery] decimal amount,
+        [FromQuery] int orderId = 0)
+    {
+        if (amount <= 0)
+            return BadRequest(new { message = "Số tiền QR phải lớn hơn 0" });
+
+        var referenceOrderId = Math.Max(0, orderId);
+        var roundedAmount = decimal.ToInt64(
+            decimal.Round(amount, 0, MidpointRounding.AwayFromZero));
+
+        var transferContent = referenceOrderId > 0
+            ? ReceiptProfile.TransferContent(referenceOrderId)
+            : "THANH TOAN TAM TINH";
+
+        var description = Uri.EscapeDataString(transferContent);
+        var accountName = Uri.EscapeDataString(ReceiptProfile.BankAccountName);
+
+        var url =
+            $"https://img.vietqr.io/image/{ReceiptProfile.BankId}-{ReceiptProfile.BankAccountNo}-qr_only.png" +
+            $"?amount={roundedAmount}&addInfo={description}&accountName={accountName}";
+
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = true
+            };
+            using var client = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromSeconds(15)
+            };
+
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 GustoPOS/1.0");
+            client.DefaultRequestHeaders.Accept.ParseAdd("image/png,image/*");
+
+            using var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new
+                    {
+                        message =
+                            $"VietQR trả về lỗi {(int)response.StatusCode}"
+                    });
+            }
+
+            var bytes = await response.Content.ReadAsByteArrayAsync();
+            if (bytes.Length == 0)
+            {
+                return StatusCode(
+                    StatusCodes.Status502BadGateway,
+                    new { message = "VietQR không trả về ảnh QR" });
+            }
+
+            return File(bytes, "image/png");
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new
+                {
+                    message =
+                        $"Không tải được QR từ VietQR: {ex.Message}"
+                });
+        }
+    }
+
+    // WinForms: xem trước đúng số tiền trước khi xác nhận QR.
+    // Chưa tạo Invoice/Payment ở bước này.
+    [HttpGet("preview/order/{orderId:int}")]
+    public async Task<IActionResult> PreviewForOrder(
+        int orderId,
+        [FromQuery] int? campaignId = null)
+    {
+        var order = await _db.Orders
+            .AsNoTracking()
+            .Include(o => o.PaymentRequestedByUser)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId);
+
+        if (order is null)
+            return NotFound(new { message = "Không tìm thấy đơn hàng" });
+
+        if (order.Status == OrderStatus.DaThanhToan)
+            return Conflict(new { message = "Đơn hàng đã được thanh toán" });
+
+        var subTotal = await _db.OrderItems
+            .Where(oi =>
+                oi.OrderId == orderId &&
+                oi.Status != KitchenStatus.DaHuy)
+            .SumAsync(oi => (decimal?)(
+                oi.Quantity *
+                (oi.UnitPrice > 0
+                    ? oi.UnitPrice
+                    : (oi.MenuItem != null
+                        ? oi.MenuItem.Price
+                        : 0))
+            )) ?? 0;
+
+        decimal discountAmount = 0;
+        if (campaignId.HasValue)
+        {
+            var campaign = await _db.DiscountCampaigns
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CampaignId == campaignId.Value);
+
+            if (campaign is null)
+                return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
+            if (!campaign.IsActive)
+                return BadRequest(new { message = "Chương trình khuyến mãi đã bị tắt" });
+
+            var now = DateTime.Now;
+            if (now < campaign.StartDate || now > campaign.EndDate)
+                return BadRequest(new { message = "Chương trình khuyến mãi hiện không còn hiệu lực" });
+            if (campaign.RequireMembership)
+                return BadRequest(new { message = "Chương trình này yêu cầu khách hàng thành viên" });
+
+            discountAmount = Math.Round(
+                subTotal * campaign.DiscountPercent / 100m,
+                0,
+                MidpointRounding.AwayFromZero);
+        }
+
+        var totalAmount = Math.Max(0, subTotal - discountAmount);
+
+        return Ok(new
+        {
+            orderId,
+            orderTime = order.OrderTime,
+            waiterName = order.PaymentRequestedByUser?.FullName ?? "",
+            subTotal,
+            discountAmount,
+            totalAmount,
+            qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(totalAmount, orderId),
+            qrPayload = ReceiptProfile.BuildVietQrPayload(totalAmount, orderId),
+            bankName = ReceiptProfile.BankCode,
+            bankAccountNo = ReceiptProfile.BankAccountNo,
+            bankAccountName = ReceiptProfile.BankAccountName,
+            bankBranch = ReceiptProfile.BankBranch,
+            transferContent = ReceiptProfile.TransferContent(orderId),
+            shopName = ReceiptProfile.ShopName,
+            shopAddress = ReceiptProfile.ShopAddress
+        });
     }
 
     // Mobile compatibility: Phục vụ gửi yêu cầu tới Thu ngân, chưa thanh toán ngay.
@@ -107,11 +340,22 @@ public class PaymentsController : ControllerBase
     public async Task<IActionResult> RequestPaymentForMobile(
         [FromBody] RequestPaymentRequest request)
     {
+        if (!int.TryParse(
+                User.FindFirstValue(ClaimTypes.NameIdentifier),
+                out var requesterUserId))
+        {
+            return Unauthorized(new
+            {
+                message = "Không xác định được tài khoản gọi thanh toán"
+            });
+        }
+
         var employee = await _db.Employees
-            .FirstOrDefaultAsync(e => e.EmployeeCode == request.EmployeeCode);
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.UserId == requesterUserId);
 
         if (employee is null)
-            return BadRequest(new { message = "Không tìm thấy nhân viên đang đăng nhập" });
+            return BadRequest(new { message = "Tài khoản hiện tại không gắn với nhân viên" });
 
         var requestOrderId = await FindOpenOrderIdForTableAsync(request.TableId);
                 var order = requestOrderId.HasValue
@@ -142,6 +386,63 @@ public class PaymentsController : ControllerBase
 
         var tableName = order.Table?.TableName ?? $"Bàn #{request.TableId}";
 
+        // Một yêu cầu thanh toán giữ quyền trong 5 phút.
+        // Trong thời gian này KHÔNG ai (kể cả chính người vừa bấm) được gọi lại.
+        // Sau 5 phút mà Order vẫn chưa thanh toán thì người khác có thể tạo yêu cầu mới,
+        // và người đó trở thành "Phục vụ" của hóa đơn.
+        var now = DateTime.Now;
+        var requestLockDuration = TimeSpan.FromMinutes(5);
+
+        if (order.PaymentRequestedAt.HasValue)
+        {
+            var lockUntil = order.PaymentRequestedAt.Value.Add(requestLockDuration);
+            if (now < lockUntil)
+            {
+                var remaining = lockUntil - now;
+                var remainingSeconds = Math.Max(
+                    1,
+                    (int)Math.Ceiling(remaining.TotalSeconds));
+
+                return Conflict(new
+                {
+                    message =
+                        $"Bàn này đã có yêu cầu thanh toán. Vui lòng chờ {remainingSeconds / 60}:{remainingSeconds % 60:00} trước khi gọi lại.",
+                    retryAfterSeconds = remainingSeconds,
+                    lockUntil,
+                    requestedByUserId = order.PaymentRequestedByUserId
+                });
+            }
+        }
+
+        // Lưu audit ngay trên Order: đây là nguồn duy nhất để xác định "Phục vụ".
+        order.PaymentRequestedByUserId = requesterUserId;
+        order.PaymentRequestedAt = now;
+
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Hai thiết bị bấm gần như cùng lúc: RowVer chỉ cho request đầu tiên thắng.
+            await _db.Entry(order).ReloadAsync();
+
+            var lockUntil = (order.PaymentRequestedAt ?? DateTime.Now)
+                .Add(requestLockDuration);
+            var remainingSeconds = Math.Max(
+                1,
+                (int)Math.Ceiling((lockUntil - DateTime.Now).TotalSeconds));
+
+            return Conflict(new
+            {
+                message =
+                    $"Bàn này vừa có người khác gọi thanh toán. Vui lòng chờ {remainingSeconds / 60}:{remainingSeconds % 60:00} trước khi gọi lại.",
+                retryAfterSeconds = remainingSeconds,
+                lockUntil,
+                requestedByUserId = order.PaymentRequestedByUserId
+            });
+        }
+
         await _notifications.CreateForPermissionAsync(
             "Yêu cầu thanh toán",
             $"{tableName} đang yêu cầu thanh toán",
@@ -155,7 +456,7 @@ public class PaymentsController : ControllerBase
             "Đã gửi yêu cầu thanh toán",
             $"{tableName} đã gửi yêu cầu thanh toán đến Thu ngân.",
             NotificationType.DonHang,
-            targetUserId: employee.UserId,
+            targetUserId: requesterUserId,
             relatedEntityType: "Order",
             relatedEntityId: order.OrderId
         );
@@ -172,7 +473,10 @@ public class PaymentsController : ControllerBase
         {
             orderId = order.OrderId,
             tableId = request.TableId,
-            requestedByUserId = employee.UserId
+            requestedByUserId = requesterUserId,
+            requestedAt = order.PaymentRequestedAt,
+            lockUntil = order.PaymentRequestedAt?.AddMinutes(5),
+            retryAfterSeconds = 300
         });
     }
 
@@ -190,6 +494,17 @@ public class PaymentsController : ControllerBase
         if (order is null) return NotFound();
         if (order.Status == OrderStatus.DaThanhToan)
             return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
+
+        if (!int.TryParse(
+                User.FindFirstValue(ClaimTypes.NameIdentifier),
+                out var cashierUserId))
+        {
+            return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
+        }
+
+        // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
+        // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
+        var requestedByUserId = order.PaymentRequestedByUserId;
 
         // Tinh truc tiep tu OrderItems de khong phu thuoc vao du lieu TotalAmount
         // cu/stale trong cac database da seed hoac nang cap truoc day.
@@ -274,7 +589,10 @@ public class PaymentsController : ControllerBase
             AppliedCampaignId = campaign?.CampaignId,
             TaxAmount = 0,
             TotalAmount = netTotal,
-            Status = InvoiceStatus.DaThanhToan
+            Status = InvoiceStatus.DaThanhToan,
+            CreatedBy = cashierUserId, // legacy compatibility
+            RequestedByUserId = requestedByUserId,
+            ConfirmedByUserId = cashierUserId
         };
         _db.Invoices.Add(invoice);
         await _db.SaveChangesAsync();
@@ -328,9 +646,9 @@ public class PaymentsController : ControllerBase
             }
         }
 
-        var qrContent = method == PaymentMethod.ChuyenKhoan
-            ? GenerateVietQrPayload(netTotal, order.OrderId)
-            : null;
+        var qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(
+            netTotal,
+            order.OrderId);
 
         var payment = new Payment
         {
@@ -339,7 +657,7 @@ public class PaymentsController : ControllerBase
             Amount = netTotal,
             PaymentTime = DateTime.Now,
             Status = PaymentStatus.ThanhCong,
-            TransactionRef = request.TransactionRef ?? qrContent
+            TransactionRef = request.TransactionRef
         };
         _db.Payments.Add(payment);
 
@@ -393,6 +711,7 @@ public class PaymentsController : ControllerBase
             notification.IsRead = true;
 
         // Trả bàn về trạng thái Trống sau khi thanh toán xong
+        var finishedReservations = new List<Reservation>();
         if (order.Table is not null)
         {
             order.Table.Status = TableStatus.Trong;
@@ -402,7 +721,7 @@ public class PaymentsController : ControllerBase
             // du khach da tra ban tu lau, khien no tiep tuc bi tinh la "con hieu
             // luc" va chan khach MOI dat lai chinh khung gio do (xem
             // ReservationsController, phan kiem tra trung lich).
-            var finishedReservations = await _db.Reservations
+            finishedReservations = await _db.Reservations
                 .Where(r => r.TableId == order.Table.TableId && r.Status == ReservationStatus.DaNhanBan)
                 .ToListAsync();
             foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
@@ -468,6 +787,42 @@ public class PaymentsController : ControllerBase
             totalAmount = netTotal
         });
 
+        if (customer is not null)
+        {
+            await _notifications.CreateForCustomerAsync(
+                customer.CustomerId,
+                "Thanh toán thành công",
+                $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.",
+                NotificationType.DonHang,
+                $"payment-success:{payment.PaymentId}",
+                "Invoice",
+                invoice.InvoiceId);
+        }
+
+        foreach (var reservation in finishedReservations.Where(reservation => reservation.CustomerId.HasValue))
+        {
+            await _notifications.CreateForCustomerAsync(
+                reservation.CustomerId!.Value,
+                "Đặt bàn đã hoàn tất",
+                "Lượt đặt bàn của bạn đã hoàn tất.",
+                NotificationType.DatBan,
+                $"reservation-status:{reservation.ReservationId}:{(int)ReservationStatus.DaNhanBan}:{(int)ReservationStatus.HoanTat}",
+                "Reservation",
+                reservation.ReservationId);
+        }
+
+        try
+        {
+            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            {
+                orderId = order.OrderId
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to broadcast payment to order-management group for order {OrderId}", order.OrderId);
+        }
+
         // Gửi hóa đơn qua email cho khách hàng thân thiết (nếu có gắn khách và
         // khách có Email) - KHÔNG để lỗi gửi email làm hỏng cả giao dịch thanh
         // toán đã thành công, chỉ ghi log để biết mà không chặn response.
@@ -508,7 +863,14 @@ public class PaymentsController : ControllerBase
             DiscountAmount = discountAmount + loyaltyDiscount,
             TotalAmount = netTotal,
             Method = request.Method,
-            QRCodeContent = qrContent,
+            QRCodeImageUrl = qrImageUrl,
+            QRCodeContent = ReceiptProfile.BuildVietQrPayload(netTotal, order.OrderId),
+            QrPayload = ReceiptProfile.BuildVietQrPayload(netTotal, order.OrderId),
+            BankName = ReceiptProfile.BankCode,
+            BankAccountNo = ReceiptProfile.BankAccountNo,
+            BankAccountName = ReceiptProfile.BankAccountName,
+            BankBranch = ReceiptProfile.BankBranch,
+            TransferContent = ReceiptProfile.TransferContent(order.OrderId),
             IsPaid = payment.Status == PaymentStatus.ThanhCong,
             CustomerId = customer?.CustomerId,
             PointsEarned = earnedPoints,
@@ -517,12 +879,6 @@ public class PaymentsController : ControllerBase
             LoyaltyPointBalance = customer?.LoyaltyPoint,
             EmailSent = emailSent
         });
-    }
-
-    private string GenerateVietQrPayload(decimal amount, int orderId)
-    {
-        // Placeholder: thay bằng gọi API VietQR.io thật, truyền số tiền + nội dung "DH{orderId}"
-        return $"VIETQR|AMOUNT={amount}|CONTENT=DH{orderId}";
     }
 
     // Đơn mang về = OrderType MangVe (tạo ở WinForm) HOẶC bàn thuộc khu vực "Mang về" (tạo ở Mobile).

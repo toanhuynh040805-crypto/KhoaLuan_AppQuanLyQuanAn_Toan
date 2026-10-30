@@ -8,7 +8,8 @@ public enum NotificationType
     DatBan,
     CaLam,
     HeThong,
-    KhuyenMai
+    KhuyenMai,
+    TaiKhoan
 }
 
 public class Notification
@@ -22,9 +23,12 @@ public class Notification
     // HOẶC TargetUserId (báo cho ĐÚNG 1 người, vd nhân viên vừa được giao việc).
     public string? TargetRole { get; set; }
     public int? TargetUserId { get; set; }
+    public int? CustomerId { get; set; }
+    public Customer? Customer { get; set; }
 
     public string? RelatedEntityType { get; set; } // "Order", "Reservation", "StaffTask"...
     public int? RelatedEntityId { get; set; }
+    public string? EventKey { get; set; }
 
     public bool IsRead { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.Now;

@@ -63,6 +63,22 @@ public class WinFormsCompatibilitySchemaService
             IF COL_LENGTH(N'dbo.MenuItems', N'ImageUrl') IS NULL
                 ALTER TABLE dbo.MenuItems ADD ImageUrl NVARCHAR(500) NULL;
 
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NULL
+                ALTER TABLE dbo.Invoices ADD RequestedByUserId INT NULL;
+
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NULL
+                ALTER TABLE dbo.Invoices ADD ConfirmedByUserId INT NULL;
+
+            IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NULL
+                ALTER TABLE dbo.Orders ADD PaymentRequestedByUserId INT NULL;
+
+            IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedAt') IS NULL
+                ALTER TABLE dbo.Orders ADD PaymentRequestedAt DATETIME2 NULL;
+
             IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
             BEGIN
                 IF EXISTS (
@@ -107,6 +123,40 @@ public class WinFormsCompatibilitySchemaService
                     ADD CONSTRAINT FK_ShiftAssignments_Areas
                     FOREIGN KEY (AreaId) REFERENCES dbo.Areas(AreaId);
             END;
+
+            IF OBJECT_ID(N'dbo.FK_Invoices_RequestedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Invoices
+                    ADD CONSTRAINT FK_Invoices_RequestedByUser
+                    FOREIGN KEY (RequestedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF OBJECT_ID(N'dbo.FK_Invoices_ConfirmedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Invoices
+                    ADD CONSTRAINT FK_Invoices_ConfirmedByUser
+                    FOREIGN KEY (ConfirmedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF OBJECT_ID(N'dbo.FK_Orders_PaymentRequestedByUser', N'F') IS NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+            BEGIN
+                ALTER TABLE dbo.Orders
+                    ADD CONSTRAINT FK_Orders_PaymentRequestedByUser
+                    FOREIGN KEY (PaymentRequestedByUserId) REFERENCES dbo.Users(UserId);
+            END;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE name = N'IX_Invoices_CreatedBy_InvoiceDate'
+                  AND object_id = OBJECT_ID(N'dbo.Invoices')
+            )
+               AND COL_LENGTH(N'dbo.Invoices', N'CreatedBy') IS NOT NULL
+                CREATE INDEX IX_Invoices_CreatedBy_InvoiceDate
+                    ON dbo.Invoices(CreatedBy, InvoiceDate);
+
             IF NOT EXISTS (SELECT 1 FROM sys.indexes
                             WHERE name = N'IX_Reservations_Customer'
                              AND object_id = OBJECT_ID(N'dbo.Reservations'))
@@ -143,6 +193,55 @@ public class WinFormsCompatibilitySchemaService
                 UPDATE dbo.Orders
                 SET OrderType = N'TaiBan'
                 WHERE OrderType IS NULL OR LTRIM(RTRIM(OrderType)) = N'';
+            END;
+
+            -- Backfill actor audit cho dữ liệu đã có trước bản nâng cấp.
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'CreatedBy') IS NOT NULL
+            BEGIN
+                UPDATE dbo.Invoices
+                SET ConfirmedByUserId = CreatedBy
+                WHERE ConfirmedByUserId IS NULL
+                  AND CreatedBy IS NOT NULL;
+            END;
+
+            IF OBJECT_ID(N'dbo.Notifications', N'U') IS NOT NULL
+               AND OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedAt') IS NOT NULL
+            BEGIN
+                UPDATE o
+                SET
+                    PaymentRequestedByUserId = req.TargetUserId,
+                    PaymentRequestedAt = req.CreatedAt
+                FROM dbo.Orders o
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        n.TargetUserId,
+                        n.CreatedAt
+                    FROM dbo.Notifications n
+                    WHERE n.Title = N'Đã gửi yêu cầu thanh toán'
+                      AND n.RelatedEntityType = N'Order'
+                      AND n.RelatedEntityId = o.OrderId
+                      AND n.TargetUserId IS NOT NULL
+                    ORDER BY n.CreatedAt DESC, n.NotificationId DESC
+                ) req
+                WHERE o.PaymentRequestedByUserId IS NULL
+                  AND req.TargetUserId IS NOT NULL;
+            END;
+
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'RequestedByUserId') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NOT NULL
+            BEGIN
+                UPDATE i
+                SET RequestedByUserId = o.PaymentRequestedByUserId
+                FROM dbo.Invoices i
+                INNER JOIN dbo.Orders o ON o.OrderId = i.OrderId
+                WHERE i.RequestedByUserId IS NULL
+                  AND o.PaymentRequestedByUserId IS NOT NULL;
             END;
             """);
 

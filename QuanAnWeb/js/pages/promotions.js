@@ -1,5 +1,6 @@
 import { promotionsApi } from '../api/promotionsApi.js?auth-session-2';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
+import { realtimeClient } from '../realtime/realtimeClient.js';
 
 const promotionsListContainer = document.querySelector('[data-promotions-list]');
 
@@ -142,6 +143,23 @@ if (promotionsListContainer) {
             loadPromotions();
         }
     });
+
+    async function reloadPromotionsSilently() {
+        try {
+            const promotions = await promotionsApi.getPublicPromotions();
+            if (promotions.length === 0) {
+                showEmptyState();
+                return;
+            }
+            promotionsListContainer.replaceChildren(...promotions.map(createPromotionCard));
+        } catch (e) {
+            console.debug('Silent promotions reload failed:', e);
+        }
+    }
+
+    realtimeClient.on('PromotionsChanged', reloadPromotionsSilently);
+    realtimeClient.on('sync', reloadPromotionsSilently);
+    realtimeClient.start().catch(() => {});
 
     loadPromotions();
 }

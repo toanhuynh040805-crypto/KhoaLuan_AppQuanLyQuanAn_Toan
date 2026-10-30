@@ -1,4 +1,4 @@
-import { clearCustomerSession, getCustomerToken, setCustomerAccessToken } from './session.js?auth-session-2';
+import { clearCustomerSession, getCustomerToken, isCustomerSessionRemembered, setCustomerAccessToken } from './session.js?auth-session-2';
 import { API_BASE_URL } from './config.js';
 let refreshPromise = null;
 
@@ -12,11 +12,14 @@ const statusMessages = {
 };
 
 export class ApiError extends Error {
-    constructor(message, { status = null, code = 'API_ERROR', cause } = {}) {
+    constructor(message, { status = null, code = 'API_ERROR', field = null, errors = null, data = null, cause } = {}) {
         super(message, { cause });
         this.name = 'ApiError';
         this.status = status;
         this.code = code;
+        this.field = field;
+        this.errors = errors;
+        this.data = data;
     }
 }
 
@@ -43,25 +46,36 @@ async function parseResponse(response) {
 }
 
 function isSessionEndpoint(endpoint) {
-    return /^\/customers\/(login|register|refresh|logout)(?:\?|$)/i.test(endpoint);
+    return /^\/(customers\/(login|register|refresh|logout)|auth\/(forgot-password|reset-password|google\/(signin|callback|complete-profile)))(?:\?|$)/i.test(endpoint);
+}
+
+function isAnonymousEndpoint(endpoint) {
+    // Lưu ý: /customers/refresh KHÔNG phải endpoint nặc danh vì Backend yêu cầu [Authorize(Roles = "Customer")].
+    // Phải gửi kèm Authorization: Bearer token để làm mới phiên.
+    return /^\/(customers\/(login|register)|auth\/(forgot-password|reset-password|google\/(signin|callback|complete-profile)))(?:\?|$)/i.test(endpoint);
 }
 
 async function refreshAccessToken() {
     if (!refreshPromise) {
         refreshPromise = (async () => {
             try {
+                const token = getCustomerToken();
+                const headers = { Accept: 'application/json' };
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
                 const response = await fetch(`${API_BASE_URL}/customers/refresh`, {
                     method: 'POST',
                     credentials: 'include',
-                    headers: { Accept: 'application/json' }
+                    headers
                 });
                 if (!response.ok) return null;
 
                 const data = await parseResponse(response);
-                const token = data?.accessToken ?? data?.AccessToken;
-                if (typeof token !== 'string' || token.trim() === '') return null;
-                setCustomerAccessToken(token);
-                return token;
+                const newToken = data?.accessToken ?? data?.AccessToken;
+                if (typeof newToken !== 'string' || newToken.trim() === '') return null;
+                setCustomerAccessToken(newToken, isCustomerSessionRemembered());
+                return newToken;
             } catch {
                 return null;
             } finally {
@@ -73,7 +87,8 @@ async function refreshAccessToken() {
 }
 
 async function request(endpoint, options = {}, allowRefreshRetry = true) {
-    const token = getCustomerToken();
+    const isAnonymous = isAnonymousEndpoint(endpoint);
+    const token = isAnonymous ? null : getCustomerToken();
     const headers = new Headers(options.headers ?? {});
     if (options.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
@@ -88,7 +103,7 @@ async function request(endpoint, options = {}, allowRefreshRetry = true) {
         });
     }
 
-    if (response.status === 401 && token && !isSessionEndpoint(endpoint)) {
+    if (response.status === 401 && token && !isAnonymous) {
         if (allowRefreshRetry) {
             const refreshedToken = await refreshAccessToken();
             if (refreshedToken) return request(endpoint, options, false);
@@ -100,15 +115,26 @@ async function request(endpoint, options = {}, allowRefreshRetry = true) {
     const data = await parseResponse(response);
 
     if (!response.ok) {
-        const serverMessage = data && typeof data === 'object'
-            ? (data.message ?? data.Message ?? data.title)
-            : null;
-        const serverCode = data && typeof data === 'object'
-            ? (data.code ?? data.Code)
-            : null;
-        throw new ApiError(typeof serverMessage === 'string' ? serverMessage : (statusMessages[response.status] ?? 'Không thể hoàn tất yêu cầu.'), {
+        let serverMessage = null;
+        let serverCode = null;
+        let serverField = null;
+        let serverErrors = null;
+
+        if (data && typeof data === 'object') {
+            serverMessage = data.message ?? data.Message ?? data.title ?? data.error ?? data.Error;
+            serverCode = data.code ?? data.Code;
+            serverField = data.field ?? data.Field;
+            serverErrors = data.errors ?? data.Errors;
+        } else if (typeof data === 'string' && data.trim()) {
+            serverMessage = data.trim();
+        }
+
+        throw new ApiError(typeof serverMessage === 'string' && serverMessage ? serverMessage : (statusMessages[response.status] ?? 'Không thể hoàn tất yêu cầu.'), {
             status: response.status,
-            code: typeof serverCode === 'string' ? serverCode : `HTTP_${response.status}`
+            code: typeof serverCode === 'string' ? serverCode : `HTTP_${response.status}`,
+            field: serverField,
+            errors: serverErrors,
+            data
         });
     }
 

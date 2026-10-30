@@ -1,49 +1,178 @@
-﻿using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.SignalR.Client;
 using QuanAnWinForm.Models;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace QuanAnWinForm.Services;
 
-public class SignalRService
+public sealed class SignalRService
 {
     private HubConnection? _connection;
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
+    private CancellationTokenSource _lifetimeCts = new();
+    private string? _departmentName;
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     public event Action<NewTicketPayload>? OnNewTicket;
     public event Action<ItemStatusUpdatedPayload>? OnItemStatusUpdated;
     public event Action<OrderItemCancelledPayload>? OnOrderItemCancelled;
 
-    public async Task ConnectAndJoinDepartmentAsync(string departmentName)
+    public bool IsConnected => _connection?.State == HubConnectionState.Connected;
+
+    public async Task ConnectAndJoinDepartmentAsync(
+        string departmentName,
+        CancellationToken cancellationToken = default)
     {
-        _connection = new HubConnectionBuilder()
-            .WithUrl(ApiConfig.HubUrl)
-            .WithAutomaticReconnect()
-            .Build();
+        if (string.IsNullOrWhiteSpace(departmentName))
+            throw new ArgumentException("Department name is required.", nameof(departmentName));
 
-        _connection.On<JsonElement>("NewTicket", raw =>
+        await _connectGate.WaitAsync(cancellationToken);
+        try
         {
-            var payload = JsonSerializer.Deserialize<NewTicketPayload>(raw.GetRawText(), JsonOpts);
-            if (payload is not null) OnNewTicket?.Invoke(payload);
+            if (IsConnected &&
+                string.Equals(_departmentName, departmentName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await DisposeConnectionCoreAsync();
+
+            _departmentName = departmentName;
+            _lifetimeCts.Dispose();
+            _lifetimeCts = new CancellationTokenSource();
+
+            var connection = new HubConnectionBuilder()
+                .WithUrl(ApiConfig.HubUrl, options =>
+                {
+                    var token = SessionContext.Token;
+                    if (!string.IsNullOrWhiteSpace(token))
+                    {
+                        options.AccessTokenProvider =
+                            () => Task.FromResult<string?>(token);
+                    }
+                })
+                .WithAutomaticReconnect(new[]
+                {
+                    TimeSpan.Zero,
+                    TimeSpan.FromSeconds(2),
+                    TimeSpan.FromSeconds(5),
+                    TimeSpan.FromSeconds(10)
+                })
+                .Build();
+
+            RegisterHandlers(connection);
+
+            connection.Reconnected += async _ =>
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(_departmentName))
+                    {
+                        await connection.InvokeAsync(
+                            "JoinDepartmentGroup",
+                            _departmentName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(
+                        $"SignalR rejoin department failed: {ex.Message}");
+                }
+            };
+
+            connection.Closed += ex =>
+            {
+                if (ex is not null)
+                    Debug.WriteLine($"SignalR closed: {ex.Message}");
+                return Task.CompletedTask;
+            };
+
+            _connection = connection;
+
+            using var timeoutCts =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    _lifetimeCts.Token);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+            await connection.StartAsync(timeoutCts.Token);
+            await connection.InvokeAsync(
+                "JoinDepartmentGroup",
+                departmentName,
+                timeoutCts.Token);
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
+    }
+
+    private void RegisterHandlers(HubConnection connection)
+    {
+        connection.On<JsonElement>("NewTicket", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<NewTicketPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null)
+                OnNewTicket?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("ItemStatusUpdated", raw =>
+        connection.On<JsonElement>("ItemStatusUpdated", raw =>
         {
-            var payload = JsonSerializer.Deserialize<ItemStatusUpdatedPayload>(raw.GetRawText(), JsonOpts);
-            if (payload is not null) OnItemStatusUpdated?.Invoke(payload);
+            var payload = JsonSerializer.Deserialize<ItemStatusUpdatedPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null)
+                OnItemStatusUpdated?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("OrderItemCancelled", raw =>
+        connection.On<JsonElement>("OrderItemCancelled", raw =>
         {
-            var payload = JsonSerializer.Deserialize<OrderItemCancelledPayload>(raw.GetRawText(), JsonOpts);
-            if (payload is not null) OnOrderItemCancelled?.Invoke(payload);
+            var payload = JsonSerializer.Deserialize<OrderItemCancelledPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null)
+                OnOrderItemCancelled?.Invoke(payload);
         });
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await _connection.StartAsync();
-        await _connection.InvokeAsync("JoinDepartmentGroup", departmentName);
     }
 
     public async Task DisconnectAsync()
     {
-        if (_connection is not null) await _connection.DisposeAsync();
+        await _connectGate.WaitAsync();
+        try
+        {
+            if (!_lifetimeCts.IsCancellationRequested)
+                _lifetimeCts.Cancel();
+
+            await DisposeConnectionCoreAsync();
+            _departmentName = null;
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
+    }
+
+    private async Task DisposeConnectionCoreAsync()
+    {
+        var connection = _connection;
+        _connection = null;
+
+        if (connection is null)
+            return;
+
+        try
+        {
+            await connection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"SignalR dispose ignored: {ex.Message}");
+        }
     }
 }

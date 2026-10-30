@@ -39,6 +39,10 @@ public class AppDbContext : DbContext
     public DbSet<LoyaltyPointHistory> LoyaltyPointHistories => Set<LoyaltyPointHistory>();
     public DbSet<Notification> Notifications => Set<Notification>();
 
+    public DbSet<OrderReview> OrderReviews => Set<OrderReview>();
+    public DbSet<Feedback> Feedbacks { get; set; }
+    public DbSet<FeedbackItem> FeedbackItems { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<DiningTable>().ToTable("DiningTables", tb => tb.UseSqlOutputClause(false));
@@ -62,6 +66,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Category>().HasKey(c => c.CategoryId);
         modelBuilder.Entity<MenuItem>().HasKey(m => m.MenuItemId);
         modelBuilder.Entity<Order>().HasKey(o => o.OrderId);
+        modelBuilder.Entity<Order>()
+            .HasIndex(o => new { o.CustomerId, o.ClientRequestId })
+            .IsUnique()
+            .HasFilter("[ClientRequestId] IS NOT NULL");
         modelBuilder.Entity<OrderItem>().HasKey(oi => oi.OrderItemId);
         modelBuilder.Entity<KitchenTicket>().HasKey(kt => kt.KitchenTicketId);
         modelBuilder.Entity<DishStatusHistory>().HasKey(h => h.HistoryId);
@@ -77,12 +85,53 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Customer>().HasKey(c => c.CustomerId);
         modelBuilder.Entity<LoyaltyPointHistory>().HasKey(h => h.HistoryId);
         modelBuilder.Entity<Notification>().HasKey(n => n.NotificationId);
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => n.EventKey)
+            .IsUnique()
+            .HasFilter("[EventKey] IS NOT NULL");
+
+        modelBuilder.Entity<OrderReview>().HasKey(review => review.ReviewId);
+        modelBuilder.Entity<OrderReview>()
+            .HasIndex(review => review.OrderItemId)
+            .IsUnique()
+            .HasFilter("[OrderItemId] IS NOT NULL")
+            .HasDatabaseName("UX_OrderReviews_OrderItemId");
+        modelBuilder.Entity<OrderReview>()
+            .HasIndex(review => review.OrderId)
+            .IsUnique()
+            .HasFilter("[OrderItemId] IS NULL")
+            .HasDatabaseName("UX_OrderReviews_OrderId_Experience");
+        modelBuilder.Entity<OrderReview>()
+            .Property(review => review.Comment)
+            .HasMaxLength(1000);
+        modelBuilder.Entity<OrderReview>()
+            .Property(review => review.IsVisible)
+            .HasDefaultValue(true);
+        modelBuilder.Entity<OrderReview>()
+            .Property(review => review.ModerationStatus)
+            .HasMaxLength(16)
+            .HasDefaultValue("Public")
+            .IsRequired();
+        modelBuilder.Entity<OrderReview>()
+            .HasOne(review => review.Order)
+            .WithMany()
+            .HasForeignKey(review => review.OrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OrderReview>()
+            .HasOne(review => review.OrderItem)
+            .WithMany()
+            .HasForeignKey(review => review.OrderItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OrderReview>()
+            .HasOne(review => review.Customer)
+            .WithMany()
+            .HasForeignKey(review => review.CustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Employee>().Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<DiningTable>().Property(t => t.TableType).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<DiningTable>().Property(t => t.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Category>().Property(c => c.CategoryType).HasConversion<string>().HasMaxLength(20);
-        modelBuilder.Entity<Order>().Property(o => o.ClientRequestId).HasMaxLength(64);
         modelBuilder.Entity<Order>().Property(o => o.Source).HasMaxLength(20);
         modelBuilder.Entity<Order>().Property(o => o.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<OrderItem>().Property(oi => oi.Status).HasConversion<string>().HasMaxLength(20);
@@ -93,7 +142,12 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Payment>().Property(p => p.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<ShiftAssignment>().Property(sa => sa.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<StaffTask>().Property(t => t.Status).HasConversion<string>().HasMaxLength(20);
-        modelBuilder.Entity<Reservation>().Property(r => r.Status).HasConversion<string>().HasMaxLength(20);
+        modelBuilder.Entity<Reservation>().Property(r => r.Status)
+            .HasConversion(
+                v => v.ToString(),
+                v => ParseReservationStatus(v))
+            .HasMaxLength(20);
+        modelBuilder.Entity<Reservation>().Property(r => r.Source).HasMaxLength(20);
         modelBuilder.Entity<Reservation>().Property(r => r.Source).HasMaxLength(20);
         modelBuilder.Entity<Customer>().Property(c => c.MemberLevel).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<LoyaltyPointHistory>().Property(h => h.Type).HasConversion<string>().HasMaxLength(20);
@@ -103,6 +157,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<MenuItem>().Property(m => m.RefillPrice).HasColumnType("decimal(18,2)");
         modelBuilder.Entity<Employee>().Property(e => e.Salary).HasColumnType("decimal(18,2)");
         modelBuilder.Entity<Order>().Property(o => o.TotalAmount).HasColumnType("decimal(18,2)");
+        modelBuilder.Entity<Order>().Property(o => o.ClientRequestHash).HasMaxLength(64).IsUnicode(false);
         modelBuilder.Entity<OrderItem>().Property(oi => oi.UnitPrice).HasColumnType("decimal(18,2)");
         modelBuilder.Entity<Invoice>().Property(i => i.SubTotal).HasColumnType("decimal(18,2)");
         modelBuilder.Entity<Invoice>().Property(i => i.DiscountAmount).HasColumnType("decimal(18,2)");
@@ -146,6 +201,18 @@ public class AppDbContext : DbContext
             .HasForeignKey(r => r.CancelledByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<Reservation>()
+            .HasOne(r => r.Customer)
+            .WithMany()
+            .HasForeignKey(r => r.CustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Notification>()
+            .HasOne(n => n.Customer)
+            .WithMany()
+            .HasForeignKey(n => n.CustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<ShiftAssignment>()
             .HasOne(sa => sa.Area)
             .WithMany()
@@ -168,6 +235,24 @@ public class AppDbContext : DbContext
             .HasOne(i => i.CreatedByUser)
             .WithMany()
             .HasForeignKey(i => i.CreatedBy)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Invoice>()
+            .HasOne(i => i.RequestedByUser)
+            .WithMany()
+            .HasForeignKey(i => i.RequestedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Invoice>()
+            .HasOne(i => i.ConfirmedByUser)
+            .WithMany()
+            .HasForeignKey(i => i.ConfirmedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.PaymentRequestedByUser)
+            .WithMany()
+            .HasForeignKey(o => o.PaymentRequestedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<DiscountCampaign>()
@@ -198,5 +283,24 @@ public class AppDbContext : DbContext
         {
             fk.DeleteBehavior = DeleteBehavior.Restrict;
         }
+    }
+
+    public static ReservationStatus ParseReservationStatus(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return ReservationStatus.ChoXacNhan;
+
+        var clean = value.Trim();
+        if (Enum.TryParse<ReservationStatus>(clean, true, out var result))
+            return result;
+
+        return clean switch
+        {
+            "DaDat" => ReservationStatus.DaXacNhan,
+            "DangCho" => ReservationStatus.ChoXacNhan,
+            "Huy" => ReservationStatus.DaHuy,
+            "XacNhan" => ReservationStatus.DaXacNhan,
+            _ => ReservationStatus.ChoXacNhan
+        };
     }
 }

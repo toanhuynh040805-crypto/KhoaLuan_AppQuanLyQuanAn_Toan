@@ -73,13 +73,16 @@
                 <div class="relative">
                     <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">phone</span>
                     <input type="tel" id="phone" required placeholder="Nhập số điện thoại (ví dụ: 0901234567)" 
-                           pattern="[0-9]{10,11}"
-                           title="Vui lòng nhập 10-11 chữ số"
-                           class="w-full pl-10 pr-4 py-2.5 bg-white border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg text-on-surface transition-all">
+                           pattern="[0-9]{9,11}"
+                           maxlength="11"
+                           title="Vui lòng nhập 9-11 chữ số"
+                           aria-describedby="phone-error"
+                           class="w-full pl-10 pr-4 py-2.5 bg-white border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary rounded-lg text-base text-on-surface transition-all">
                 </div>
+                <p id="phone-error" class="hidden text-xs text-error mt-1"></p>
             </div>
 
-            <!-- Lỗi hiển thị -->
+            <!-- Lỗi hiển thị chung -->
             <div id="errorMessage" class="hidden text-error text-sm font-medium bg-red-50 p-3 rounded-lg border border-red-100"></div>
 
             <!-- Nút submit -->
@@ -90,81 +93,93 @@
         </form>
     </div>
 
-    <script>
+    <script type="module">
+        import { authApi } from '../../js/api/authApi.js?auth-session-2';
+        import { saveCustomerSession } from '../../js/api/session.js?auth-session-2';
+
         document.addEventListener('DOMContentLoaded', () => {
-            // Lấy params từ URL (do Backend Redirect trả về)
             const urlParams = new URLSearchParams(window.location.search);
             const email = urlParams.get('email');
             const name = urlParams.get('name');
+            const returnUrl = urlParams.get('returnUrl');
 
-            // Nếu không có email, tức là người dùng truy cập trái phép trang này
             if (!email) {
-                window.location.replace('/pages/auth/login_register.html');
+                window.location.replace('./login_register.html');
                 return;
             }
 
-            // Điền sẵn dữ liệu vào form
             document.getElementById('email').value = email;
             document.getElementById('fullName').value = decodeURIComponent(name || 'Khách hàng');
 
             const form = document.getElementById('completeProfileForm');
+            const phoneInput = document.getElementById('phone');
+            const phoneError = document.getElementById('phone-error');
             const errorDiv = document.getElementById('errorMessage');
             const submitBtn = document.getElementById('submitBtn');
 
+            function setPhoneError(msg) {
+                if (msg) {
+                    phoneError.textContent = msg;
+                    phoneError.classList.remove('hidden');
+                    phoneInput.classList.add('border-error');
+                    phoneInput.setAttribute('aria-invalid', 'true');
+                } else {
+                    phoneError.textContent = '';
+                    phoneError.classList.add('hidden');
+                    phoneInput.classList.remove('border-error');
+                    phoneInput.removeAttribute('aria-invalid');
+                }
+            }
+
+            phoneInput.addEventListener('input', () => {
+                setPhoneError('');
+                errorDiv.classList.add('hidden');
+            });
+
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                
-                // Reset trạng thái
+                setPhoneError('');
                 errorDiv.classList.add('hidden');
+
+                const phone = phoneInput.value.trim();
+                if (!phone) {
+                    setPhoneError('Vui lòng nhập số điện thoại liên hệ.');
+                    phoneInput.focus();
+                    return;
+                }
+                if (!/^\d{9,11}$/.test(phone)) {
+                    setPhoneError('Số điện thoại phải có từ 9 đến 11 chữ số.');
+                    phoneInput.focus();
+                    return;
+                }
+
                 submitBtn.disabled = true;
                 submitBtn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[18px]">autorenew</span> Đang xử lý...';
 
-                const phone = document.getElementById('phone').value;
-
                 try {
-                    // Gọi API Backend CompleteProfile
-                    const response = await fetch('http://localhost:5000/api/auth/google/complete-profile', {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json'
-                        },
-                        body: JSON.stringify({ 
-                            email: email, 
-                            fullName: decodeURIComponent(name || 'Khách hàng'), 
-                            phone: phone 
-                        })
+                    const response = await authApi.completeGoogleProfile({
+                        email: email,
+                        fullName: decodeURIComponent(name || 'Khách hàng'),
+                        phone: phone
                     });
 
-                    let data;
-                    const contentType = response.headers.get("content-type");
-                    if (contentType && contentType.indexOf("application/json") !== -1) {
-                        data = await response.json();
-                    } else {
-                        data = await response.text();
+                    saveCustomerSession(response, true);
+                    globalThis.dispatchEvent(new CustomEvent('gusto:session-updated'));
+                    let targetUrl = returnUrl && !returnUrl.includes('login_register') ? returnUrl : '/pages/profile/index.html';
+                    if (targetUrl === '/profile/index.html' || targetUrl.startsWith('/profile/')) {
+                        targetUrl = `/pages${targetUrl}`;
                     }
-
-                    if (response.ok) {
-                        // Lưu token theo key dùng chung với session.js để đồng bộ với luồng đăng nhập khác
-                        const accessToken = data?.accessToken ?? data?.token ?? data;
-                        if (typeof accessToken === 'string' && accessToken.trim()) {
-                            localStorage.setItem('gusto_customer_access_token', accessToken);
-                            localStorage.setItem('customer_token', accessToken);
-                        }
-                        
-                        // Chuyển hướng về trang chủ web
-                        window.location.replace('/index.html');
-                    } else {
-                        // Lỗi từ backend (ví dụ: trùng số điện thoại)
-                        errorDiv.textContent = typeof data === 'object' ? (data.message || 'Có lỗi xảy ra') : data;
-                        errorDiv.classList.remove('hidden');
-                        submitBtn.disabled = false;
-                        submitBtn.innerHTML = 'Hoàn tất đăng ký <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
-                    }
+                    window.location.replace(targetUrl);
                 } catch (error) {
-                    console.error('Lỗi kết nối', error);
-                    errorDiv.textContent = 'Lỗi kết nối máy chủ. Vui lòng kiểm tra lại mạng.';
-                    errorDiv.classList.remove('hidden');
+                    const msg = error?.message || 'Có lỗi xảy ra khi hoàn tất hồ sơ.';
+                    if (msg.toLowerCase().includes('số điện thoại')) {
+                        setPhoneError(msg);
+                        phoneInput.focus();
+                    } else {
+                        errorDiv.textContent = msg;
+                        errorDiv.classList.remove('hidden');
+                    }
+                } finally {
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = 'Hoàn tất đăng ký <span class="material-symbols-outlined text-[18px]">arrow_forward</span>';
                 }

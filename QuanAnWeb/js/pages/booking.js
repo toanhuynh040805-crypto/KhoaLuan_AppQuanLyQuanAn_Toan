@@ -1,6 +1,12 @@
 import { bookingApi } from '../api/bookingApi.js?auth-session-2';
-import { renderBookingTables } from '../components/bookingView.js';
+import {
+    renderBookingTables,
+    renderBookingTableCards,
+    renderAreaFilterPills,
+    renderBookingTableAlert
+} from '../components/bookingView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
+import { realtimeClient } from '../realtime/realtimeClient.js';
 
 const form = document.querySelector('[data-booking-form]');
 if (form) {
@@ -15,13 +21,30 @@ if (form) {
     const statusElement = document.querySelector('[data-booking-status]');
     const tableStatus = document.querySelector('[data-booking-table-state]');
 
+    const tableSelectorContainer = document.getElementById('booking-table-selector');
+    const tableAlertContainer = document.getElementById('booking-table-alert');
+    const areaFiltersContainer = document.getElementById('booking-area-filters');
+    const availableCountBadge = document.getElementById('booking-available-tables-count');
+    const reloadButton = document.getElementById('btn-reload-tables');
+    const reloadIcon = document.getElementById('icon-reload-tables');
+
     let requestVersion = 0;
     let pending = false;
     let completed = false;
 
+    let currentCandidates = [];
+    let selectedTableId = '';
+    let selectedTableDetails = null;
+    let activeAreaFilter = 'all';
+
     const now = new Date();
     const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     dateInput.min = localToday;
+
+    // Hiển thị trạng thái khởi tạo
+    if (tableSelectorContainer) {
+        renderBookingTableCards(tableSelectorContainer, { state: 'empty-input' });
+    }
 
     function setMessage(element, message, isError = false) {
         if (!element) return;
@@ -74,6 +97,17 @@ if (form) {
         return '';
     }
 
+    function updateSubmitState() {
+        if (!submitButton) return;
+        const hasTable = Boolean(selectedTableId && tableInput.value);
+        const hasValidSchedule = !validateSchedule();
+        const hasValidGuests = !validateGuestCount(guestsInput.value);
+        const hasValidName = !validateName(nameInput.value);
+        const hasValidPhone = !validatePhone(phoneInput.value);
+
+        submitButton.disabled = pending || completed || !hasTable || !hasValidSchedule || !hasValidGuests || !hasValidName || !hasValidPhone;
+    }
+
     function validateBookingForm() {
         return {
             date: validateSchedule(),
@@ -84,132 +118,339 @@ if (form) {
         };
     }
 
-    async function loadAvailability() {
+    function generateAreaCombinations(standardTables, requestedGuests) {
+        if (requestedGuests <= 4) return [];
+        const neededCount = Math.ceil(requestedGuests / 4);
+        if (neededCount < 2) return [];
+
+        const tablesByArea = {};
+        standardTables.forEach((t) => {
+            const areaId = t.areaId ?? t.AreaId ?? 1;
+            const areaName = t.areaName ?? t.AreaName ?? `Khu ${areaId}`;
+            if (!tablesByArea[areaId]) {
+                tablesByArea[areaId] = {
+                    areaId,
+                    areaName,
+                    tables: []
+                };
+            }
+            tablesByArea[areaId].tables.push(t);
+        });
+
+        const combinations = [];
+        Object.values(tablesByArea).forEach((group) => {
+            if (group.tables.length >= neededCount) {
+                const selectedSubTables = group.tables.slice(0, neededCount);
+                const comboIds = selectedSubTables.map((t) => t.tableId ?? t.TableId ?? t.id ?? t.Id).join(',');
+                const comboNames = selectedSubTables.map((t) => t.tableName ?? t.TableName ?? t.name ?? t.Name).join(' + ');
+                const totalCapacity = neededCount * 4;
+                combinations.push({
+                    id: comboIds,
+                    tableId: comboIds,
+                    name: `Ghép ${neededCount} bàn: ${comboNames}`,
+                    tableName: `Ghép ${neededCount} bàn: ${comboNames}`,
+                    capacity: totalCapacity,
+                    areaId: group.areaId,
+                    areaName: group.areaName,
+                    isCombined: true,
+                    tableCount: neededCount,
+                    subTableIds: selectedSubTables.map((t) => Number(t.tableId ?? t.TableId ?? t.id ?? t.Id))
+                });
+            }
+        });
+        return combinations;
+    }
+
+    function processCandidates(rawTables, requestedGuests) {
+        const availableTables = rawTables.filter((t) => t.isAvailable !== false && t.IsAvailable !== false);
+
+        const standardTables = availableTables.filter((t) => {
+            const type = t.tableType ?? t.TableType;
+            const cap = Number(t.capacity ?? t.Capacity ?? 4);
+            const name = (t.tableName ?? t.TableName ?? '').toUpperCase();
+            return type !== 'VIP' && !name.includes('VIP') && cap === 4;
+        });
+
+        const singleCandidates = availableTables.map((t) => {
+            const id = t.tableId ?? t.TableId ?? t.id ?? t.Id;
+            const name = t.tableName ?? t.TableName ?? t.name ?? t.Name ?? `Bàn ${id}`;
+            const capacity = Number(t.capacity ?? t.Capacity ?? 4);
+            const areaId = t.areaId ?? t.AreaId ?? 1;
+            const areaName = t.areaName ?? t.AreaName ?? `Khu ${areaId}`;
+            const type = t.tableType ?? t.TableType;
+            const isVip = type === 'VIP' || name.toUpperCase().includes('VIP') || areaName.toUpperCase().includes('VIP');
+
+            return {
+                id: String(id),
+                tableId: id,
+                name,
+                tableName: name,
+                capacity,
+                areaId,
+                areaName,
+                isVip,
+                isCombined: false,
+                tableCount: 1
+            };
+        });
+
+        // Tạo phương án ghép bàn trong cùng khu vực khi đi từ 5 người trở lên
+        const comboCandidates = generateAreaCombinations(standardTables, requestedGuests);
+
+        // HỢP NHẤT TOÀN BỘ LỰA CHỌN
+        const all = [...singleCandidates, ...comboCandidates];
+
+        // 1. KIỂM SOÁT SỨC CHỨA NGHIÊM NGẶT: Loại bỏ hoàn toàn bàn có capacity < requestedGuests
+        const validCandidates = all.filter((t) => t.capacity >= requestedGuests);
+        if (validCandidates.length === 0) return [];
+
+        // 2. TÌM SỨC CHỨA VỪA VẶN NHẤT (nhỏ nhất trong số các bàn đủ sức chứa)
+        const minCapacity = Math.min(...validCandidates.map((t) => t.capacity));
+
+        validCandidates.forEach((t) => {
+            t.isBestFit = t.capacity === minCapacity;
+        });
+
+        // 3. SẮP XẾP ƯU TIÊN:
+        // - Ưu tiên 1: Chênh lệch sức chứa (capacity - requestedGuests) TĂNG DẦN
+        // - Ưu tiên 2: Bàn đơn trước bàn ghép (nếu chênh lệch bằng nhau)
+        // - Ưu tiên 3: Tên khu vực, tên bàn
+        validCandidates.sort((a, b) => {
+            const diffA = a.capacity - requestedGuests;
+            const diffB = b.capacity - requestedGuests;
+            if (diffA !== diffB) return diffA - diffB;
+            if (Boolean(a.isCombined) !== Boolean(b.isCombined)) {
+                return a.isCombined ? 1 : -1;
+            }
+            if (a.areaName !== b.areaName) return a.areaName.localeCompare(b.areaName);
+            return a.name.localeCompare(b.name);
+        });
+
+        return validCandidates;
+    }
+
+    function renderCurrentView() {
+        if (!tableSelectorContainer) return;
+
+        const requestedGuests = Number(guestsInput.value) || 0;
+
+        if (!currentCandidates || currentCandidates.length === 0) {
+            renderBookingTableCards(tableSelectorContainer, {
+                state: 'no-match',
+                requestedGuests
+            });
+            if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
+            if (availableCountBadge) {
+                availableCountBadge.classList.remove('hidden');
+                availableCountBadge.textContent = '0 bàn trống';
+            }
+            renderBookingTables(tableInput, []);
+            tableInput.value = '';
+            selectedTableId = '';
+            selectedTableDetails = null;
+            updateSubmitState();
+            return;
+        }
+
+        // Tạo danh sách tabs lọc khu vực
+        const areasMap = new Map();
+        currentCandidates.forEach((t) => {
+            const aName = t.areaName || 'Khu vực khác';
+            areasMap.set(aName, (areasMap.get(aName) || 0) + 1);
+        });
+
+        const areasList = [
+            { id: 'all', name: 'Tất cả', count: currentCandidates.length }
+        ];
+        areasMap.forEach((count, aName) => {
+            areasList.push({ id: aName, name: aName, count });
+        });
+
+        if (!areasList.some((a) => a.id === activeAreaFilter)) {
+            activeAreaFilter = 'all';
+        }
+
+        renderAreaFilterPills(areaFiltersContainer, areasList, activeAreaFilter, (newAreaId) => {
+            activeAreaFilter = newAreaId;
+            renderCurrentView();
+        });
+
+        // Lọc danh sách card hiển thị theo tab khu vực
+        const displayed = (activeAreaFilter === 'all')
+            ? currentCandidates
+            : currentCandidates.filter((t) => t.areaName === activeAreaFilter);
+
+        if (availableCountBadge) {
+            availableCountBadge.classList.remove('hidden');
+            availableCountBadge.textContent = `${currentCandidates.length} bàn trống`;
+        }
+
+        renderBookingTableCards(tableSelectorContainer, {
+            tables: displayed,
+            selectedId: selectedTableId,
+            requestedGuests,
+            state: 'loaded',
+            onSelect: handleSelectTable
+        });
+
+        renderBookingTables(tableInput, currentCandidates);
+        tableInput.value = selectedTableId || '';
+        updateSubmitState();
+    }
+
+    function handleSelectTable(table) {
+        const idStr = String(table.id ?? table.tableId);
+        selectedTableId = idStr;
+        selectedTableDetails = table;
+        tableInput.value = idStr;
+
+        // Xóa thông báo cảnh báo trước đó khi khách đã chọn được bàn mới hợp lệ
+        renderBookingTableAlert(tableAlertContainer, '');
+        renderCurrentView();
+        updateSubmitState();
+        if (statusElement) statusElement.textContent = '';
+    }
+
+    async function loadAvailability(isManualReload = false) {
         const version = ++requestVersion;
-        tableInput.value = '';
-        tableInput.disabled = true;
-        tableInput.replaceChildren(new Option('Đang tìm bàn phù hợp...', ''));
-        submitButton.disabled = true;
+
+        if (reloadIcon && isManualReload) {
+            reloadIcon.classList.add('animate-spin');
+        }
 
         const scheduleError = validateSchedule();
         const guestError = validateGuestCount(guestsInput.value);
+
         if (scheduleError || guestError) {
-            tableInput.replaceChildren(new Option('Vui lòng nhập đủ ngày, giờ hợp lệ và số khách', ''));
-            setMessage(tableStatus, scheduleError || guestError, true);
+            if (reloadIcon) reloadIcon.classList.remove('animate-spin');
+            tableInput.value = '';
+            tableInput.disabled = true;
+            selectedTableId = '';
+            selectedTableDetails = null;
+            currentCandidates = [];
+            if (availableCountBadge) availableCountBadge.classList.add('hidden');
+            if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
+            renderBookingTableCards(tableSelectorContainer, { state: 'empty-input' });
+            renderBookingTableAlert(tableAlertContainer, '');
+            setMessage(tableStatus, scheduleError || guestError, Boolean(scheduleError || guestError));
+            updateSubmitState();
             return;
         }
 
         const requestedGuests = Number(guestsInput.value);
 
         if (requestedGuests > 30) {
-            tableInput.replaceChildren(new Option('Vui lòng gọi Hotline', ''));
-            setMessage(tableStatus, 'Đối với đoàn khách trên 30 người, vui lòng liên hệ trực tiếp Hotline: 1900 1234.', true);
+            if (reloadIcon) reloadIcon.classList.remove('animate-spin');
+            tableInput.value = '';
+            tableInput.disabled = true;
+            selectedTableId = '';
+            selectedTableDetails = null;
+            currentCandidates = [];
+            if (availableCountBadge) availableCountBadge.classList.add('hidden');
+            if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
+            renderBookingTableCards(tableSelectorContainer, {
+                state: 'no-match',
+                requestedGuests
+            });
+            renderBookingTableAlert(
+                tableAlertContainer,
+                'Đối với đoàn khách trên 30 người, vui lòng liên hệ trực tiếp Hotline: 1900 1234 để nhân viên sắp xếp không gian tiệc tốt nhất.',
+                'info'
+            );
+            setMessage(tableStatus, 'Đoàn trên 30 người vui lòng liên hệ Hotline.', true);
+            updateSubmitState();
             return;
         }
 
+        if (currentCandidates.length === 0) {
+            renderBookingTableCards(tableSelectorContainer, { state: 'loading' });
+        }
+
         try {
-            let tables = await bookingApi.getAvailableTables({
+            const rawTables = await bookingApi.getAvailableTables({
                 reservationTime: `${dateInput.value}T${timeInput.value}:00`,
                 durationMinutes: 30
             });
-            
+
+            if (reloadIcon) reloadIcon.classList.remove('animate-spin');
             if (version !== requestVersion) return;
-            if (!Array.isArray(tables)) throw new TypeError('Dữ liệu bàn không hợp lệ.');
+            if (!Array.isArray(rawTables)) throw new TypeError('Dữ liệu bàn không hợp lệ.');
 
-            let processedTables = [];
+            const candidates = processCandidates(rawTables, requestedGuests);
+            currentCandidates = candidates;
 
-            const normalTables = tables.filter(t => {
-                const type = t.tableType ?? t.TableType;
-                const cap = Number(t.capacity ?? t.Capacity ?? 4);
-                return type !== 'VIP' && cap === 4;
-            });
+            // KIỂM SOÁT VÀ TỰ ĐỘNG BỎ CHỌN BÀN KHI THAY ĐỔI SỐ KHÁCH:
+            if (selectedTableId) {
+                const stillValid = candidates.find((t) => String(t.id) === String(selectedTableId));
+                if (!stillValid) {
+                    const previousCapacity = selectedTableDetails?.capacity;
+                    selectedTableId = '';
+                    selectedTableDetails = null;
+                    tableInput.value = '';
 
-            const vipTables = tables.filter(t => {
-                const type = t.tableType ?? t.TableType;
-                const cap = Number(t.capacity ?? t.Capacity ?? 0);
-                return type === 'VIP' || cap >= 8;
-            });
+                    const warningMsg = previousCapacity
+                        ? `Bàn bạn vừa chọn (sức chứa tối đa ${previousCapacity} người) không đủ cho ${requestedGuests} khách. Vui lòng chọn lại bàn phù hợp bên dưới.`
+                        : `Bàn đã chọn không còn phù hợp với số lượng ${requestedGuests} khách. Vui lòng chọn lại bàn khác.`;
 
-            if (requestedGuests <= 4) {
-                processedTables = tables.filter(t => Number(t.capacity ?? t.Capacity ?? 0) >= requestedGuests);
-            } 
-            else if (requestedGuests > 4 && requestedGuests <= 8) {
-                const suitableVIPs = vipTables.filter(t => Number(t.capacity ?? t.Capacity ?? 0) >= requestedGuests);
-                processedTables.push(...suitableVIPs);
-
-                const tablesByArea = {};
-                normalTables.forEach(t => {
-                    const areaId = t.areaId ?? t.AreaId ?? 1;
-                    if (!tablesByArea[areaId]) tablesByArea[areaId] = [];
-                    tablesByArea[areaId].push(t);
-                });
-
-                Object.keys(tablesByArea).forEach(areaId => {
-                    const areaTables = tablesByArea[areaId];
-                    if (areaTables.length >= 2) {
-                        const group = areaTables.slice(0, 2);
-                        const groupIds = group.map(t => t.TableId ?? t.tableId ?? t.Id ?? t.id).join(',');
-                        const groupNames = group.map(t => t.TableName ?? t.tableName ?? t.Name).join(' + ');
-                        processedTables.push({
-                            Id: groupIds,
-                            Name: `[Hệ thống gợi ý ghép 2 bàn] ${groupNames} (Khu ${areaId})`,
-                            Capacity: 8
-                        });
-                    }
-                });
-            } 
-            else {
-                const suitableVIPs = vipTables.filter(t => Number(t.capacity ?? t.Capacity ?? 0) >= requestedGuests);
-                processedTables.push(...suitableVIPs);
-
-                const neededTablesCount = Math.ceil(requestedGuests / 4);
-                const tablesByArea = {};
-                normalTables.forEach(t => {
-                    const areaId = t.areaId ?? t.AreaId ?? 1;
-                    if (!tablesByArea[areaId]) tablesByArea[areaId] = [];
-                    tablesByArea[areaId].push(t);
-                });
-
-                Object.keys(tablesByArea).forEach(areaId => {
-                    const areaTables = tablesByArea[areaId];
-                    if (areaTables.length >= neededTablesCount) {
-                        const group = areaTables.slice(0, neededTablesCount);
-                        const groupIds = group.map(t => t.TableId ?? t.tableId ?? t.Id ?? t.id).join(',');
-                        const groupNames = group.map(t => t.TableName ?? t.tableName ?? t.Name).join(' + ');
-                        processedTables.push({
-                            Id: groupIds,
-                            Name: `[Hệ thống tự động ghép ${neededTablesCount} bàn] ${groupNames} (Khu ${areaId})`,
-                            Capacity: neededTablesCount * 4
-                        });
-                    }
-                });
+                    renderBookingTableAlert(tableAlertContainer, warningMsg, 'warning');
+                } else {
+                    selectedTableDetails = stillValid;
+                }
             }
 
-            renderBookingTables(tableInput, processedTables);
-            tableInput.disabled = false;
-            
+            tableInput.disabled = candidates.length === 0;
+
+            const bestFitCount = candidates.filter((t) => t.isBestFit).length;
             setMessage(
                 tableStatus,
-                processedTables.length ? `Tìm thấy ${processedTables.length} lựa chọn phòng VIP hoặc phương án ghép bàn phù hợp cho ${requestedGuests} khách.` : 'Không đủ bàn trống hoặc không đủ bàn ghép cho số lượng khách này.',
-                processedTables.length === 0
+                candidates.length
+                    ? `Tìm thấy ${candidates.length} phương án khả dụng (${bestFitCount} lựa chọn vừa vặn nhất) cho ${requestedGuests} khách.`
+                    : `Không có bàn nào đủ sức chứa cho ${requestedGuests} khách vào khung giờ này.`,
+                candidates.length === 0
             );
 
-            submitButton.disabled = pending || completed || processedTables.length === 0 || !tableInput.value;
+            renderCurrentView();
 
         } catch (error) {
+            if (reloadIcon) reloadIcon.classList.remove('animate-spin');
             if (version !== requestVersion) return;
-            tableInput.replaceChildren(new Option('Không thể tải danh sách bàn', ''));
+            currentCandidates = [];
+            selectedTableId = '';
+            selectedTableDetails = null;
+            tableInput.value = '';
+            tableInput.disabled = true;
+            if (availableCountBadge) availableCountBadge.classList.add('hidden');
+            if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
+            renderBookingTableCards(tableSelectorContainer, {
+                state: 'no-match',
+                requestedGuests
+            });
+            renderBookingTableAlert(
+                tableAlertContainer,
+                error?.message ?? 'Lỗi kết nối khi tải danh sách bàn trống.',
+                'error'
+            );
             setMessage(tableStatus, error?.message ?? 'Lỗi kết nối khi tải bàn trống.', true);
+            updateSubmitState();
         }
     }
 
-    [dateInput, timeInput, guestsInput].forEach((input) => input.addEventListener('change', loadAvailability));
-    guestsInput.addEventListener('input', loadAvailability);
+    [dateInput, timeInput].forEach((input) => input.addEventListener('change', () => loadAvailability(false)));
+    guestsInput.addEventListener('input', () => loadAvailability(false));
+    guestsInput.addEventListener('change', () => loadAvailability(false));
 
-    tableInput.addEventListener('change', () => {
-        submitButton.disabled = !tableInput.value || pending || completed;
-        if (statusElement) statusElement.textContent = '';
+    [nameInput, phoneInput].forEach((input) => {
+        input.addEventListener('input', updateSubmitState);
+        input.addEventListener('change', updateSubmitState);
     });
+
+    if (reloadButton) {
+        reloadButton.addEventListener('click', () => {
+            if (!pending && !completed) {
+                loadAvailability(true);
+            }
+        });
+    }
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -234,19 +475,18 @@ if (form) {
         try {
             const selectedValue = String(tableInput.value);
             const totalGuests = Number(guestsInput.value);
-            
-            // Xử lý thông minh: Nếu value có dấu phẩy (ghép nhiều bàn) thì gọi hàm Batch
+
+            // Đặt ghép nhiều bàn (giá trị có chứa dấu phẩy)
             if (selectedValue.includes(',')) {
-                const tableIds = selectedValue.split(',').map(Number);
-                
-                // Chia đều khách ra các bàn
+                const tableIds = selectedValue.split(',').map((id) => Number(id.trim()));
+
                 const baseGuestsPerTable = Math.floor(totalGuests / tableIds.length);
                 let remainder = totalGuests % tableIds.length;
-                
-                const tableSlots = tableIds.map(id => {
+
+                const tableSlots = tableIds.map((id) => {
                     const guestsForThisTable = baseGuestsPerTable + (remainder > 0 ? 1 : 0);
                     remainder--;
-                    return { tableId: id, numberOfGuests: guestsForThisTable };
+                    return { tableId: id, numberOfGuests: Math.max(guestsForThisTable, 1) };
                 });
 
                 const batchPayload = {
@@ -260,7 +500,7 @@ if (form) {
                 };
 
                 const batchResult = await bookingApi.createBookingBatch(batchPayload);
-                const groupCode = batchResult?.id ?? batchResult?.Id ?? batchResult?.reservationId ?? batchResult?.ReservationId;
+                const groupCode = batchResult?.id ?? batchResult?.Id ?? batchResult?.Ids?.[0] ?? batchResult?.ids?.[0] ?? batchResult?.reservationId ?? batchResult?.ReservationId;
 
                 completed = true;
                 if (groupCode === undefined || groupCode === null || String(groupCode).trim() === '') {
@@ -280,9 +520,9 @@ if (form) {
                 return;
             }
 
-            // Nếu đặt 1 bàn
+            // Đặt bàn đơn
             const singlePayload = {
-                tableId: Number(selectedValue), // Bắt buộc ép về kiểu số
+                tableId: Number(selectedValue),
                 customerName: nameInput.value.trim(),
                 customerPhone: phoneInput.value.trim(),
                 reservationTime: `${dateInput.value}T${timeInput.value}:00`,
@@ -293,9 +533,8 @@ if (form) {
             };
 
             const reservation = await bookingApi.createBooking(singlePayload);
-            
             const reservationCode = reservation?.id ?? reservation?.Id ?? reservation?.reservationId ?? reservation?.ReservationId;
-            
+
             if (reservationCode === undefined || reservationCode === null || String(reservationCode).trim() === '') {
                 completed = true;
                 setMessage(statusElement, 'Đặt bàn thành công nhưng chưa nhận được mã.', true);
@@ -313,11 +552,51 @@ if (form) {
             }));
 
             location.assign(`./success.html?code=${encodeURIComponent(String(reservationCode))}`);
-            
+
         } catch (error) {
             setMessage(statusElement, error?.message ?? 'Không thể đặt bàn. Vui lòng kiểm tra lại thông tin.', true);
             pending = false;
-            submitButton.disabled = false;
+            updateSubmitState();
         }
     });
+
+    // Lắng nghe sự kiện SignalR Realtime từ Backend
+    realtimeClient.on('TableStatusUpdated', (data) => {
+        const changedId = data?.TableId ?? data?.tableId ?? data?.id;
+        const changedName = data?.TableName ?? data?.tableName ?? (changedId ? `Bàn ${changedId}` : '');
+        const status = Number(data?.Status ?? data?.status ?? 0);
+
+        // 0: Trong, 1: DangPhucVu, 2: DaDat, 3: DangDonDep
+        if (status !== 0 && changedId) {
+            const idStr = String(changedId);
+            const isCurrentlySelected = selectedTableId && (
+                selectedTableId === idStr ||
+                selectedTableId.split(',').map((s) => s.trim()).includes(idStr)
+            );
+
+            if (isCurrentlySelected) {
+                selectedTableId = '';
+                selectedTableDetails = null;
+                tableInput.value = '';
+                updateSubmitState();
+                renderBookingTableAlert(
+                    tableAlertContainer,
+                    `Bàn ${changedName} vừa chuyển sang trạng thái bận hoặc đã có người đặt trước. Vui lòng chọn bàn khác.`,
+                    'error'
+                );
+            }
+        }
+
+        if (dateInput.value && timeInput.value && !pending && !completed) {
+            loadAvailability(false);
+        }
+    });
+
+    realtimeClient.on('sync', () => {
+        if (dateInput.value && timeInput.value && !pending && !completed) {
+            loadAvailability(false);
+        }
+    });
+
+    realtimeClient.start().catch(() => {});
 }

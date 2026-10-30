@@ -2,7 +2,17 @@ import { menuApi } from '../api/menuApi.js?auth-session-2';
 import { renderCartDrawer } from '../components/cartView.js';
 import { readCart, writeCart } from '../components/cartStore.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
-import { renderCategories, renderDishes, renderEmpty, renderError, renderLoading, renderDishDetailDrawer } from '../components/menuView.js';
+import { realtimeClient } from '../realtime/realtimeClient.js';
+import { 
+    renderCategories, 
+    renderDishes, 
+    renderEmpty, 
+    renderError, 
+    renderLoading, 
+    renderDishDetailModal, 
+    updateModalIngredients, 
+    showToast 
+} from '../components/menuView.js';
 
 function initializeMenuPage() {
     if (document.documentElement.dataset.menuPageInitialized === 'true') return;
@@ -27,42 +37,79 @@ function initializeMenuPage() {
     let requestVersion = 0;
     let cartItems = readCart();
     let cartIsOpen = false;
-    let mobileMenuIsOpen = false;
 
-    function setMobileMenuOpen(isOpen) {
-        mobileMenuIsOpen = isOpen;
-        mobileMenu?.classList.toggle('hidden', !isOpen);
-        mobileMenuButton?.setAttribute('aria-expanded', String(isOpen));
-        mobileMenuButton?.setAttribute('aria-label', isOpen ? 'Đóng điều hướng' : 'Mở điều hướng');
-    }
-
-    // Tạo phần tử gốc chứa Drawer chi tiết món ăn nếu chưa tồn tại
+    // Phần tử gốc chứa Modal chi tiết món ăn
     let detailRoot = document.querySelector('[data-dish-detail-root]');
     if (!detailRoot) {
         detailRoot = document.createElement('div');
         detailRoot.setAttribute('data-dish-detail-root', '');
+        detailRoot.className = 'fixed inset-0 z-[60] hidden pointer-events-none';
         document.body.append(detailRoot);
+    }
+
+    let activeDishDetailId = null;
+    let lastFocusedElement = null;
+
+    function closeDishDetail() {
+        if (!activeDishDetailId && detailRoot.classList.contains('hidden')) return;
+        activeDishDetailId = null;
+        detailRoot.classList.add('hidden', 'pointer-events-none');
+        detailRoot.replaceChildren();
+        document.body.classList.remove('overflow-hidden');
+        if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+            lastFocusedElement.focus();
+            lastFocusedElement = null;
+        }
     }
 
     function setCartOpen(isOpen) {
         cartIsOpen = isOpen;
         cartRoot.querySelector('[data-cart-layer]')?.classList.toggle('hidden', !cartIsOpen);
         cartButton.setAttribute('aria-expanded', String(cartIsOpen));
-        document.body.classList.toggle('overflow-hidden', cartIsOpen);
+        document.body.classList.toggle('overflow-hidden', cartIsOpen || Boolean(activeDishDetailId));
         if (cartIsOpen) cartRoot.querySelector('[data-cart-close]')?.focus();
         else cartButton.focus();
     }
 
-    function showDishDetail(dish) {
-        renderDishDetailDrawer(detailRoot, dish, () => {
-            detailRoot.replaceChildren();
+    async function showDishDetail(dish) {
+        if (!dish) return;
+        const dishId = dish.id;
+        activeDishDetailId = dishId;
+        lastFocusedElement = document.activeElement;
+
+        // Render modal hiển thị tức thì thông tin món
+        renderDishDetailModal(detailRoot, dish, {
+            onClose: closeDishDetail,
+            onAddToCart: (dishToAdd) => {
+                addToCart(dishToAdd);
+            }
         });
 
-        // Xử lý sự kiện bấm thêm vào giỏ hàng ngay từ trong Drawer chi tiết
-        detailRoot.querySelector('[data-dish-detail-add]')?.addEventListener('click', () => {
-            addToCart(dish);
-            detailRoot.replaceChildren();
-        });
+        detailRoot.classList.remove('hidden', 'pointer-events-none');
+        document.body.classList.add('overflow-hidden');
+
+        // Focus vào nút đóng để hỗ trợ thao tác bàn phím
+        detailRoot.querySelector('[data-dish-detail-close]')?.focus();
+
+        // Nếu món đã có sẵn danh sách ingredients
+        if (Array.isArray(dish.ingredients) && dish.ingredients.length > 0) {
+            updateModalIngredients(detailRoot, dish.ingredients);
+            return;
+        }
+
+        // Gọi backend /api/menu/{id} để lấy nguyên liệu thật từ database (MenuItemIngredients)
+        try {
+            const fullDetail = await menuApi.getDishDetail(dishId);
+            if (activeDishDetailId === dishId) {
+                dish.ingredients = fullDetail.ingredients;
+                updateModalIngredients(detailRoot, fullDetail.ingredients);
+            }
+        } catch (err) {
+            console.warn('Không thể tải chi tiết món từ backend:', dishId, err);
+            if (activeDishDetailId === dishId) {
+                updateModalIngredients(detailRoot, []);
+            }
+        }
     }
 
     function updateCartView() {
@@ -97,6 +144,7 @@ function initializeMenuPage() {
         
         writeCart(cartItems);
         updateCartView();
+        showToast(`Đã thêm "${name}" vào giỏ hàng!`, 'success');
     }
 
     function updateCartQuantity(itemId, quantity) {
@@ -197,21 +245,43 @@ function initializeMenuPage() {
     });
 
     cartButton.addEventListener('click', () => setCartOpen(true));
-    mobileMenuButton?.addEventListener('click', () => setMobileMenuOpen(!mobileMenuIsOpen));
-    mobileMenu?.addEventListener('click', (event) => {
-        if (event.target.closest('a')) setMobileMenuOpen(false);
-    });
     cartRoot.addEventListener('click', (event) => {
         if (event.target.closest('[data-cart-close]')) setCartOpen(false);
     });
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
-        if (cartIsOpen) setCartOpen(false);
-        if (mobileMenuIsOpen) {
-            setMobileMenuOpen(false);
-            mobileMenuButton?.focus();
+        if (activeDishDetailId) {
+            closeDishDetail();
+            return;
         }
+        if (cartIsOpen) setCartOpen(false);
     });
+
+    async function reloadDishesSilently() {
+        try {
+            const [catRes, dishRes] = await Promise.all([
+                menuApi.getCategories().catch(() => null),
+                menuApi.getDishes(selectedCategoryId).catch(() => null)
+            ]);
+            if (Array.isArray(catRes)) {
+                categories = catRes;
+                renderCategories(categoriesElement, categories, selectedCategoryId, selectCategory);
+            }
+            if (Array.isArray(dishRes)) {
+                dishes = dishRes;
+                dishesLoaded = true;
+                renderFilteredDishes();
+            }
+        } catch (e) {
+            console.debug('Silent menu reload failed:', e);
+        }
+    }
+
+    // Real-time synchronization
+    realtimeClient.on('MenuItemUpdated', reloadDishesSilently);
+    realtimeClient.on('DishStatusChanged', reloadDishesSilently);
+    realtimeClient.on('sync', reloadDishesSilently);
+    realtimeClient.start().catch(() => {});
 
     updateCartView();
     loadMenu();

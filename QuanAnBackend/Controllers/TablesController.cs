@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
+using QuanAnBackend.Services;
 using Microsoft.AspNetCore.Authorization;
 
 namespace QuanAnBackend.Controllers;
@@ -33,16 +34,19 @@ public class TablesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
+    private readonly NotificationService _notifications;
 
-    public TablesController(AppDbContext db, IHubContext<OrderHub> hub)
+    public TablesController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications)
     {
         _db = db;
         _hub = hub;
+        _notifications = notifications;
     }
 
     // GET api/tables?areaId=1 -> vẽ sơ đồ bàn, kèm tên khu vực, lọc theo khu vực (tùy chọn)
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] int? areaId)
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAll([FromQuery] int? areaId, [FromQuery(Name = "status")] string? statusFilter)
     {
         var connection = _db.Database.GetDbConnection();
         var shouldClose = connection.State != ConnectionState.Open;
@@ -132,6 +136,7 @@ public class TablesController : ControllerBase
                     ORDER BY ot.OrderTableId DESC
                 ) lk
                 WHERE (@AreaId IS NULL OR t.AreaId = @AreaId)
+                  AND (@Status IS NULL OR t.Status = @Status)
                 ORDER BY t.TableId;
                 """;
 
@@ -140,7 +145,17 @@ public class TablesController : ControllerBase
             areaParameter.Value = areaId.HasValue ? areaId.Value : DBNull.Value;
             command.Parameters.Add(areaParameter);
 
+            var statusParameter = command.CreateParameter();
+            statusParameter.ParameterName = "@Status";
+            statusParameter.Value = !string.IsNullOrWhiteSpace(statusFilter) ? statusFilter.Trim() : DBNull.Value;
+            command.Parameters.Add(statusParameter);
+
             var result = new List<object>();
+            var canViewOrderDetails =
+                User.IsInRole("QuanLy") ||
+                User.IsInRole("ThuNgan") ||
+                User.IsInRole("PhucVu") ||
+                User.IsInRole("Bep");
 
             await using var reader = await command.ExecuteReaderAsync();
 
@@ -176,11 +191,11 @@ public class TablesController : ControllerBase
                     areaId = reader.GetInt32(4),
                     areaName = reader.GetString(5),
                     tableType = reader.GetString(6),
-                    amount = status == "DangPhucVu" ? amount : (decimal?)null,
-                    customerName,
-                    linkedOrderId,
-                    isLinkPrimary,
-                    linkedWith
+                    amount = canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
+                    customerName = canViewOrderDetails ? customerName : null,
+                    linkedOrderId = canViewOrderDetails ? linkedOrderId : null,
+                    isLinkPrimary = canViewOrderDetails ? isLinkPrimary : false,
+                    linkedWith = canViewOrderDetails ? linkedWith : null
                 });
             }
 
@@ -295,6 +310,151 @@ public class TablesController : ControllerBase
         }
     }
 
+    // PUT api/tables/{id}/receive -> nhận bàn. Body cũ của Mobile nếu có
+    // vẫn được bỏ qua; trạng thái đặt bàn gần giờ hiện tại được đồng bộ luôn.
+    [HttpPut("{id}/receive")]
+    [Authorize(Roles = "QuanLy,PhucVu")]
+    public async Task<IActionResult> Receive(int id)
+    {
+        var table = await _db.Tables.FindAsync(id);
+        if (table is null) return NotFound(new { message = "Bàn không tồn tại" });
+
+        if (table.Status == TableStatus.DangPhucVu)
+            return BadRequest(new { message = "Bàn đang có khách" });
+        if (table.Status == TableStatus.DangDonDep)
+            return BadRequest(new { message = "Bàn đang dọn dẹp" });
+
+        Reservation? receivedReservation = null;
+        if (table.Status == TableStatus.DaDat)
+        {
+            var reservations = await _db.Reservations
+                .Where(r => r.TableId == id && (r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.ChoXacNhan))
+                .ToListAsync();
+            var nearest = reservations
+                .OrderBy(r => Math.Abs((r.ReservationTime - DateTime.Now).TotalMinutes))
+                .FirstOrDefault();
+            if (nearest is not null)
+            {
+                nearest.Status = ReservationStatus.DaNhanBan;
+                receivedReservation = nearest;
+            }
+        }
+
+        table.Status = TableStatus.DangPhucVu;
+        await _db.SaveChangesAsync();
+
+        if (receivedReservation?.CustomerId is int customerId)
+        {
+            await _notifications.CreateForCustomerAsync(
+                customerId,
+                "Đã nhận bàn",
+                "Nhà hàng đã ghi nhận bạn đến nhận bàn.",
+                NotificationType.DatBan,
+                $"reservation-status:{receivedReservation.ReservationId}:{(int)ReservationStatus.DaXacNhan}:{(int)ReservationStatus.DaNhanBan}",
+                "Reservation",
+                receivedReservation.ReservationId);
+        }
+
+        await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+        {
+            TableId = table.TableId,
+            table.TableName,
+            Status = table.Status
+        });
+
+        return Ok(new { Id = table.TableId, table.TableName, Status = table.Status });
+    }
+
+    // PUT api/tables/{id}/release -> trả bàn. Có xét cả OrderTables để không
+    // làm mất bảo vệ của luồng ghép bàn/gộp đơn hiện có trên Mobile.
+    [HttpPut("{id}/release")]
+    [Authorize(Roles = "QuanLy,PhucVu,ThuNgan")]
+    public async Task<IActionResult> Release(int id)
+    {
+        var table = await _db.Tables.FindAsync(id);
+        if (table is null) return NotFound(new { message = "Bàn không tồn tại" });
+
+        if (table.Status == TableStatus.Trong)
+            return Ok(new { Id = table.TableId, table.TableName, Status = table.Status });
+
+        var openOrderIds = new List<int>();
+        var connection = _db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync();
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT DISTINCT o.OrderId
+                FROM Orders o
+                LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+                WHERE o.Status = N'DangMo'
+                  AND (o.TableId = @TableId OR ot.TableId = @TableId);
+                """;
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@TableId";
+            parameter.Value = id;
+            command.Parameters.Add(parameter);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) openOrderIds.Add(reader.GetInt32(0));
+        }
+        finally
+        {
+            if (shouldClose) await connection.CloseAsync();
+        }
+
+        var openOrders = openOrderIds.Count == 0
+            ? new List<Order>()
+            : await _db.Orders
+                .Include(o => o.OrderItems)
+                .Where(o => openOrderIds.Contains(o.OrderId))
+                .ToListAsync();
+
+        if (openOrders.Any(o => o.OrderItems.Any(i => i.Status != KitchenStatus.DaHuy)))
+            return BadRequest(new { message = "Bàn còn món chưa thanh toán, không thể trả bàn" });
+
+        foreach (var o in openOrders) o.Status = OrderStatus.DaHuy;
+
+        var finishedReservations = await _db.Reservations
+            .Where(r => r.TableId == id && r.Status == ReservationStatus.DaNhanBan)
+            .ToListAsync();
+        foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
+
+        table.Status = TableStatus.Trong;
+        await _db.SaveChangesAsync();
+
+        foreach (var order in openOrders.Where(order => order.CustomerId.HasValue))
+        {
+            await _notifications.CreateForCustomerAsync(
+                order.CustomerId!.Value,
+                "Đơn hàng đã bị hủy",
+                $"Đơn hàng #{order.OrderId} đã được nhà hàng hủy.",
+                NotificationType.DonHang,
+                $"order-cancelled:{order.OrderId}",
+                "Order",
+                order.OrderId);
+        }
+        foreach (var reservation in finishedReservations.Where(reservation => reservation.CustomerId.HasValue))
+        {
+            await _notifications.CreateForCustomerAsync(
+                reservation.CustomerId!.Value,
+                "Đặt bàn đã hoàn tất",
+                "Lượt đặt bàn của bạn đã hoàn tất.",
+                NotificationType.DatBan,
+                $"reservation-status:{reservation.ReservationId}:{(int)ReservationStatus.DaNhanBan}:{(int)ReservationStatus.HoanTat}",
+                "Reservation",
+                reservation.ReservationId);
+        }
+
+        await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+        {
+            TableId = table.TableId,
+            table.TableName,
+            Status = table.Status
+        });
+
+        return Ok(new { Id = table.TableId, table.TableName, Status = table.Status });
+    }
 
     // GET api/tables/available?time=2026-09-28T19:00:00&durationMinutes=120
     // Dung cho man "Dat ban truoc" ben WinForm: TRUOC DAY combo chon ban dung
@@ -307,6 +467,7 @@ public class TablesController : ControllerBase
     // - Ngoai ra chi kiem tra trung voi cac dat ban truoc (Reservations) khac
     //   dang con hieu luc tren cung ban do, theo dung khung [time, time+duration).
     [HttpGet("available")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetAvailable([FromQuery] DateTime time, [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes)
     {
         if (durationMinutes < Reservation.MinDurationMinutes || durationMinutes > Reservation.MaxDurationMinutes)
@@ -320,7 +481,7 @@ public class TablesController : ControllerBase
         // Chi lay dat ban con hieu luc (chua Huy/Khong den) - du xa ngay hom nay
         // bao nhieu cung phai xet, vi khach co the dat truoc hang tuan.
         var activeReservations = await _db.Reservations
-            .Where(r => r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan)
+            .Where(r => r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan)
             .Select(r => new
             {
                 r.TableId,

@@ -11,6 +11,25 @@ public partial class TableManagementControl : UserControl
     private List<TableDto> _tables = new();
     private List<AreaDto> _areas = new();
     private TableDto? _selectedTable;
+    private HashSet<int> _paymentRequestedTableIds = new();
+
+    private bool CanCompletePayment
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin"
+                or "thungan"
+                or "thungân";
+        }
+    }
 
     // Gom nhiều sự kiện realtime dồn dập (vd mobile tick nhiều món liên tiếp) thành 1 lần tải lại
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 300 };
@@ -63,6 +82,24 @@ public partial class TableManagementControl : UserControl
         {
             _areas = await _api.GetAreasAsync();
             _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+
+            if (CanCompletePayment)
+            {
+                try
+                {
+                    _paymentRequestedTableIds =
+                        await _api.GetPendingPaymentTableIdsAsync();
+                }
+                catch
+                {
+                    _paymentRequestedTableIds.Clear();
+                }
+            }
+            else
+            {
+                _paymentRequestedTableIds.Clear();
+            }
+
             RenderTableGrid();
         }
         catch (Exception ex)
@@ -118,8 +155,20 @@ public partial class TableManagementControl : UserControl
     private Panel BuildTableTile(TableDto table)
     {
         var (border, bg, label) = StyleFor(table.Status);
+        var waitingPayment =
+            CanCompletePayment &&
+            _paymentRequestedTableIds.Contains(table.Id);
+
+        if (waitingPayment)
+        {
+            border = Color.FromArgb(220, 74, 58);
+            bg = Color.FromArgb(255, 238, 233);
+            label = "Chờ thanh toán";
+        }
+
         var linked = table.IsLinked;
-        if (linked) bg = Color.FromArgb(255, 244, 238); // nền kem nhạt = đang ghép
+        if (linked && !waitingPayment)
+            bg = Color.FromArgb(255, 244, 238); // nền kem nhạt = đang ghép
 
         var tile = new Panel
         {
@@ -178,7 +227,16 @@ public partial class TableManagementControl : UserControl
         lblDetailName.Text = table.TableName;
         lblDetailInfo.Text = $"{table.AreaName} · Sức chứa: {table.Capacity} khách";
         var (_, _, label) = StyleFor(table.Status);
-        lblDetailStatus.Text = table.IsLinked ? $"{label} · Ghép {table.LinkedWith}" : label;
+
+        if (CanCompletePayment &&
+            _paymentRequestedTableIds.Contains(table.Id))
+        {
+            label = "Chờ thanh toán";
+        }
+
+        lblDetailStatus.Text = table.IsLinked
+            ? $"{label} · Ghép {table.LinkedWith}"
+            : label;
     }
 
     private void EnsureDetailActionButtons()
@@ -374,6 +432,8 @@ public partial class TableManagementControl : UserControl
         NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
         NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
         NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.PaymentRequested += OnPaymentRequested;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
     }
 
     private void UnsubscribeRealtime()
@@ -381,12 +441,25 @@ public partial class TableManagementControl : UserControl
         NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
         NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
         NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.PaymentRequested -= OnPaymentRequested;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
     }
 
     // Các handler này chạy trên luồng nền của SignalR -> phải đẩy về luồng giao diện
-    private void OnTableStatusUpdated(TableStatusUpdatedPayload p) => QueueRefresh(tables: true, items: false);
-    private void OnItemStatusUpdated(ItemStatusUpdatedPayload p) => QueueRefresh(tables: false, items: true);
-    private void OnOrderItemCancelled(OrderItemCancelledPayload p) => QueueRefresh(tables: false, items: true);
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload p) =>
+        QueueRefresh(tables: true, items: false);
+
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload p) =>
+        QueueRefresh(tables: false, items: true);
+
+    private void OnOrderItemCancelled(OrderItemCancelledPayload p) =>
+        QueueRefresh(tables: false, items: true);
+
+    private void OnPaymentRequested(PaymentRequestedPayload p) =>
+        QueueRefresh(tables: true, items: false);
+
+    private void OnPaymentCompleted(PaymentCompletedPayload p) =>
+        QueueRefresh(tables: true, items: false);
 
     private void QueueRefresh(bool tables, bool items)
     {
@@ -441,6 +514,24 @@ public partial class TableManagementControl : UserControl
                 var scroll = new Point(-flowTables.AutoScrollPosition.X, -flowTables.AutoScrollPosition.Y);
 
                 _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+
+                if (CanCompletePayment)
+                {
+                    try
+                    {
+                        _paymentRequestedTableIds =
+                            await _api.GetPendingPaymentTableIdsAsync();
+                    }
+                    catch
+                    {
+                        // Giữ trạng thái pending hiện tại nếu endpoint tạm mất kết nối.
+                    }
+                }
+                else
+                {
+                    _paymentRequestedTableIds.Clear();
+                }
+
                 RenderTableGrid();
                 flowTables.AutoScrollPosition = scroll;
 
@@ -793,7 +884,7 @@ public partial class TableManagementControl : UserControl
         _ = LoadAllAsync();
     }
 
-    private static readonly string[] ReservationStatusLabels = { "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất" };
+    private static readonly string[] ReservationStatusLabels = { "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất", "Chờ xác nhận" };
     private static Color ReservationStatusColor(int status) => status switch
     {
         1 => AppColors.Success,
@@ -1486,7 +1577,7 @@ public partial class TableManagementControl : UserControl
                     if (!tbl.IsAvailable) continue;
                     var hit = booked.FirstOrDefault(rv =>
                         rv.TableId == tbl.Id &&
-                        (rv.Status == (int)ReservationStatusEnum.DaXacNhan || rv.Status == (int)ReservationStatusEnum.DaNhanBan) &&
+                        (rv.Status == (int)ReservationStatusEnum.DaXacNhan || rv.Status == (int)ReservationStatusEnum.DaNhanBan || rv.Status == (int)ReservationStatusEnum.ChoXacNhan) &&
                         reqStart < rv.ReservationTime.AddMinutes(rv.DurationMinutes) &&
                         rv.ReservationTime < reqEnd);
                     if (hit is null) continue;

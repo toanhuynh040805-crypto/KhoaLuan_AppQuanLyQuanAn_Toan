@@ -1,4 +1,4 @@
-﻿import { authApi } from '../api/authApi.js?auth-session-2';
+import { authApi } from '../api/authApi.js?auth-session-2';
 import {
     clearCustomerSession,
     saveCustomerSession,
@@ -6,6 +6,7 @@ import {
 } from '../api/session.js?auth-session-2';
 import { profileApi } from '../api/profileApi.js?auth-session-2';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
+import { API_BASE_URL } from '../api/config.js';
 
 // ======================================================
 // 1. KHAI BÁO CÁC PHẦN TỬ GIAO DIỆN
@@ -26,6 +27,9 @@ const btnShowForgot = document.getElementById('btn-show-forgot');
 const btnBackToLogin = document.getElementById('btn-back-to-login');
 const btnGoogleLogin = document.getElementById('btn-google-login');
 
+let isLoginSubmitting = false;
+let isRegisterSubmitting = false;
+
 if (!loginTab || !registerTab || !loginForm || !registerForm) {
     throw new Error('Không tìm thấy form đăng nhập hoặc đăng ký trên trang.');
 }
@@ -35,6 +39,132 @@ setupSessionNavigation();
 // ======================================================
 // 2. CÁC HÀM HỖ TRỢ
 // ======================================================
+
+// 2.1. Quản lý ghi nhớ đăng nhập (Remember Me)
+const REMEMBER_LOGIN_KEY = 'gusto_remembered_login';
+const REMEMBER_ENABLED_KEY = 'gusto_remember_me_enabled';
+
+function getRememberedLogin() {
+    try {
+        return localStorage.getItem(REMEMBER_LOGIN_KEY) || '';
+    } catch {
+        return '';
+    }
+}
+
+function isRememberMeEnabled() {
+    try {
+        const flag = localStorage.getItem(REMEMBER_ENABLED_KEY);
+        if (flag === 'false') return false;
+        if (flag === 'true') return true;
+        // Nếu đã từng có thông tin đăng nhập được ghi nhớ thì mặc định bật
+        if (getRememberedLogin()) return true;
+        return true;
+    } catch {
+        return true;
+    }
+}
+
+function saveRememberedLogin(identifier) {
+    try {
+        if (typeof identifier === 'string' && identifier.trim()) {
+            localStorage.setItem(REMEMBER_LOGIN_KEY, identifier.trim());
+            localStorage.setItem(REMEMBER_ENABLED_KEY, 'true');
+        }
+    } catch {
+        // Storage may be unavailable
+    }
+}
+
+function clearRememberedLogin() {
+    try {
+        localStorage.removeItem(REMEMBER_LOGIN_KEY);
+        localStorage.setItem(REMEMBER_ENABLED_KEY, 'false');
+    } catch {
+        // Storage may be unavailable
+    }
+}
+
+function setupRememberMeListeners() {
+    const rememberCheckbox = loginForm?.elements?.rememberMe;
+    if (!rememberCheckbox) return;
+
+    rememberCheckbox.addEventListener('change', (event) => {
+        if (!event.target.checked) {
+            clearRememberedLogin();
+        } else {
+            try {
+                localStorage.setItem(REMEMBER_ENABLED_KEY, 'true');
+                const currentIdentifier = loginForm.elements.login?.value?.trim();
+                if (currentIdentifier) {
+                    localStorage.setItem(REMEMBER_LOGIN_KEY, currentIdentifier);
+                }
+            } catch {
+                // Storage may be unavailable
+            }
+        }
+    });
+}
+
+async function restoreRememberedLogin() {
+    const rememberCheckbox = loginForm?.elements?.rememberMe;
+    const loginInput = loginForm?.elements?.login;
+    const passwordInput = loginForm?.elements?.password;
+
+    if (!rememberCheckbox || !loginInput) return;
+
+    const enabled = isRememberMeEnabled();
+    rememberCheckbox.checked = enabled;
+
+    if (!enabled) {
+        return;
+    }
+
+    const remembered = getRememberedLogin();
+    if (remembered) {
+        loginInput.value = remembered;
+        loginInput.dispatchEvent(new Event('input', { bubbles: true }));
+        loginInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Hỗ trợ Password Manager: Khi tài khoản đã được tự điền,
+        // nếu đang ở desktop và ô mật khẩu đang trống, tự động focus
+        // để trình duyệt kích hoạt gợi ý / tự điền mật khẩu đã lưu.
+        const isTouchDevice = 'ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0);
+        if (!isTouchDevice && passwordInput && !passwordInput.value) {
+            setTimeout(() => {
+                if (
+                    document.activeElement === document.body ||
+                    !document.activeElement ||
+                    document.activeElement === loginInput
+                ) {
+                    passwordInput.focus();
+                }
+            }, 100);
+        }
+    }
+
+    // Tích hợp Credential Management API (silent retrieval) nếu trình duyệt hỗ trợ
+    if (typeof window.PasswordCredential === 'function' && navigator.credentials?.get) {
+        try {
+            const cred = await navigator.credentials.get({
+                password: true,
+                mediation: 'silent'
+            });
+            if (cred && cred.id) {
+                if (!loginInput.value) {
+                    loginInput.value = cred.id;
+                    loginInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                if (passwordInput && cred.password && !passwordInput.value) {
+                    passwordInput.value = cred.password;
+                    passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+        } catch {
+            // Không hỗ trợ hoặc bị từ chối silent retrieval, giữ nguyên cơ chế autofill chuẩn
+        }
+    }
+}
 
 function getInputForField(form, fieldKey) {
     const map = {
@@ -51,11 +181,13 @@ function getInputForField(form, fieldKey) {
     return map[fieldKey] || null;
 }
 
+const DEFAULT_RETURN_URL = '/pages/profile/index.html';
+
 function getSafeReturnUrl() {
     const requested = new URLSearchParams(location.search).get('returnUrl');
 
     if (!requested) {
-        return '../profile/index.html';
+        return DEFAULT_RETURN_URL;
     }
 
     try {
@@ -63,12 +195,23 @@ function getSafeReturnUrl() {
 
         // Chỉ chuyển đến trang cùng website để tránh open redirect.
         if (target.origin !== location.origin) {
-            return '../profile/index.html';
+            return DEFAULT_RETURN_URL;
         }
 
-        return `${target.pathname}${target.search}${target.hash}`;
+        // Không cho phép chuyển hướng ngược lại trang đăng nhập/đăng ký
+        if (target.pathname.includes('login_register')) {
+            return DEFAULT_RETURN_URL;
+        }
+
+        // Tự động chuẩn hóa nếu thiếu tiền tố /pages
+        let path = target.pathname;
+        if (path === '/profile/index.html' || path.startsWith('/profile/')) {
+            path = `/pages${path}`;
+        }
+
+        return `${path}${target.search}${target.hash}`;
     } catch {
-        return '../profile/index.html';
+        return DEFAULT_RETURN_URL;
     }
 }
 
@@ -79,6 +222,14 @@ function setInputErrorState(input, isError) {
     input.classList.toggle('border-outline-variant', !isError);
     input.classList.toggle('focus:border-error', isError);
     input.classList.toggle('focus:border-primary', !isError);
+
+    if (isError) {
+        input.style.borderColor = '#ba1a1a';
+        input.setAttribute('aria-invalid', 'true');
+    } else {
+        input.style.borderColor = '';
+        input.removeAttribute('aria-invalid');
+    }
 }
 
 function setFieldError(form, fieldKey, message) {
@@ -86,13 +237,15 @@ function setFieldError(form, fieldKey, message) {
 
     if (errorNode) {
         errorNode.textContent = message || '';
+        if (message) {
+            errorNode.classList.remove('hidden');
+        }
     }
 
     const input = getInputForField(form, fieldKey);
 
     if (input) {
         setInputErrorState(input, Boolean(message));
-        input.setAttribute('aria-invalid', String(Boolean(message)));
     }
 }
 
@@ -103,12 +256,18 @@ function getEmailPattern() {
 function showGlobalStatus(message) {
     if (globalStatus) {
         globalStatus.textContent = message || '';
+        if (message) {
+            globalStatus.classList.remove('hidden');
+        }
     }
 }
 
 function showRegisterStatus(message) {
     if (registerStatus) {
         registerStatus.textContent = message || '';
+        if (message) {
+            registerStatus.classList.remove('hidden');
+        }
     }
 }
 
@@ -145,8 +304,7 @@ function validateLoginIdentifier(value) {
         return '';
     }
 
-    // Nếu không phải email và không phải chuỗi số,
-    // xem đây là tên tài khoản, ví dụ admin, nhanvien01.
+    // Tên tài khoản
     if (trimmed.length > 100) {
         return 'Tên đăng nhập không được vượt quá 100 ký tự.';
     }
@@ -218,10 +376,11 @@ function validateRegisterPassword(value) {
 
     if (
         value.length < 8 ||
+        value.length > 128 ||
         !/[A-Za-z]/.test(value) ||
         !/\d/.test(value)
     ) {
-        return 'Mật khẩu phải có ít nhất 8 ký tự, bao gồm 1 chữ cái và 1 chữ số.';
+        return 'Mật khẩu phải có từ 8 đến 128 ký tự, bao gồm 1 chữ cái và 1 chữ số.';
     }
 
     return '';
@@ -241,7 +400,7 @@ function validateConfirmPassword(password, confirmPassword) {
 
 function validateTerms(isChecked) {
     if (!isChecked) {
-        return 'Vui lòng đồng ý với điều khoản.';
+        return 'Vui lòng đồng ý với điều khoản dịch vụ và chính sách bảo mật.';
     }
 
     return '';
@@ -353,25 +512,10 @@ document.querySelectorAll('[data-password-toggle]').forEach((button) => {
 // ======================================================
 
 function updateRegisterButtonState() {
-    const fullName = registerForm.elements.fullName.value.trim();
-    const phone = registerForm.elements.phone.value.trim();
-    const email = registerForm.elements.email.value.trim();
-    const password = registerForm.elements.password.value;
-    const confirmPassword = registerForm.elements.confirmPassword.value;
-    const termsAccepted = registerForm.elements.terms.checked;
-
-    const isValid =
-        !validateFullName(fullName) &&
-        !validateRegisterPhone(phone) &&
-        !validateRegisterEmail(email) &&
-        !validateRegisterPassword(password) &&
-        !validateConfirmPassword(password, confirmPassword) &&
-        termsAccepted;
-
-    if (registerButton) {
-        registerButton.disabled = !isValid;
-        registerButton.classList.toggle('opacity-50', !isValid);
-        registerButton.classList.toggle('cursor-not-allowed', !isValid);
+    if (!registerButton) return;
+    if (!isRegisterSubmitting) {
+        registerButton.disabled = false;
+        registerButton.classList.remove('opacity-50', 'cursor-not-allowed');
     }
 }
 
@@ -440,6 +584,7 @@ loginForm.elements.password.addEventListener('blur', () => {
 
 loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (isLoginSubmitting) return;
 
     const identifier = loginForm.elements.login.value.trim();
     const password = loginForm.elements.password.value;
@@ -451,53 +596,124 @@ loginForm.addEventListener('submit', async (event) => {
     setFieldError(loginForm, 'password', passwordError);
 
     if (identifierError || passwordError) {
+        if (identifierError) {
+            loginForm.elements.login.focus();
+        } else {
+            loginForm.elements.password.focus();
+        }
         return;
     }
 
-    const submitButton = loginForm.querySelector(
-        'button[type="submit"]'
-    );
+    const submitButton = loginForm.querySelector('button[type="submit"]');
+    const originalButtonContent = submitButton ? submitButton.innerHTML : 'Đăng nhập';
 
-    const originalButtonText = submitButton
-        ? submitButton.textContent
-        : 'Đăng nhập';
-
+    isLoginSubmitting = true;
     if (submitButton) {
         submitButton.disabled = true;
-        submitButton.textContent = 'Đang đăng nhập...';
+        submitButton.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span><span>Đang đăng nhập...</span>';
     }
 
     showGlobalStatus('');
 
     try {
-        // Gửi tên đăng nhập, email hoặc số điện thoại cùng mật khẩu.
+        // Gửi tên đăng nhập, email hoặc số điện thoại cùng mật khẩu
         const response = await authApi.login(identifier, password);
 
-        // Lưu phiên đăng nhập do backend trả về.
-        saveCustomerSession(response);
+        // Xử lý Ghi nhớ đăng nhập an toàn
+        const rememberMeChecked = Boolean(loginForm.elements.rememberMe?.checked);
+        if (rememberMeChecked) {
+            saveRememberedLogin(identifier);
 
-        // Lấy thông tin tài khoản đang đăng nhập.
-        const customer = await profileApi.getMyProfile();
+            // Báo cho Password Manager của trình duyệt lưu/cập nhật thông tin đăng nhập
+            if (typeof window.PasswordCredential === 'function' && navigator.credentials?.store) {
+                try {
+                    const cred = new PasswordCredential({
+                        id: identifier,
+                        password: password,
+                        name: identifier
+                    });
+                    navigator.credentials.store(cred).catch(() => {});
+                } catch {
+                    // Môi trường không hỗ trợ PasswordCredential
+                }
+            }
+        } else {
+            clearRememberedLogin();
+            if (navigator.credentials?.preventSilentAccess) {
+                try {
+                    navigator.credentials.preventSilentAccess().catch(() => {});
+                } catch {}
+            }
+        }
 
-        setCurrentCustomer(customer);
+        // Lưu phiên đăng nhập do backend trả về
+        saveCustomerSession(response, rememberMeChecked);
 
-        globalThis.dispatchEvent(
-            new CustomEvent('gusto:session-updated')
-        );
+        // Lấy thông tin tài khoản đang đăng nhập
+        try {
+            const customer = await profileApi.getMyProfile();
+            setCurrentCustomer(customer);
+        } catch {
+            // Không chặn chuyển trang nếu request thông tin phụ gặp lỗi
+        }
 
-        // Chuyển đến trang tiếp theo sau khi đăng nhập thành công.
+        globalThis.dispatchEvent(new CustomEvent('gusto:session-updated'));
+
+        // Chuyển đến trang tiếp theo sau khi đăng nhập thành công
         location.assign(getSafeReturnUrl());
     } catch (error) {
         clearCustomerSession();
 
-        showGlobalStatus(
-            error?.message ||
-            'Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại.'
-        );
+        const status = error?.status;
+        const code = error?.code || '';
+        const msg = (error?.message || '').trim();
+        const lowerMsg = msg.toLowerCase();
+
+        // 1. Lỗi mạng / mất kết nối server
+        if (code === 'NETWORK_ERROR' || status === 0) {
+            showGlobalStatus('Không thể kết nối máy chủ. Hãy kiểm tra kết nối mạng rồi thử lại.');
+            return;
+        }
+
+        // 2. Lỗi máy chủ 500
+        if (status === 500) {
+            showGlobalStatus('Máy chủ đang gặp sự cố. Vui lòng thử lại sau.');
+            return;
+        }
+
+        // 3. Lỗi sai mật khẩu (Backend trả về code WRONG_PASSWORD hoặc message "Mật khẩu không chính xác")
+        if (code === 'WRONG_PASSWORD' || lowerMsg.includes('mật khẩu không chính xác') || lowerMsg.includes('sai mật khẩu')) {
+            setFieldError(loginForm, 'password', 'Mật khẩu không chính xác.');
+            loginForm.elements.password.focus();
+            return;
+        }
+
+        // 4. Lỗi tài khoản không tồn tại / chưa cài mật khẩu
+        if (code === 'ACCOUNT_NOT_FOUND' || lowerMsg.includes('tài khoản không tồn tại')) {
+            setFieldError(loginForm, 'login', 'Tài khoản không tồn tại hoặc chưa cài đặt mật khẩu.');
+            loginForm.elements.login.focus();
+            return;
+        }
+
+        // 5. Lỗi 401 Unauthorized chung từ Backend
+        if (status === 401) {
+            showGlobalStatus('Tài khoản hoặc mật khẩu không chính xác. Vui lòng thử lại.');
+            return;
+        }
+
+        // 6. Trường cụ thể nếu có
+        if (error.field) {
+            setFieldError(loginForm, error.field, msg);
+            return;
+        }
+
+        // Mặc định
+        showGlobalStatus(msg || 'Đăng nhập không thành công. Vui lòng thử lại.');
     } finally {
+        isLoginSubmitting = false;
         if (submitButton) {
             submitButton.disabled = false;
-            submitButton.textContent = originalButtonText;
+            submitButton.innerHTML = originalButtonContent;
         }
     }
 });
@@ -519,105 +735,74 @@ loginForm.addEventListener('submit', async (event) => {
 
     input.addEventListener('input', () => {
         if (fieldKey === 'fullName') {
-            setFieldError(
-                registerForm,
-                'fullName',
-                validateFullName(registerForm.elements.fullName.value)
-            );
+            const err = validateFullName(registerForm.elements.fullName.value);
+            if (!err) setFieldError(registerForm, 'fullName', '');
         }
 
         if (fieldKey === 'phone') {
-            setFieldError(
-                registerForm,
-                'phone',
-                validateRegisterPhone(registerForm.elements.phone.value)
-            );
+            const err = validateRegisterPhone(registerForm.elements.phone.value);
+            if (!err) setFieldError(registerForm, 'phone', '');
         }
 
         if (fieldKey === 'email') {
-            setFieldError(
-                registerForm,
-                'email',
-                validateRegisterEmail(registerForm.elements.email.value)
-            );
+            const err = validateRegisterEmail(registerForm.elements.email.value);
+            if (!err) setFieldError(registerForm, 'email', '');
         }
 
         if (fieldKey === 'password') {
-            setFieldError(
-                registerForm,
-                'regPassword',
-                validateRegisterPassword(registerForm.elements.password.value)
-            );
+            const err = validateRegisterPassword(registerForm.elements.password.value);
+            if (!err) setFieldError(registerForm, 'regPassword', '');
 
             if (registerForm.elements.confirmPassword.value) {
-                setFieldError(
-                    registerForm,
-                    'confirmPassword',
-                    validateConfirmPassword(
-                        registerForm.elements.password.value,
-                        registerForm.elements.confirmPassword.value
-                    )
+                const confErr = validateConfirmPassword(
+                    registerForm.elements.password.value,
+                    registerForm.elements.confirmPassword.value
                 );
+                if (!confErr) setFieldError(registerForm, 'confirmPassword', '');
             }
         }
 
         if (fieldKey === 'confirmPassword') {
-            setFieldError(
-                registerForm,
-                'confirmPassword',
-                validateConfirmPassword(
-                    registerForm.elements.password.value,
-                    registerForm.elements.confirmPassword.value
-                )
+            const confErr = validateConfirmPassword(
+                registerForm.elements.password.value,
+                registerForm.elements.confirmPassword.value
             );
+            if (!confErr) setFieldError(registerForm, 'confirmPassword', '');
         }
 
         updateRegisterButtonState();
-        showRegisterStatus('');
     });
 
     input.addEventListener('blur', () => {
         if (fieldKey === 'fullName') {
-            setFieldError(
-                registerForm,
-                'fullName',
-                validateFullName(registerForm.elements.fullName.value)
-            );
+            const val = registerForm.elements.fullName.value.trim();
+            if (val) setFieldError(registerForm, 'fullName', validateFullName(val));
         }
 
         if (fieldKey === 'phone') {
-            setFieldError(
-                registerForm,
-                'phone',
-                validateRegisterPhone(registerForm.elements.phone.value)
-            );
+            const val = registerForm.elements.phone.value.trim();
+            if (val) setFieldError(registerForm, 'phone', validateRegisterPhone(val));
         }
 
         if (fieldKey === 'email') {
-            setFieldError(
-                registerForm,
-                'email',
-                validateRegisterEmail(registerForm.elements.email.value)
-            );
+            const val = registerForm.elements.email.value.trim();
+            if (val) setFieldError(registerForm, 'email', validateRegisterEmail(val));
         }
 
         if (fieldKey === 'password') {
-            setFieldError(
-                registerForm,
-                'regPassword',
-                validateRegisterPassword(registerForm.elements.password.value)
-            );
+            const val = registerForm.elements.password.value;
+            if (val) setFieldError(registerForm, 'regPassword', validateRegisterPassword(val));
         }
 
         if (fieldKey === 'confirmPassword') {
-            setFieldError(
-                registerForm,
-                'confirmPassword',
-                validateConfirmPassword(
-                    registerForm.elements.password.value,
-                    registerForm.elements.confirmPassword.value
-                )
-            );
+            const val = registerForm.elements.confirmPassword.value;
+            if (val) {
+                setFieldError(
+                    registerForm,
+                    'confirmPassword',
+                    validateConfirmPassword(registerForm.elements.password.value, val)
+                );
+            }
         }
 
         updateRegisterButtonState();
@@ -625,14 +810,13 @@ loginForm.addEventListener('submit', async (event) => {
 });
 
 registerForm.elements.terms.addEventListener('change', () => {
-    setFieldError(
-        registerForm,
-        'terms',
-        validateTerms(registerForm.elements.terms.checked)
-    );
+    if (registerForm.elements.terms.checked) {
+        setFieldError(registerForm, 'terms', '');
+    } else {
+        setFieldError(registerForm, 'terms', validateTerms(false));
+    }
 
     updateRegisterButtonState();
-    showRegisterStatus('');
 });
 
 // ======================================================
@@ -641,6 +825,7 @@ registerForm.elements.terms.addEventListener('change', () => {
 
 registerForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (isRegisterSubmitting) return;
 
     const fullName = registerForm.elements.fullName.value.trim();
     const phone = registerForm.elements.phone.value.trim();
@@ -663,29 +848,39 @@ registerForm.addEventListener('submit', async (event) => {
     setFieldError(registerForm, 'confirmPassword', confirmError);
     setFieldError(registerForm, 'terms', termsError);
 
-    if (
-        fullNameError ||
-        phoneError ||
-        emailError ||
-        passwordError ||
-        confirmError ||
-        termsError
-    ) {
-        updateRegisterButtonState();
+    // Focus vào ô lỗi đầu tiên để người dùng dễ thao tác
+    if (fullNameError) {
+        registerForm.elements.fullName.focus();
+        return;
+    }
+    if (phoneError) {
+        registerForm.elements.phone.focus();
+        return;
+    }
+    if (emailError) {
+        registerForm.elements.email.focus();
+        return;
+    }
+    if (passwordError) {
+        registerForm.elements.password.focus();
+        return;
+    }
+    if (confirmError) {
+        registerForm.elements.confirmPassword.focus();
+        return;
+    }
+    if (termsError) {
+        registerForm.elements.terms.focus();
         return;
     }
 
-    const submitButton = registerForm.querySelector(
-        'button[type="submit"]'
-    );
+    const submitButton = registerForm.querySelector('button[type="submit"]');
+    const originalButtonContent = submitButton ? submitButton.innerHTML : 'Tạo tài khoản';
 
-    const originalButtonText = submitButton
-        ? submitButton.textContent
-        : 'Tạo tài khoản';
-
+    isRegisterSubmitting = true;
     if (submitButton) {
         submitButton.disabled = true;
-        submitButton.textContent = 'Đang tạo tài khoản...';
+        submitButton.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span><span>Đang tạo tài khoản...</span>';
     }
 
     showRegisterStatus('');
@@ -698,22 +893,134 @@ registerForm.addEventListener('submit', async (event) => {
             password
         });
 
-        showGlobalStatus(
-            'Tài khoản đã được tạo. Hãy đăng nhập để tiếp tục.'
-        );
-
+        // Đăng ký thành công: chuyển sang tab đăng nhập và điền sẵn SĐT/Email
+        showGlobalStatus('Tài khoản đã được tạo thành công! Hãy đăng nhập để tiếp tục.');
         switchTab('login');
+        if (loginForm.elements.login) {
+            loginForm.elements.login.value = phone || email || '';
+            loginForm.elements.password.value = '';
+            loginForm.elements.password.focus();
+        }
     } catch (error) {
-        showRegisterStatus(
-            error?.message ||
-            'Đăng ký không thành công. Vui lòng thử lại.'
-        );
-    } finally {
-        if (submitButton) {
-            submitButton.disabled = false;
-            submitButton.textContent = originalButtonText;
+        const status = error?.status;
+        const code = error?.code || '';
+        const msg = (error?.message || '').trim();
+        const field = (error?.field || '').toLowerCase();
+        const errors = error?.errors;
+        const lowerMsg = msg.toLowerCase();
+
+        // 1. Lỗi mạng
+        if (code === 'NETWORK_ERROR' || status === 0) {
+            showRegisterStatus('Không thể kết nối máy chủ. Vui lòng kiểm tra mạng rồi thử lại.');
+            return;
         }
 
+        // 2. Lỗi máy chủ 500
+        if (status === 500) {
+            showRegisterStatus('Máy chủ đang gặp sự cố. Vui lòng thử lại sau.');
+            return;
+        }
+
+        // 3. Nếu backend trả về field cụ thể
+        if (field) {
+            if (field === 'phone') {
+                setFieldError(registerForm, 'phone', msg || 'Số điện thoại này đã được sử dụng.');
+                registerForm.elements.phone.focus();
+                return;
+            }
+            if (field === 'email') {
+                setFieldError(registerForm, 'email', msg || 'Email này đã được sử dụng.');
+                registerForm.elements.email.focus();
+                return;
+            }
+            if (field === 'password' || field === 'regpassword') {
+                setFieldError(registerForm, 'regPassword', msg);
+                registerForm.elements.password.focus();
+                return;
+            }
+            if (field === 'fullname') {
+                setFieldError(registerForm, 'fullName', msg);
+                registerForm.elements.fullName.focus();
+                return;
+            }
+        }
+
+        // 4. Nếu backend trả về ModelState errors dictionary
+        if (errors && typeof errors === 'object') {
+            let matchedField = false;
+            for (const [key, val] of Object.entries(errors)) {
+                const errorText = Array.isArray(val) ? val[0] : String(val);
+                const lk = key.toLowerCase();
+                if (lk.includes('phone') || lk.includes('sdt')) {
+                    setFieldError(registerForm, 'phone', errorText);
+                    matchedField = true;
+                } else if (lk.includes('email')) {
+                    setFieldError(registerForm, 'email', errorText);
+                    matchedField = true;
+                } else if (lk.includes('password') || lk.includes('matkhau')) {
+                    setFieldError(registerForm, 'regPassword', errorText);
+                    matchedField = true;
+                } else if (lk.includes('name') || lk.includes('ten')) {
+                    setFieldError(registerForm, 'fullName', errorText);
+                    matchedField = true;
+                }
+            }
+            if (matchedField) return;
+        }
+
+        // 5. Phân tích nội dung message thực tế từ Backend
+        // 5a. Trùng số điện thoại
+        if (code === 'PHONE_EXISTS' || (lowerMsg.includes('số điện thoại') && !lowerMsg.includes('email'))) {
+            setFieldError(registerForm, 'phone', 'Số điện thoại này đã được sử dụng.');
+            registerForm.elements.phone.focus();
+            return;
+        }
+
+        // 5b. Trùng email
+        if (code === 'EMAIL_EXISTS' || (lowerMsg.includes('email') && !lowerMsg.includes('số điện thoại'))) {
+            setFieldError(registerForm, 'email', 'Email này đã được sử dụng.');
+            registerForm.elements.email.focus();
+            return;
+        }
+
+        // 5c. Backend trả về thông báo gộp: "Số điện thoại hoặc Email này đã được đăng ký."
+        if (lowerMsg.includes('số điện thoại') && lowerMsg.includes('email')) {
+            if (!email) {
+                // Người dùng không nhập email -> 100% là do số điện thoại đã tồn tại
+                setFieldError(registerForm, 'phone', 'Số điện thoại này đã được sử dụng.');
+                registerForm.elements.phone.focus();
+            } else {
+                // Người dùng nhập cả 2 -> đánh dấu trực quan cả 2 trường để người dùng kiểm tra
+                setFieldError(registerForm, 'phone', 'Số điện thoại có thể đã được đăng ký.');
+                setFieldError(registerForm, 'email', 'Email có thể đã được đăng ký.');
+                showRegisterStatus('Số điện thoại hoặc Email này đã được đăng ký. Vui lòng kiểm tra lại.');
+                registerForm.elements.phone.focus();
+            }
+            return;
+        }
+
+        // 5d. Lỗi mật khẩu từ Backend
+        if (lowerMsg.includes('mật khẩu')) {
+            setFieldError(registerForm, 'regPassword', msg);
+            registerForm.elements.password.focus();
+            return;
+        }
+
+        // 5e. Lỗi họ tên từ Backend
+        if (lowerMsg.includes('họ') || lowerMsg.includes('tên')) {
+            setFieldError(registerForm, 'fullName', msg);
+            registerForm.elements.fullName.focus();
+            return;
+        }
+
+        // Lỗi chung khác
+        showRegisterStatus(msg || 'Đăng ký không thành công. Vui lòng thử lại.');
+    } finally {
+        isRegisterSubmitting = false;
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.innerHTML = originalButtonContent;
+        }
         updateRegisterButtonState();
     }
 });
@@ -725,11 +1032,15 @@ registerForm.addEventListener('submit', async (event) => {
 if (forgotForm) {
     const forgotEmail = forgotForm.querySelector('#forgot-email');
     const forgotError = forgotForm.querySelector('#forgot-error');
-    const forgotSubmitButton = forgotForm.querySelector(
-        '#btn-submit-forgot'
-    );
+    const forgotSubmitButton = forgotForm.querySelector('#btn-submit-forgot');
 
     if (forgotEmail && forgotError && forgotSubmitButton) {
+        forgotEmail.addEventListener('input', () => {
+            forgotError.textContent = '';
+            forgotError.classList.add('hidden');
+            setInputErrorState(forgotEmail, false);
+        });
+
         forgotForm.addEventListener('submit', async (event) => {
             event.preventDefault();
 
@@ -738,30 +1049,36 @@ if (forgotForm) {
             forgotError.textContent = '';
             forgotError.classList.add('hidden');
 
-            if (!getEmailPattern().test(email)) {
-                forgotError.textContent =
-                    'Vui lòng nhập một địa chỉ email hợp lệ.';
-
+            if (!email) {
+                forgotError.textContent = 'Vui lòng nhập địa chỉ email.';
                 forgotError.classList.remove('hidden');
+                setInputErrorState(forgotEmail, true);
+                forgotEmail.focus();
+                return;
+            }
+
+            if (!getEmailPattern().test(email)) {
+                forgotError.textContent = 'Vui lòng nhập một địa chỉ email hợp lệ.';
+                forgotError.classList.remove('hidden');
+                setInputErrorState(forgotEmail, true);
+                forgotEmail.focus();
                 return;
             }
 
             forgotSubmitButton.disabled = true;
-            forgotSubmitButton.textContent = 'Đang gửi yêu cầu...';
+            forgotSubmitButton.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span><span>Đang gửi yêu cầu...</span>';
 
             try {
                 await authApi.forgotPassword(email);
 
-                // Tạo giao diện thông báo bằng DOM,
-                // không đưa trực tiếp dữ liệu người dùng vào innerHTML.
+                // Tạo giao diện thông báo bằng DOM an toàn
                 forgotForm.replaceChildren();
 
                 const wrapper = document.createElement('div');
                 wrapper.className = 'text-center py-6 space-y-3';
 
                 const icon = document.createElement('span');
-                icon.className =
-                    'material-symbols-outlined text-tertiary text-5xl';
+                icon.className = 'material-symbols-outlined text-tertiary text-5xl';
                 icon.textContent = 'mark_email_read';
 
                 const heading = document.createElement('h3');
@@ -769,43 +1086,26 @@ if (forgotForm) {
                 heading.textContent = 'Đã gửi yêu cầu khôi phục';
 
                 const message = document.createElement('p');
-                message.className =
-                    'text-sm text-on-surface-variant';
-                message.textContent =
-                    `Nếu email ${email} tồn tại trong hệ thống, ` +
-                    'bạn sẽ nhận được hướng dẫn khôi phục mật khẩu. ' +
-                    'Vui lòng kiểm tra hộp thư.';
+                message.className = 'text-sm text-on-surface-variant';
+                message.textContent = `Nếu email ${email} tồn tại trong hệ thống GustoPOS, hướng dẫn đặt lại mật khẩu sẽ được gửi đến hộp thư của bạn.`;
 
                 const backButton = document.createElement('button');
                 backButton.type = 'button';
-                backButton.className =
-                    'w-full h-12 mt-4 rounded-lg ' +
-                    'bg-surface-container-high font-semibold ' +
-                    'hover:bg-surface-variant transition-colors';
+                backButton.className = 'w-full h-12 mt-4 rounded-lg bg-surface-container-high font-semibold hover:bg-surface-variant transition-colors';
                 backButton.textContent = 'Quay lại đăng nhập';
 
                 backButton.addEventListener('click', () => {
-                    location.reload();
+                    switchTab('login');
                 });
 
-                wrapper.append(
-                    icon,
-                    heading,
-                    message,
-                    backButton
-                );
-
+                wrapper.append(icon, heading, message, backButton);
                 forgotForm.appendChild(wrapper);
             } catch (error) {
-                forgotError.textContent =
-                    error?.message ||
-                    'Không thể gửi yêu cầu. Vui lòng thử lại sau.';
-
+                forgotError.textContent = error?.message || 'Không thể gửi yêu cầu lúc này. Vui lòng thử lại sau.';
                 forgotError.classList.remove('hidden');
-
+                setInputErrorState(forgotEmail, true);
                 forgotSubmitButton.disabled = false;
-                forgotSubmitButton.textContent =
-                    'Gửi yêu cầu khôi phục';
+                forgotSubmitButton.textContent = 'Gửi liên kết khôi phục';
             }
         });
     }
@@ -815,41 +1115,18 @@ if (forgotForm) {
 // 13. XỬ LÝ ĐĂNG NHẬP GOOGLE
 // ======================================================
 
-// Nút HTML cần có data-google-auth-url trỏ đến endpoint OAuth
-// do backend cung cấp.
-//
-// Ví dụ khi backend chạy tại localhost:5000:
-// data-google-auth-url="http://localhost:5000/auth/google/login"
-//
-// Endpoint này phải thực sự được backend triển khai.
-// Frontend không thể tự xác thực Google chỉ bằng JavaScript.
-
 if (btnGoogleLogin) {
     btnGoogleLogin.addEventListener('click', () => {
-        const googleAuthUrl = btnGoogleLogin.dataset.googleAuthUrl;
-
-        if (!googleAuthUrl) {
-            showGlobalStatus(
-                'Đăng nhập Google chưa được cấu hình. ' +
-                'Vui lòng cấu hình endpoint OAuth của backend.'
-            );
-
-            return;
-        }
+        const googleAuthUrl = btnGoogleLogin.dataset.googleAuthUrl || `${API_BASE_URL}/auth/google/login`;
 
         let target;
-
         try {
             target = new URL(googleAuthUrl, location.href);
         } catch {
-            showGlobalStatus(
-                'Đường dẫn đăng nhập Google không hợp lệ.'
-            );
-
+            showGlobalStatus('Đường dẫn đăng nhập Google không hợp lệ.');
             return;
         }
 
-        // Chỉ cho phép HTTPS, cùng origin hoặc HTTP localhost để phát triển.
         const isLocalhost =
             target.hostname === 'localhost' ||
             target.hostname === '127.0.0.1' ||
@@ -857,24 +1134,22 @@ if (btnGoogleLogin) {
 
         const isSameOrigin = target.origin === location.origin;
         const isSecure = target.protocol === 'https:';
-        const isLocalDevelopment =
-            isLocalhost && target.protocol === 'http:';
+        const isLocalDevelopment = isLocalhost && target.protocol === 'http:';
 
         if (!isSameOrigin && !isSecure && !isLocalDevelopment) {
-            showGlobalStatus(
-                'Đường dẫn đăng nhập Google không an toàn.'
-            );
-
+            showGlobalStatus('Đường dẫn đăng nhập Google không an toàn.');
             return;
+        }
+
+        const returnUrl = getSafeReturnUrl();
+        if (returnUrl && !returnUrl.includes('login_register')) {
+            target.searchParams.set('returnUrl', returnUrl);
         }
 
         btnGoogleLogin.disabled = true;
         btnGoogleLogin.setAttribute('aria-busy', 'true');
 
         showGlobalStatus('Đang chuyển đến trang đăng nhập Google...');
-
-        // Backend sẽ điều hướng sang Google, xử lý callback,
-        // xác thực tài khoản và tạo phiên đăng nhập.
         location.assign(target.href);
     });
 }
@@ -883,5 +1158,27 @@ if (btnGoogleLogin) {
 // 14. KHỞI TẠO TRẠNG THÁI BAN ĐẦU
 // ======================================================
 
+// Kiểm tra query parameter từ URL (ví dụ lỗi Google OAuth từ Backend redirect)
+const pageParams = new URLSearchParams(window.location.search);
+const oauthError = pageParams.get('error') || pageParams.get('oauthError');
+if (oauthError) {
+    let msg = 'Đăng nhập bằng tài khoản Google không thành công. Vui lòng thử lại.';
+    if (oauthError === 'access_denied') {
+        msg = 'Bạn đã hủy yêu cầu đăng nhập bằng tài khoản Google.';
+    } else if (oauthError === 'invalid_client') {
+        msg = 'Cấu hình Google Client Secret trên máy chủ chưa chính xác hoặc chưa được thiết lập. Vui lòng kiểm tra lại cấu hình.';
+    } else if (oauthError === 'correlation_failed') {
+        msg = 'Phiên bảo mật OAuth tạm thời bị gián đoạn. Vui lòng thử lại.';
+    } else if (oauthError === 'no_email') {
+        msg = 'Tài khoản Google của bạn không cung cấp địa chỉ email để định danh.';
+    } else if (oauthError === 'auth_failed') {
+        msg = 'Không tìm thấy phiên xác thực Google tạm thời. Vui lòng thử lại.';
+    }
+    showGlobalStatus(msg);
+}
+
 clearRegisterErrors();
 updateRegisterButtonState();
+setupRememberMeListeners();
+restoreRememberedLogin();
+

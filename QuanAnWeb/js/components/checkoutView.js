@@ -249,37 +249,223 @@ export function renderCheckoutCart(
     container.replaceChildren(wrapper);
 }
 
-/** Render danh sách bàn trực quan, lọc trạng thái khả dụng */
-export function renderCheckoutTables(select, tables = [], { availableStatusValues = ['Trong', 0, '0'] } = {}) {
-    if (!select) return;
-    const normalizedTables = Array.isArray(tables) ? tables : [];
-    const options = [new Option('Chọn bàn dùng món', '')];
+/** Render thông báo cảnh báo riêng cho khu vực chọn bàn */
+export function renderCheckoutTableAlert(container, message, type = 'warning') {
+    if (!container) return;
+    if (!message) {
+        container.classList.add('hidden');
+        container.replaceChildren();
+        return;
+    }
+    const bgClass = type === 'error' ? 'bg-red-50 border-red-200 text-red-900' : 'bg-amber-50 border-amber-200 text-amber-900';
+    const iconClass = type === 'error' ? 'text-red-600' : 'text-amber-600';
+    const iconName = type === 'error' ? 'error' : 'warning';
 
-    normalizedTables.forEach((table) => {
-        const id = table?.id ?? table?.TableId ?? table?.tableId;
-        if (id === undefined || id === null) return;
-        const tableName = table?.tableName ?? table?.name ?? table?.TableName ?? `Bàn ${id}`;
-        const areaName = table?.areaName ?? table?.AreaName ?? '';
-        const capacity = Number(table?.capacity ?? table?.Capacity);
-        
-        const rawStatus = table?.status ?? table?.Status;
-        
-        const isAvailable = availableStatusValues.includes(rawStatus) || 
-                            availableStatusValues.includes(Number(rawStatus)) ||
-                            String(rawStatus).toLowerCase() === 'trong';
-        
-        const capacityText = Number.isFinite(capacity) && capacity > 0 ? ` · ${capacity} chỗ` : '';
-        const areaText = areaName ? ` · ${areaName}` : '';
-        const statusText = isAvailable ? 'Có thể chọn' : 'Đang bận / Không khả dụng';
-
-        const option = new Option(`${tableName}${areaText}${capacityText} · ${statusText}`, String(id));
-        
-        option.disabled = !isAvailable;
-        options.push(option);
+    const box = createElement('div', `rounded-xl border ${bgClass} p-3.5 text-xs md:text-sm flex items-start justify-between gap-2.5 shadow-xs`);
+    const content = createElement('div', 'flex items-start gap-2 min-w-0');
+    content.append(createElement('span', `material-symbols-outlined text-[18px] shrink-0 mt-0.5 ${iconClass}`, iconName));
+    content.append(createElement('p', 'leading-snug', message));
+    
+    const closeBtn = createElement('button', 'shrink-0 text-current opacity-70 hover:opacity-100 transition');
+    closeBtn.type = 'button';
+    closeBtn.innerHTML = '<span class="material-symbols-outlined text-[16px]">close</span>';
+    closeBtn.addEventListener('click', () => {
+        container.classList.add('hidden');
+        container.replaceChildren();
     });
 
-    select.replaceChildren(...options);
-    select.disabled = normalizedTables.length === 0;
+    box.append(content, closeBtn);
+    container.replaceChildren(box);
+    container.classList.remove('hidden');
+}
+
+/** Render danh sách bàn trực quan theo lưới thẻ cân đối, CHỈ hiển thị bàn trống */
+export function renderCheckoutTables(select, tables = [], options = {}) {
+    const {
+        gridContainer = document.getElementById('checkout-table-selector'),
+        countBadge = document.getElementById('checkout-available-tables-count'),
+        selectedTableId = '',
+        activeAreaFilter = 'all',
+        onSelectTable = () => {},
+        onSelectArea = () => {}
+    } = options;
+
+    const normalizedTables = Array.isArray(tables) ? tables : [];
+    
+    // LỌC NGHIÊM NGẶT: Chỉ giữ lại các bàn thực sự đang TRỐNG (Status = 'Trong' hoặc 0)
+    const availableTables = normalizedTables.filter((table) => {
+        const rawStatus = table?.status ?? table?.Status;
+        return rawStatus === 0 || rawStatus === '0' || String(rawStatus).toLowerCase() === 'trong';
+    });
+
+    // 1. Đồng bộ phần tử <select> ẩn để duy trì tính hợp lệ của Form và tính tương thích
+    if (select) {
+        const selectOptions = [new Option('Chọn bàn dùng món', '')];
+        if (availableTables.length === 0) {
+            const noTableOpt = new Option('Hiện không có bàn trống', '');
+            noTableOpt.disabled = true;
+            selectOptions.push(noTableOpt);
+        } else {
+            availableTables.forEach((table) => {
+                const id = table?.id ?? table?.TableId ?? table?.tableId;
+                if (id === undefined || id === null) return;
+                const tableName = table?.tableName ?? table?.name ?? table?.TableName ?? `Bàn ${id}`;
+                const areaName = table?.areaName ?? table?.AreaName ?? '';
+                const capacity = Number(table?.capacity ?? table?.Capacity);
+                const capacityText = Number.isFinite(capacity) && capacity > 0 ? ` · ${capacity} chỗ` : '';
+                const areaText = areaName ? ` · ${areaName}` : '';
+                selectOptions.push(new Option(`${tableName}${areaText}${capacityText}`, String(id)));
+            });
+        }
+        select.replaceChildren(...selectOptions);
+        select.disabled = availableTables.length === 0;
+        if (selectedTableId && availableTables.some(t => String(t.id ?? t.TableId) === String(selectedTableId))) {
+            select.value = String(selectedTableId);
+        } else {
+            select.value = '';
+        }
+    }
+
+    // 2. Cập nhật Badge số lượng bàn trống
+    if (countBadge) {
+        if (availableTables.length > 0) {
+            countBadge.textContent = `${availableTables.length} bàn trống`;
+            countBadge.className = 'text-xs font-semibold text-[#00685c] bg-[#00685c]/10 px-2.5 py-1 rounded-full';
+            countBadge.classList.remove('hidden');
+        } else {
+            countBadge.textContent = 'Hết bàn trống';
+            countBadge.className = 'text-xs font-semibold text-error bg-red-50 text-red-700 px-2.5 py-1 rounded-full';
+            countBadge.classList.remove('hidden');
+        }
+    }
+
+    // 3. Render lưới bàn trực quan vào gridContainer
+    if (!gridContainer) return;
+
+    // Trường hợp KHÔNG CÓ BÀN TRỐNG: Hiển thị Empty State thân thiện
+    if (availableTables.length === 0) {
+        const emptyBox = createElement('div', 'rounded-2xl border border-amber-200 bg-amber-50/70 p-6 text-center');
+        const icon = createElement('span', 'material-symbols-outlined mx-auto text-3xl text-amber-600 block', 'table_restaurant');
+        const title = createElement('p', 'mt-2 text-sm font-bold text-amber-900', 'Hiện không có bàn trống. Vui lòng thử lại sau.');
+        const subtext = createElement('p', 'mt-1 text-xs text-amber-700', 'Tất cả các bàn hiện đang phục vụ hoặc đang dọn dẹp. Danh sách sẽ tự động hiển thị ngay khi có bàn trống.');
+        emptyBox.append(icon, title, subtext);
+        gridContainer.replaceChildren(emptyBox);
+        return;
+    }
+
+    const wrapper = createElement('div', 'space-y-3.5 w-full min-w-0');
+
+    // Thu thập danh sách các khu vực duy nhất có bàn trống
+    const areas = [];
+    const areaCounts = new Map();
+    availableTables.forEach(t => {
+        const area = t.areaName || 'Khu vực chính';
+        areaCounts.set(area, (areaCounts.get(area) || 0) + 1);
+        if (!areas.includes(area)) areas.push(area);
+    });
+
+    // Nếu có từ 2 khu vực trở lên, tạo thanh lọc khu vực (Pills)
+    if (areas.length > 1) {
+        const filterBar = createElement('div', 'flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-none text-xs w-full min-w-0');
+        
+        const allBtn = createElement(
+            'button',
+            `px-3 py-1.5 rounded-full font-semibold transition shrink-0 ${activeAreaFilter === 'all' ? 'bg-[#ac2d00] text-white shadow-sm' : 'bg-[#f3f3f3] text-[#5b4139] hover:bg-[#e8e8e8]'}`,
+            `Tất cả (${availableTables.length})`
+        );
+        allBtn.type = 'button';
+        allBtn.addEventListener('click', () => onSelectArea('all'));
+        filterBar.append(allBtn);
+
+        areas.forEach(area => {
+            const count = areaCounts.get(area) || 0;
+            const isAreaActive = activeAreaFilter === area;
+            const btn = createElement(
+                'button',
+                `px-3 py-1.5 rounded-full font-medium transition shrink-0 ${isAreaActive ? 'bg-[#ac2d00] text-white font-semibold shadow-sm' : 'bg-[#f3f3f3] text-[#5b4139] hover:bg-[#e8e8e8]'}`,
+                `${area} (${count})`
+            );
+            btn.type = 'button';
+            btn.addEventListener('click', () => onSelectArea(area));
+            filterBar.append(btn);
+        });
+
+        wrapper.append(filterBar);
+    }
+
+    // Lọc bàn hiển thị theo khu vực đã chọn
+    const tablesToShow = (activeAreaFilter && activeAreaFilter !== 'all')
+        ? availableTables.filter(t => (t.areaName || 'Khu vực chính') === activeAreaFilter)
+        : availableTables;
+
+    // Lưới thẻ bàn responsive: 2 cột trên điện thoại, 3 cột trên tablet, 4 cột trên desktop
+    const grid = createElement('div', 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 xl:grid-cols-4 gap-2.5 w-full min-w-0');
+
+    tablesToShow.forEach((table) => {
+        const id = table?.id ?? table?.TableId ?? table?.tableId;
+        const tableName = table?.tableName ?? table?.name ?? table?.TableName ?? `Bàn ${id}`;
+        const areaName = table?.areaName ?? table?.AreaName ?? 'Khu vực chung';
+        const capacity = Number(table?.capacity ?? table?.Capacity ?? 4);
+        const isSelected = String(selectedTableId) === String(id);
+
+        const card = createElement(
+            'button',
+            `group relative flex flex-col justify-between p-3 rounded-xl border text-left transition-all cursor-pointer focus:outline-none min-w-0 min-h-[92px] ${
+                isSelected
+                    ? 'border-2 border-[#ac2d00] bg-[#fff6f4] shadow-sm ring-2 ring-[#ac2d00]/20'
+                    : 'border-[#d8c8c2] bg-white hover:border-[#ac2d00] hover:bg-[#fffcfb] hover:shadow-xs'
+            }`
+        );
+        card.type = 'button';
+        card.dataset.tableCardId = String(id);
+        card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+
+        // Hàng trên: Tên bàn + Sức chứa / Dấu tick
+        const topRow = createElement('div', 'flex items-center justify-between w-full min-w-0 gap-1');
+        const nameEl = createElement(
+            'span',
+            `font-extrabold text-sm tracking-tight truncate ${isSelected ? 'text-[#ac2d00]' : 'text-[#1a1c1c]'}`,
+            tableName
+        );
+        topRow.append(nameEl);
+
+        if (isSelected) {
+            const checkIcon = createElement('span', 'material-symbols-outlined text-[18px] text-[#ac2d00] shrink-0', 'check_circle');
+            topRow.append(checkIcon);
+        } else {
+            const capBadge = createElement('span', 'inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#00685c] bg-[#00685c]/10 px-1.5 py-0.5 rounded shrink-0');
+            capBadge.innerHTML = `<span class="material-symbols-outlined text-[13px]">person</span>${capacity}`;
+            topRow.append(capBadge);
+        }
+
+        // Hàng giữa: Khu vực / Tầng
+        const areaEl = createElement('p', 'text-xs text-[#5b4139] truncate font-medium mt-1', areaName);
+
+        // Hàng dưới: Trạng thái trống / Đang chọn
+        const bottomRow = createElement('div', 'mt-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-[#f2eae6] w-full min-w-0 gap-1');
+        const statusBadge = createElement('span', 'inline-flex items-center gap-1 font-semibold text-emerald-700 shrink-0');
+        statusBadge.innerHTML = `<span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Trống`;
+        bottomRow.append(statusBadge);
+
+        if (isSelected) {
+            const selectedText = createElement('span', 'font-bold text-[#ac2d00] shrink-0', 'Đang chọn');
+            bottomRow.append(selectedText);
+        } else {
+            const seatsText = createElement('span', 'text-[11px] text-[#5b4139] shrink-0', `${capacity} chỗ`);
+            bottomRow.append(seatsText);
+        }
+
+        card.append(topRow, areaEl, bottomRow);
+
+        card.addEventListener('click', () => {
+            onSelectTable(id);
+        });
+
+        grid.append(card);
+    });
+
+    wrapper.append(grid);
+    gridContainer.replaceChildren(wrapper);
 }
 
 /** Render thông báo trạng thái hoặc lỗi dùng chung cho checkout */

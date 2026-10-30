@@ -689,18 +689,26 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final List<OrderItem> newItems = List<OrderItem>.from(
-      result['orderItems'] as List? ?? const <OrderItem>[],
-    );
-    final int newAmount = result['amount'] as int? ?? 0;
-    final int? guestCount = result['guestCount'] as int?;
-    final bool paymentRequested = result['paymentRequested'] as bool? ?? false;
-    final bool paymentCompleted = result['paymentCompleted'] as bool? ?? false;
-    final bool releaseTable = result['releaseTable'] as bool? ?? false;
-    final bool tableCleared = result['tableCleared'] as bool? ?? false;
-    final bool tableActivated =
-        result['tableActivated'] as bool? ??
-        table.status == TableStatus.occupied;
+    final dynamic rawItems = result['orderItems'];
+    final List<OrderItem> newItems = rawItems is List
+        ? rawItems.whereType<OrderItem>().toList()
+        : <OrderItem>[];
+
+    int? asNullableInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value?.toString() ?? '');
+    }
+
+    final int newAmount = asNullableInt(result['amount']) ?? 0;
+    final int? guestCount = asNullableInt(result['guestCount']);
+    final bool paymentRequested = result['paymentRequested'] == true;
+    final bool paymentCompleted = result['paymentCompleted'] == true;
+    final bool releaseTable = result['releaseTable'] == true;
+    final bool tableCleared = result['tableCleared'] == true;
+    final bool tableActivated = result.containsKey('tableActivated')
+        ? result['tableActivated'] == true
+        : table.status == TableStatus.occupied;
 
     if (result['transferTable'] == true) {
       await _transferTable(

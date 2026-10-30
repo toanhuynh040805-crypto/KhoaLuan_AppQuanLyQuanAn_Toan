@@ -7,7 +7,8 @@ public enum ReservationStatusEnum
     DaNhanBan = 1,  // khach da den, da chuyen thanh Order that su
     DaHuy = 2,      // Thu ngan/Le tan chu dong huy
     KhongDen = 3,   // qua gio hen kha lau ma khach khong den (no-show)
-    HoanTat = 4     // BO SUNG: khach da an xong & thanh toan (hoac Order bi huy) -> Backend tu chuyen sang trang thai nay
+    HoanTat = 4,    // BO SUNG: khach da an xong & thanh toan (hoac Order bi huy) -> Backend tu chuyen sang trang thai nay
+    ChoXacNhan = 5  // Khach dat qua Web cho nha hang xac nhan
 }
 
 public class ReservationDto

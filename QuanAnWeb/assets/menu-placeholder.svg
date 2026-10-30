@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" role="img" aria-label="Ảnh món ăn mặc định">
+  <rect width="800" height="520" fill="#eeeeee"/>
+  <circle cx="400" cy="260" r="112" fill="#ffffff" stroke="#e4beb4" stroke-width="12"/>
+  <path d="M400 188c-40 0-72 32-72 72s32 72 72 72 72-32 72-72-32-72-72-72Zm0 24a48 48 0 1 1 0 96 48 48 0 0 1 0-96Z" fill="#ac2d00"/>
+  <path d="M250 150v110m-28-110v48m56-48v48m-28 62v110m300-220v220m0-220c-35 32-48 71-48 112h48" fill="none" stroke="#5b4139" stroke-linecap="round" stroke-width="12"/>
+</svg>
