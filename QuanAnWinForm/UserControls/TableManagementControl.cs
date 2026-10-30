@@ -1,6 +1,7 @@
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
+using QuanAnWinForm.Utils;
 
 namespace QuanAnWinForm.UserControls;
 
@@ -380,13 +381,25 @@ public partial class TableManagementControl : UserControl
     private Panel BuildServingItemRow(OrderItemStatusDto item)
     {
         var statusIndex = Math.Clamp(item.KitchenStatus, 0, KitchenStatusLabels.Length - 1);
-        var row = new Panel { Size = new Size(268, 62), BackColor = Color.White, Margin = new Padding(0, 0, 0, 6) };
+        var row = new Panel { Size = new Size(268, 80), BackColor = Color.White, Margin = new Padding(0, 0, 0, 6) };
         row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
 
         var lblName = new Label { Text = $"{item.Quantity}x {item.MenuItemName}", Font = AppFonts.LabelLg, Location = new Point(10, 6), Size = new Size(180, 20), AutoEllipsis = true };
-        var lblStatus = new Label { Text = KitchenStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = KitchenStatusColor(statusIndex), Location = new Point(10, 28), AutoSize = true };
+        var lblTime = new Label
+        {
+            Text = item.CreatedAt > DateTime.MinValue
+                ? $"Gọi {TimeDisplay.FormatClock(item.CreatedAt)} • {TimeDisplay.FormatAgo(item.CreatedAt)}"
+                : "",
+            Font = AppFonts.LabelMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(10, 28),
+            Size = new Size(238, 18),
+            AutoEllipsis = true
+        };
+        var lblStatus = new Label { Text = KitchenStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = KitchenStatusColor(statusIndex), Location = new Point(10, 50), AutoSize = true };
 
         row.Controls.Add(lblName);
+        row.Controls.Add(lblTime);
         row.Controls.Add(lblStatus);
 
         // Chỉ cho phép bấm "Đã phục vụ" khi món ở trạng thái Đã chế biến (DaCheBien = 2)
@@ -395,7 +408,7 @@ public partial class TableManagementControl : UserControl
             var btnServe = new Button
             {
                 Text = "Đã phục vụ",
-                Location = new Point(150, 24),
+                Location = new Point(150, 44),
                 Size = new Size(108, 28),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Tertiary,
