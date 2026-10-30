@@ -4,6 +4,7 @@ import 'package:signalr_netcore/signalr_client.dart';
 
 import '../models/app_notification.dart';
 import 'api_config.dart';
+import 'api_client.dart';
 import 'mobile_access_policy.dart';
 
 class DishStatusRealtimeEvent {
@@ -113,6 +114,11 @@ class TableLockTakenOverRealtimeEvent {
 }
 
 class RealtimeService {
+  RealtimeService({
+    required ApiClient apiClient,
+  }) : _apiClient = apiClient;
+
+  final ApiClient _apiClient;
   HubConnection? _connection;
   String? _employeeCode;
   String? _roleKey;
@@ -179,8 +185,12 @@ class RealtimeService {
     _employeeCode = employeeCode;
     _roleKey = roleKey;
 
+    final HttpConnectionOptions httpOptions = HttpConnectionOptions(
+      accessTokenFactory: () async => _apiClient.accessToken ?? '',
+    );
+
     final HubConnection connection = HubConnectionBuilder()
-        .withUrl(ApiConfig.hubUrl)
+        .withUrl(ApiConfig.hubUrl, options: httpOptions)
         .withAutomaticReconnect()
         .build();
 
