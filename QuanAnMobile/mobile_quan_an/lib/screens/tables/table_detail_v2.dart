@@ -20,6 +20,7 @@ import '../menu/menu_screen.dart';
 import '../order_log/order_log_screen.dart';
 import 'payment_dialog.dart';
 import 'kitchen_requests_screen.dart';
+import 'member_customer_sheet.dart';
 import 'order_item_edit_screen.dart';
 
 class TableDetailV2 extends StatefulWidget {
@@ -1342,164 +1343,27 @@ class _TableDetailV2State extends State<TableDetailV2> {
       return;
     }
 
-    final TextEditingController phoneController = TextEditingController();
-    List<MemberCustomer> results = <MemberCustomer>[];
-    bool loading = false;
-
-    final MemberCustomer? selected = await showModalBottomSheet<MemberCustomer>(
+    final MemberCustomer? selected =
+        await showModalBottomSheet<MemberCustomer>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       showDragHandle: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> search() async {
-              final String phone = phoneController.text.trim();
-              if (phone.isEmpty) return;
-              setSheetState(() => loading = true);
-              try {
-                final List<MemberCustomer> found = await AppServices
-                    .customerService
-                    .searchByPhone(phone);
-                if (!sheetContext.mounted) return;
-                setSheetState(() {
-                  results = found;
-                  loading = false;
-                });
-              } on ApiException catch (error) {
-                if (!sheetContext.mounted) return;
-                setSheetState(() => loading = false);
-                TopMessage.show(
-                  sheetContext,
-                  message: error.message,
-                  type: TopMessageType.error,
-                );
-              }
-            }
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                4,
-                20,
-                20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Khách hàng / Thành viên',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  if (_memberCustomer != null) ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Đang gắn: ${_memberCustomer!.fullName} • ${_memberCustomer!.phone} • ${_memberCustomer!.memberLevel}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: phoneController,
-                          keyboardType: TextInputType.phone,
-                          decoration: const InputDecoration(
-                            labelText: 'Số điện thoại khách',
-                            hintText: 'Nhập SĐT để tìm thành viên',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.phone_outlined),
-                          ),
-                          onSubmitted: (_) => search(),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      FilledButton(
-                        onPressed: loading ? null : search,
-                        child: loading
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Tìm'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (results.isNotEmpty)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 230),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: results.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, index) {
-                          final MemberCustomer member = results[index];
-                          return ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.person_outline),
-                            ),
-                            title: Text(member.fullName),
-                            subtitle: Text(
-                              '${member.phone} • ${member.memberLevel} • ${member.loyaltyPoint} điểm',
-                            ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => Navigator.pop(sheetContext, member),
-                          );
-                        },
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final String phone = phoneController.text.trim();
-                        final MemberCustomer? created =
-                            await _createMemberDialog(phone);
-                        if (created != null && sheetContext.mounted) {
-                          Navigator.pop(sheetContext, created);
-                        }
-                      },
-                      icon: const Icon(Icons.person_add_alt_1_outlined),
-                      label: const Text('Tạo thành viên mới'),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (_) => MemberCustomerSheet(
+        currentMember: _memberCustomer,
+      ),
     );
 
-    phoneController.dispose();
     if (!mounted || selected == null) return;
+
+    if (selected.id <= 0) {
+      TopMessage.show(
+        context,
+        message: 'Thông tin thành viên không hợp lệ. Vui lòng tìm lại.',
+        type: TopMessageType.error,
+      );
+      return;
+    }
 
     try {
       final MemberCustomer attached = await AppServices.customerService
@@ -1508,8 +1372,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
             customerId: selected.id,
             employeeCode: appEmployee.employeeCode,
           );
+
       if (!mounted) return;
+
       setState(() => _memberCustomer = attached);
+
       TopMessage.show(
         context,
         message: 'Đã gắn ${attached.fullName} vào đơn',
@@ -1522,82 +1389,14 @@ class _TableDetailV2State extends State<TableDetailV2> {
         message: error.message,
         type: TopMessageType.error,
       );
+    } catch (_) {
+      if (!mounted) return;
+      TopMessage.show(
+        context,
+        message: 'Không thể gắn thành viên vào đơn. Vui lòng thử lại.',
+        type: TopMessageType.error,
+      );
     }
-  }
-
-  Future<MemberCustomer?> _createMemberDialog(String initialPhone) async {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController phoneController = TextEditingController(
-      text: initialPhone,
-    );
-
-    final MemberCustomer? result = await showDialog<MemberCustomer>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Tạo thành viên mới'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Tên khách hàng',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Số điện thoại',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final String name = nameController.text.trim();
-              final String phone = phoneController.text.trim();
-              if (name.isEmpty || phone.isEmpty) {
-                TopMessage.show(
-                  dialogContext,
-                  message: 'Vui lòng nhập tên và số điện thoại',
-                  type: TopMessageType.warning,
-                );
-                return;
-              }
-              try {
-                final MemberCustomer created = await AppServices.customerService
-                    .create(fullName: name, phone: phone);
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext, created);
-                }
-              } on ApiException catch (error) {
-                if (!dialogContext.mounted) return;
-                TopMessage.show(
-                  dialogContext,
-                  message: error.message,
-                  type: TopMessageType.error,
-                );
-              }
-            },
-            child: const Text('Tạo thành viên'),
-          ),
-        ],
-      ),
-    );
-
-    nameController.dispose();
-    phoneController.dispose();
-    return result;
   }
 
   Future<void> _clearTableAndRelease() async {
