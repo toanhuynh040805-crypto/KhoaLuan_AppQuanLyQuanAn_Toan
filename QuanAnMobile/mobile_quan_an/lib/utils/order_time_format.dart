@@ -51,3 +51,34 @@ String formatClockTime(DateTime? value) {
   final String minute = value.minute.toString().padLeft(2, '0');
   return '$hour:$minute';
 }
+
+
+String formatElapsedCompact(DateTime? value) {
+  if (value == null) return '';
+
+  final DateTime now = DateTime.now();
+  Duration diff = now.difference(value);
+
+  if (diff.isNegative) {
+    diff = Duration.zero;
+  }
+
+  if (diff.inMinutes < 1) {
+    return '0ph';
+  }
+
+  if (diff.inHours < 1) {
+    return '${diff.inMinutes}ph';
+  }
+
+  if (diff.inDays < 1) {
+    return '${diff.inHours}h';
+  }
+
+  final int days = diff.inDays;
+  final int hours = diff.inHours.remainder(24);
+
+  return hours > 0
+      ? '${days}n ${hours}h'
+      : '${days}n';
+}
