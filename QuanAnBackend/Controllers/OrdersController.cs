@@ -29,7 +29,8 @@ public record AddedOrderItemDto(
     decimal UnitPrice,
     string Status,
     string? Note,
-    bool IsTakeaway = false
+    bool IsTakeaway = false,
+    DateTime? CreatedAt = null
 );
 public record CheckInRequest(int TableId, int UserId, int? ReservationId, string? Note);
 public record CancelOrderDto(int UserId, string? Reason);
@@ -209,7 +210,7 @@ public class OrdersController : ControllerBase
             // Mỗi lần nhân viên bấm xác nhận gọi món là một đợt (batch).
             // Toàn bộ món trong cùng request dùng chung CreatedAt để Bếp/Quầy nước
             // gom đúng một phiếu. Gọi thêm lần sau sẽ có CreatedAt mới và xếp sau.
-            var batchCreatedAt = DateTime.Now;
+            var batchCreatedAt = batchCreatedAt;
 
             var addedItems = new List<AddedOrderItemDto>();
             var realtimeTickets = new List<(string StationName, int Id, string Name, int Quantity, string? Note, bool IsTakeaway)>();
@@ -346,7 +347,8 @@ public class OrdersController : ControllerBase
                         price,
                         "Chờ chế biến",
                         dto.Note,
-                        dto.IsTakeaway
+                        dto.IsTakeaway,
+                        batchCreatedAt
                     )
                 );
 
@@ -530,7 +532,8 @@ public class OrdersController : ControllerBase
                     menuItem.Price,
                     "Chờ chế biến",
                     dto.Note,
-                    true));
+                    true,
+                    batchCreatedAt));
             }
 
             await _db.SaveChangesAsync();
