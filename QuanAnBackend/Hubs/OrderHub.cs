@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
+using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Hubs;
 
@@ -18,14 +20,26 @@ public class OrderHub : Hub
     {
         if (Context.User?.Identity?.IsAuthenticated == true)
         {
-            var userId = GetCurrentUserId();
-            if (userId.HasValue && Context.User.IsInRole("Customer"))
+            if (IsCustomer())
             {
-                await Groups.AddToGroupAsync(Context.ConnectionId, $"customer-{userId.Value}");
+                var customerId = GetCurrentCustomerId();
+                if (customerId.HasValue)
+                {
+                    await Groups.AddToGroupAsync(
+                        Context.ConnectionId,
+                        $"customer-{customerId.Value}");
+                }
             }
-            else if (userId.HasValue && (Context.User.IsInRole("QuanLy") || Context.User.IsInRole("ThuNgan")))
+            else
             {
-                await Groups.AddToGroupAsync(Context.ConnectionId, "order-management");
+                var userId = GetCurrentUserId();
+                if (userId.HasValue &&
+                    (Context.User.IsInRole("QuanLy") || Context.User.IsInRole("ThuNgan")))
+                {
+                    await Groups.AddToGroupAsync(
+                        Context.ConnectionId,
+                        "order-management");
+                }
             }
         }
 
@@ -38,15 +52,38 @@ public class OrderHub : Hub
         if (string.IsNullOrWhiteSpace(departmentName))
             return;
 
-        if (Context.User?.IsInRole("Customer") == true)
+        if (Context.User?.Identity?.IsAuthenticated != true)
+            throw new HubException("Cần đăng nhập để tham gia nhóm bộ phận.");
+
+        if (IsCustomer())
             throw new HubException("Khách hàng không được tham gia nhóm bộ phận nội bộ.");
 
-        if (Context.User?.Identity?.IsAuthenticated == true && !Context.User.IsInRole(departmentName.Trim()))
-            throw new HubException("Bạn không có quyền tham gia nhóm bộ phận này.");
+        var normalizedDepartment = departmentName.Trim();
+
+        // Quản lý được phép theo dõi mọi trạm/bộ phận.
+        if (!Context.User!.IsInRole("QuanLy"))
+        {
+            var userId = GetCurrentUserId();
+            if (!userId.HasValue)
+                throw new HubException("Phiên đăng nhập không hợp lệ.");
+
+            // Bộ phận là Station của nhân viên, KHÔNG phải Role.
+            // Chỉ cho nhân viên vào đúng Station đã được gán.
+            var belongsToDepartment = await _db.Employees
+                .AsNoTracking()
+                .Include(employee => employee.Station)
+                .AnyAsync(employee =>
+                    employee.UserId == userId.Value &&
+                    employee.Station != null &&
+                    employee.Station.StationName == normalizedDepartment);
+
+            if (!belongsToDepartment)
+                throw new HubException("Bạn không có quyền tham gia nhóm bộ phận này.");
+        }
 
         await Groups.AddToGroupAsync(
             Context.ConnectionId,
-            $"dept-{departmentName.Trim()}"
+            $"dept-{normalizedDepartment}"
         );
     }
 
@@ -67,7 +104,7 @@ public class OrderHub : Hub
         if (string.IsNullOrWhiteSpace(employeeCode))
             return;
 
-        if (Context.User?.IsInRole("Customer") == true)
+        if (IsCustomer())
             throw new HubException("Khách hàng không được tham gia nhóm nhân viên nội bộ.");
 
         var userId = GetCurrentUserId();
@@ -102,7 +139,7 @@ public class OrderHub : Hub
         if (userId <= 0)
             return;
 
-        if (Context.User?.IsInRole("Customer") == true)
+        if (IsCustomer())
             throw new HubException("Khách hàng không được tham gia nhóm nhân viên nội bộ.");
 
         var currentUserId = GetCurrentUserId();
@@ -131,7 +168,7 @@ public class OrderHub : Hub
         if (string.IsNullOrWhiteSpace(role))
             return;
 
-        if (Context.User?.IsInRole("Customer") == true)
+        if (IsCustomer())
             throw new HubException("Khách hàng không được tham gia nhóm vai trò nội bộ.");
 
         if (Context.User?.Identity?.IsAuthenticated == true && !Context.User.IsInRole(role.Trim()))
@@ -156,7 +193,7 @@ public class OrderHub : Hub
 
     public async Task JoinOrderManagementGroup()
     {
-        if (Context.User?.IsInRole("Customer") == true)
+        if (IsCustomer())
             throw new HubException("Khách hàng không được tham gia nhóm quản lý đơn hàng.");
 
         await Groups.AddToGroupAsync(Context.ConnectionId, "order-management");
@@ -169,7 +206,7 @@ public class OrderHub : Hub
 
         if (Context.User?.Identity?.IsAuthenticated == true)
         {
-            if (!Context.User.IsInRole("Customer"))
+            if (!IsCustomer())
                 throw new HubException("Chỉ tài khoản khách hàng mới được tham gia nhóm khách hàng.");
 
             var currentUserId = GetCurrentUserId();
@@ -184,8 +221,17 @@ public class OrderHub : Hub
         await Groups.AddToGroupAsync(Context.ConnectionId, $"customer-{customerId}");
     }
 
+    private bool IsCustomer()
+        => Context.User?.IsInRole(CustomerAccessMiddleware.CustomerRole) == true;
+
+    private int? GetCurrentCustomerId()
+        => Context.User is null ? null : CustomerTokens.GetCustomerId(Context.User);
+
     private int? GetCurrentUserId()
     {
+        if (IsCustomer())
+            return null;
+
         var value = Context.User?.FindFirst("UserId")?.Value
             ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return int.TryParse(value, out var userId) && userId > 0 ? userId : null;
