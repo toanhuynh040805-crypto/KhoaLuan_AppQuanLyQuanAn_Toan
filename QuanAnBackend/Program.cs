@@ -1,6 +1,10 @@
 using System.Net;
+using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.Google;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.OAuth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc.Authorization;
@@ -13,6 +17,7 @@ using QuanAnBackend.Middleware;
 using QuanAnBackend.Services;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+
 // Ảnh món dùng chung cho WinForms/Mobile. Tạo thư mục trước khi host khởi động
 // để StaticFileMiddleware luôn nhận đúng WebRoot.
 Directory.CreateDirectory(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "images", "menu"));
@@ -52,6 +57,7 @@ builder.Services.AddSingleton<TableEditLockService>();
 // Business services dùng chung WinForms + Mobile.
 builder.Services.AddScoped<OrderRoutingService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddSingleton<IPaymentProvider, UnconfiguredPaymentProvider>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<MobilePermissionService>();
@@ -64,18 +70,31 @@ builder.Services.AddScoped<MobileOperationAuditService>();
 builder.Services.AddScoped<WinFormsCompatibilitySchemaService>();
 builder.Services.AddScoped<SharedMenuCatalogService>();
 builder.Services.AddScoped<BundledMenuImageService>();
+builder.Services.AddScoped<WebProfileSchemaService>();
+builder.Services.AddSingleton<IWebReviewContentClassifier, WebReviewModerationService>();
 builder.Services.AddHostedService<TimeoutMonitorService>();
 
-// JWT for both Mobile and WinForms.
+// JWT & Google Authentication for Web, Mobile and WinForms.
 var jwtSection = builder.Configuration.GetSection("Jwt");
 var jwtKey = jwtSection["Key"]
     ?? throw new InvalidOperationException("Thiếu cấu hình Jwt:Key");
+
+const string ExternalGoogleScheme = "ExternalGoogleAuth";
 
 builder.Services
     .AddAuthentication(options =>
     {
         options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
         options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultSignInScheme = ExternalGoogleScheme;
+    })
+    .AddCookie(ExternalGoogleScheme, cookieOptions =>
+    {
+        cookieOptions.Cookie.Name = ".GustoPOS.ExternalAuth";
+        cookieOptions.Cookie.HttpOnly = true;
+        cookieOptions.Cookie.SameSite = SameSiteMode.Lax;
+        cookieOptions.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        cookieOptions.ExpireTimeSpan = TimeSpan.FromMinutes(10);
     })
     .AddJwtBearer(options =>
     {
@@ -107,6 +126,88 @@ builder.Services
                     context.Token = accessToken;
                 }
 
+                return Task.CompletedTask;
+            }
+        };
+    })
+    .AddGoogle(googleOptions =>
+    {
+        googleOptions.SignInScheme = ExternalGoogleScheme;
+
+        // Cấu hình cookie tương quan an toàn cho môi trường HTTP/Localhost (tránh bị trình duyệt chặn do SameSite=None + Secure qua HTTP)
+        googleOptions.CorrelationCookie.SameSite = SameSiteMode.Lax;
+        googleOptions.CorrelationCookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        googleOptions.CorrelationCookie.HttpOnly = true;
+
+        var clientId = builder.Configuration["Authentication:Google:ClientId"]?.Trim();
+        var clientSecret = builder.Configuration["Authentication:Google:ClientSecret"]?.Trim();
+
+        googleOptions.ClientId = !string.IsNullOrWhiteSpace(clientId)
+            ? clientId
+            : "CONFIGURE_CLIENT_ID_IN_USER_SECRETS";
+
+        googleOptions.ClientSecret = !string.IsNullOrWhiteSpace(clientSecret)
+            ? clientSecret
+            : "CONFIGURE_CLIENT_SECRET_IN_USER_SECRETS";
+
+        // Callback URL tren Google Cloud Console: http://localhost:5000/signin-google
+        googleOptions.CallbackPath = "/signin-google";
+        googleOptions.SaveTokens = true;
+
+        // Logging an toàn và xử lý lỗi chi tiết
+        googleOptions.Events = new OAuthEvents
+        {
+            OnRedirectToAuthorizationEndpoint = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GoogleAuth");
+                logger.LogInformation("[Google OAuth] Chuyển hướng người dùng sang Google Accounts.");
+                context.Response.Redirect(context.RedirectUri);
+                return Task.CompletedTask;
+            },
+            OnCreatingTicket = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GoogleAuth");
+                var email = context.Identity?.FindFirst(ClaimTypes.Email)?.Value;
+                logger.LogInformation("[Google OAuth] Nhận ủy quyền từ Google thành công cho email: {Email}", email ?? "(không xác định)");
+                return Task.CompletedTask;
+            },
+            OnTicketReceived = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GoogleAuth");
+                logger.LogInformation("[Google OAuth] Tạo vé xác thực thành công, chuyển hướng đến: {ReturnUri}", context.ReturnUri);
+                return Task.CompletedTask;
+            },
+            OnRemoteFailure = context =>
+            {
+                var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GoogleAuth");
+                var failureMsg = context.Failure?.Message ?? string.Empty;
+                logger.LogError(context.Failure, "[Google OAuth] Xác thực từ xa thất bại: {FailureMessage}", failureMsg);
+
+                var frontendUrl = builder.Configuration["Frontend:BaseUrl"]?.TrimEnd('/') ?? "http://localhost:5500";
+                
+                string errorCode;
+                if (failureMsg.Contains("access_denied", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorCode = "access_denied";
+                }
+                else if (failureMsg.Contains("Correlation failed", StringComparison.OrdinalIgnoreCase) ||
+                         failureMsg.Contains("state", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorCode = "correlation_failed";
+                }
+                else if (failureMsg.Contains("invalid_client", StringComparison.OrdinalIgnoreCase) || 
+                         string.IsNullOrWhiteSpace(clientSecret) || 
+                         clientSecret.Contains("CONFIGURE_CLIENT_SECRET"))
+                {
+                    errorCode = "invalid_client";
+                }
+                else
+                {
+                    errorCode = "oauth_failure";
+                }
+
+                context.Response.Redirect($"{frontendUrl}/pages/auth/login_register.html?oauthError={errorCode}");
+                context.HandleResponse();
                 return Task.CompletedTask;
             }
         };
@@ -166,6 +267,9 @@ var corsOrigins = new List<string>(
 
 if (Uri.TryCreate(builder.Configuration["Web:BaseUrl"], UriKind.Absolute, out var webBaseUri))
     corsOrigins.Add(webBaseUri.GetLeftPart(UriPartial.Authority));
+
+if (Uri.TryCreate(builder.Configuration["Frontend:BaseUrl"], UriKind.Absolute, out var frontendBaseUri))
+    corsOrigins.Add(frontendBaseUri.GetLeftPart(UriPartial.Authority));
 
 var allowedOrigins = corsOrigins
     .Select(o => o.Trim().TrimEnd('/'))
@@ -244,6 +348,10 @@ using (var scope = app.Services.CreateScope())
     var winFormsCompatibility =
         scope.ServiceProvider.GetRequiredService<WinFormsCompatibilitySchemaService>();
     await winFormsCompatibility.EnsureAsync();
+
+    var webProfileSchema =
+        scope.ServiceProvider.GetRequiredService<WebProfileSchemaService>();
+    await webProfileSchema.EnsureAsync();
 
     // Đồng bộ bộ thực đơn mới nhất của WinForms vào database dùng chung.
     // Chỉ thêm món/ảnh còn thiếu nên không ghi đè dữ liệu vận hành hiện tại.
@@ -336,10 +444,6 @@ app.UseStaticFiles();
 app.UseCors("SharedClients");
 app.UseRateLimiter();
 app.UseAuthentication();
-
-// Token khách hàng web (role KhachHang) chỉ được vào endpoint [CustomerAccess]
-// hoặc [AllowAnonymous]; mọi API nhân viên và SignalR hub đều bị chặn 403.
-app.UseMiddleware<CustomerAccessMiddleware>();
 
 // Phân công khu vực chỉ để điều phối/nhắc việc; không khóa thao tác ngoài khu.
 app.UseMiddleware<AreaAccessMiddleware>();

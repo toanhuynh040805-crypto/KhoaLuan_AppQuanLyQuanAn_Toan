@@ -5,6 +5,8 @@ import {
     getCurrentCustomer,
     getCustomerToken,
     hasCustomerSession,
+    isCustomerSessionRemembered,
+    isTokenExpired,
     saveCustomerSession,
     setCurrentCustomer
 } from './session.js?auth-session-2';
@@ -20,18 +22,49 @@ export function ensureCustomerSession() {
 
     restorePromise = (async () => {
         try {
-            const response = await authApi.refresh();
-            if (!response?.accessToken) {
-                clearCustomerSession();
-                return false;
+            // 1. Nếu đã có thông tin khách hàng và token chưa hết hạn, phiên hoàn toàn sẵn sàng
+            if (getCurrentCustomer() && !isTokenExpired()) {
+                return true;
             }
-            saveCustomerSession(response);
-            const customer = await profileApi.getMyProfile();
-            setCurrentCustomer(customer);
-            return true;
-        } catch {
+
+            // 2. Thử lấy thông tin hồ sơ bằng token hiện có nếu chưa hết hạn
+            if (!isTokenExpired()) {
+                try {
+                    const customer = await profileApi.getMyProfile();
+                    setCurrentCustomer(customer);
+                    return true;
+                } catch (err) {
+                    // Nếu lỗi không phải 401/403 (ví dụ mất mạng tạm thời), không vội xóa phiên
+                    if (err?.status !== 401 && err?.status !== 403) {
+                        return true;
+                    }
+                    // Nếu 401 (token bị từ chối), tiếp tục thử refresh token ở bước dưới
+                }
+            }
+
+            // 3. Token đã hết hạn hoặc bị 401: Thử làm mới token qua Backend
+            try {
+                const response = await authApi.refresh();
+                if (response?.accessToken) {
+                    saveCustomerSession(response, isCustomerSessionRemembered());
+                    const customer = await profileApi.getMyProfile();
+                    setCurrentCustomer(customer);
+                    return true;
+                }
+            } catch (refreshErr) {
+                if (refreshErr?.status === 401 || refreshErr?.status === 403) {
+                    clearCustomerSession();
+                    globalThis.dispatchEvent?.(new CustomEvent('gusto:unauthorized'));
+                    return false;
+                }
+                // Nếu lỗi mạng, giữ nguyên phiên lưu trữ
+                return hasCustomerSession() && !isTokenExpired();
+            }
+
             clearCustomerSession();
             return false;
+        } catch {
+            return hasCustomerSession() && !isTokenExpired();
         } finally {
             restorePromise = null;
         }

@@ -64,12 +64,23 @@ public class PaymentsController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
-        public PaymentsController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications, IEmailService email)
+    private readonly IPaymentProvider _paymentProvider;
+    private readonly ILogger<PaymentsController> _logger;
+
+    public PaymentsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        IEmailService email,
+        IPaymentProvider paymentProvider,
+        ILogger<PaymentsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
         _email = email;
+        _paymentProvider = paymentProvider;
+        _logger = logger;
     }
 
     // Mobile compatibility: xem trước hóa đơn nhưng chưa ghi thanh toán.
@@ -700,6 +711,7 @@ public class PaymentsController : ControllerBase
             notification.IsRead = true;
 
         // Trả bàn về trạng thái Trống sau khi thanh toán xong
+        var finishedReservations = new List<Reservation>();
         if (order.Table is not null)
         {
             order.Table.Status = TableStatus.Trong;
@@ -709,7 +721,7 @@ public class PaymentsController : ControllerBase
             // du khach da tra ban tu lau, khien no tiep tuc bi tinh la "con hieu
             // luc" va chan khach MOI dat lai chinh khung gio do (xem
             // ReservationsController, phan kiem tra trung lich).
-            var finishedReservations = await _db.Reservations
+            finishedReservations = await _db.Reservations
                 .Where(r => r.TableId == order.Table.TableId && r.Status == ReservationStatus.DaNhanBan)
                 .ToListAsync();
             foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
@@ -774,6 +786,42 @@ public class PaymentsController : ControllerBase
             invoiceId = invoice.InvoiceId,
             totalAmount = netTotal
         });
+
+        if (customer is not null)
+        {
+            await _notifications.CreateForCustomerAsync(
+                customer.CustomerId,
+                "Thanh toán thành công",
+                $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.",
+                NotificationType.DonHang,
+                $"payment-success:{payment.PaymentId}",
+                "Invoice",
+                invoice.InvoiceId);
+        }
+
+        foreach (var reservation in finishedReservations.Where(reservation => reservation.CustomerId.HasValue))
+        {
+            await _notifications.CreateForCustomerAsync(
+                reservation.CustomerId!.Value,
+                "Đặt bàn đã hoàn tất",
+                "Lượt đặt bàn của bạn đã hoàn tất.",
+                NotificationType.DatBan,
+                $"reservation-status:{reservation.ReservationId}:{(int)ReservationStatus.DaNhanBan}:{(int)ReservationStatus.HoanTat}",
+                "Reservation",
+                reservation.ReservationId);
+        }
+
+        try
+        {
+            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            {
+                orderId = order.OrderId
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to broadcast payment to order-management group for order {OrderId}", order.OrderId);
+        }
 
         // Gửi hóa đơn qua email cho khách hàng thân thiết (nếu có gắn khách và
         // khách có Email) - KHÔNG để lỗi gửi email làm hỏng cả giao dịch thanh

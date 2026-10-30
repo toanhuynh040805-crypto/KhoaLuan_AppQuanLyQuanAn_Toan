@@ -884,7 +884,7 @@ public partial class TableManagementControl : UserControl
         _ = LoadAllAsync();
     }
 
-    private static readonly string[] ReservationStatusLabels = { "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất" };
+    private static readonly string[] ReservationStatusLabels = { "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất", "Chờ xác nhận" };
     private static Color ReservationStatusColor(int status) => status switch
     {
         1 => AppColors.Success,
@@ -1577,7 +1577,7 @@ public partial class TableManagementControl : UserControl
                     if (!tbl.IsAvailable) continue;
                     var hit = booked.FirstOrDefault(rv =>
                         rv.TableId == tbl.Id &&
-                        (rv.Status == (int)ReservationStatusEnum.DaXacNhan || rv.Status == (int)ReservationStatusEnum.DaNhanBan) &&
+                        (rv.Status == (int)ReservationStatusEnum.DaXacNhan || rv.Status == (int)ReservationStatusEnum.DaNhanBan || rv.Status == (int)ReservationStatusEnum.ChoXacNhan) &&
                         reqStart < rv.ReservationTime.AddMinutes(rv.DurationMinutes) &&
                         rv.ReservationTime < reqEnd);
                     if (hit is null) continue;

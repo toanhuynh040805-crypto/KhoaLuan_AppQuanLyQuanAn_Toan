@@ -22,10 +22,18 @@ function normalizeTable(table) {
 }
 
 export const tableApi = {
-    async getTables() {
-        // Khách dùng endpoint riêng (API /tables là của nhân viên, bị chặn với token khách)
-        const response = await apiClient.get('/orders/customer-order/tables');
+    async getTables({ status, areaId } = {}) {
+        const query = new URLSearchParams();
+        if (status) query.set('status', status);
+        if (areaId != null && areaId !== '') query.set('areaId', String(areaId));
+        const endpoint = query.toString() ? `/tables?${query}` : '/tables';
+        const response = await apiClient.get(endpoint);
         if (!Array.isArray(response)) throw new TypeError('Table response must be an array.');
         return response.map(normalizeTable).filter((table) => table.id != null);
+    },
+    async getAvailableTables() {
+        const tables = await this.getTables({ status: 'Trong' });
+        // Lọc bảo đảm kép ở phía Client
+        return tables.filter(t => t.status === 'Trong');
     }
 };

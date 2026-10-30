@@ -53,6 +53,7 @@ public class DiscountCampaignsController : ControllerBase
     // cầu khách quen không trả về ở đây vì backend hiện chưa có module theo dõi lịch
     // sử ghé quán của khách để kiểm tra điều kiện đó (xem ghi chú ở DiscountCampaign.cs).
     [HttpGet("active")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetActive()
     {
         var now = DateTime.Now;
@@ -66,25 +67,26 @@ public class DiscountCampaignsController : ControllerBase
         return Ok(campaigns);
     }
 
-        // GET api/discountcampaigns/public -> khuyến mãi đang hiệu lực để web khách xem.
-    // Khác /active (chỉ cho WinForm): có cả chiến dịch dành cho hội viên (gắn cờ RequireMembership).
+    // GET api/discountcampaigns/public -> thông tin chiến dịch đang bật để khách xem.
+    // Giữ nguyên /active cho màn hình thu ngân vì endpoint đó chỉ trả chiến dịch dùng được ngay.
     [HttpGet("public")]
     [AllowAnonymous]
     public async Task<IActionResult> GetPublic()
     {
-        var now = DateTime.Now;
         var campaigns = await _db.DiscountCampaigns
-            .Where(c => c.IsActive && c.StartDate <= now && c.EndDate >= now)
-            .OrderBy(c => c.EndDate)
+            .Where(c => c.IsActive)
+            .OrderBy(c => c.StartDate)
             .AsNoTracking()
             .Select(c => new
             {
                 Id = c.CampaignId,
                 c.CampaignName,
-                c.DiscountPercent,
                 c.StartDate,
                 c.EndDate,
+                c.DiscountPercent,
                 c.RequireMembership,
+                c.MinVisitCount,
+                c.VisitLookbackDays,
                 c.Note
             })
             .ToListAsync();

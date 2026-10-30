@@ -17,9 +17,11 @@ public class Customer
     public string FullName { get; set; } = string.Empty;
     public string Phone { get; set; } = string.Empty;
     public string? Email { get; set; }
+    public string? PasswordHash { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public int LoyaltyPoint { get; set; } = 0;
     public MemberLevel MemberLevel { get; set; } = MemberLevel.ThanhVien;
+    public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 
     public ICollection<Order> Orders { get; set; } = new List<Order>();

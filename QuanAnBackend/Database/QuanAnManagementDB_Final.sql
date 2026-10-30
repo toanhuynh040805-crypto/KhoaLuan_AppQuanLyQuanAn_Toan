@@ -1,18 +1,29 @@
-﻿CREATE DATABASE QuanAnManagementDB;
+/* ======================================================================
+   HỆ THỐNG QUẢN LÝ QUÁN ĂN - GUSTOPOS MANAGEMENT DATABASE
+   DATABASE SCRIPT CHUẨN HÓA DUY NHẤT (FINAL MASTER SCRIPT)
+   Tích hợp toàn bộ cấu hình: Backend Web, WinForms, Mobile Flutter
+   Hỗ trợ triển khai mới (Clean Install) hoặc đối chiếu cấu trúc hoàn chỉnh
+   ====================================================================== */
+
+IF DB_ID('QuanAnManagementDB') IS NULL
+BEGIN
+    CREATE DATABASE QuanAnManagementDB;
+END;
 GO
+
 USE QuanAnManagementDB;
 GO
 
 /* ======================================================================
-   NHOM 1: NGUOI DUNG & PHAN QUYEN (Role, User, UserRoles, Employee)
+   NHÓM 1: NGƯỜI DÙNG & PHÂN QUYỀN (Role, User, UserRoles, Employee)
    ====================================================================== */
 
 CREATE TABLE Roles (
     RoleId          INT IDENTITY(1,1) PRIMARY KEY,
-    RoleName        NVARCHAR(50)  NOT NULL UNIQUE, -- QuanLy (kiem Admin), ThuNgan, PhucVu, Bep
+    RoleName        NVARCHAR(50)  NOT NULL UNIQUE, -- QuanLy (kiêm Admin), ThuNgan, PhucVu, Bep
     Description     NVARCHAR(255) NULL
-    -- Quan ly va Admin gop chung thanh 1 vai tro "QuanLy": toan quyen he
-    -- thong (quan tri user, cau hinh) + quyen nghiep vu (bao cao, giam sat).
+    -- Quản lý và Admin gộp chung thành 1 vai trò "QuanLy": toàn quyền hệ
+    -- thống (quản trị user, cấu hình) + quyền nghiệp vụ (báo cáo, giám sát).
 );
 
 CREATE TABLE Users (
@@ -26,16 +37,15 @@ CREATE TABLE Users (
     LastLoginAt     DATETIME2 NULL,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     UpdatedAt       DATETIME2 NULL
-    -- KHONG co cot RoleId o day: 1 User co the co NHIEU role cung luc
-    -- (vd: cong tac vien vua lam PhucVu vua lam ThuNgan) -> xem UserRoles.
+    -- Không có cột RoleId ở đây: 1 User có thể có nhiều role cùng lúc (xem UserRoles).
 );
 
-CREATE TABLE UserRoles (                             -- quan he N-N User <-> Role
+CREATE TABLE UserRoles (                             -- quan hệ N-N User <-> Role
     UserRoleId      INT IDENTITY(1,1) PRIMARY KEY,
     UserId          INT NOT NULL,
     RoleId          INT NOT NULL,
-    IsActive        BIT NOT NULL DEFAULT 1,          -- tam vo hieu 1 role ma khong can xoa (giu lich su)
-    AssignedBy      INT NULL,                        -- UserId cua Quan ly da gan role nay
+    IsActive        BIT NOT NULL DEFAULT 1,          -- tạm vô hiệu 1 role mà không cần xóa (giữ lịch sử)
+    AssignedBy      INT NULL,                        -- UserId của Quản lý đã gán role này
     AssignedAt      DATETIME2 NOT NULL DEFAULT GETDATE(),
     RevokedAt       DATETIME2 NULL,
     CONSTRAINT FK_UserRoles_Users FOREIGN KEY (UserId) REFERENCES Users(UserId),
@@ -46,7 +56,7 @@ CREATE TABLE UserRoles (                             -- quan he N-N User <-> Rol
 
 CREATE TABLE Employees (
     EmployeeId      INT IDENTITY(1,1) PRIMARY KEY,
-    UserId          INT NOT NULL UNIQUE,             -- 1-1 voi Users
+    UserId          INT NOT NULL UNIQUE,             -- 1-1 với Users
     EmployeeCode    NVARCHAR(20) NOT NULL UNIQUE,
     Position        NVARCHAR(50) NOT NULL,           -- Bep, PhucVu, ThuNgan, QuanLy
     HireDate        DATE NOT NULL,
@@ -57,42 +67,39 @@ CREATE TABLE Employees (
 GO
 
 /* ======================================================================
-   NHOM 2: BAN & KHU VUC (Area, Table, Reservation, WaitingQueue)
+   NHÓM 2: BÀN & KHU VỰC (Area, DiningTable, VIPRoomDetails)
    ====================================================================== */
 
 CREATE TABLE Areas (
     AreaId          INT IDENTITY(1,1) PRIMARY KEY,
-    AreaName        NVARCHAR(50) NOT NULL,           -- Tang 1, San vuon, Phong VIP...
+    AreaName        NVARCHAR(50) NOT NULL,           -- Tầng 1, Sân vườn, Phòng VIP...
     Description     NVARCHAR(255) NULL
 );
 
 CREATE TABLE DiningTables (
     TableId         INT IDENTITY(1,1) PRIMARY KEY,
-    TableName       NVARCHAR(20) NOT NULL,           -- Ban A1, Ban B2...
+    TableName       NVARCHAR(20) NOT NULL,           -- Bàn A1, Bàn B2...
     AreaId          INT NOT NULL,
     Capacity        INT NOT NULL DEFAULT 4,
-    TableType       NVARCHAR(20) NOT NULL DEFAULT N'Thuong', -- Thuong, VIP (phong rieng tu)
+    TableType       NVARCHAR(20) NOT NULL DEFAULT N'Thuong', -- Thuong, VIP (phòng riêng tư)
     Status          NVARCHAR(20) NOT NULL DEFAULT N'Trong', -- Trong, DangPhucVu, DaDat, DangDonDep
     CONSTRAINT FK_Tables_Areas FOREIGN KEY (AreaId) REFERENCES Areas(AreaId)
 );
 
--- Thong tin rieng cho phong VIP: 1-1 voi DiningTables, CHI ton tai
--- khi TableType = 'VIP' (kiem tra bang trigger ben duoi, vi CHECK
--- constraint cua SQL Server khong the tham chieu bang khac).
+-- Thông tin riêng cho phòng VIP: 1-1 với DiningTables, CHỈ tồn tại
+-- khi TableType = 'VIP' (kiểm tra bằng trigger bên dưới).
 CREATE TABLE VIPRoomDetails (
     TableId             INT PRIMARY KEY,
-    RoomFee             DECIMAL(18,2) NOT NULL DEFAULT 0,  -- phi thue phong / luot (hoac / gio, tuy quan)
-    MinimumBillAmount   DECIMAL(18,2) NOT NULL DEFAULT 0,  -- hoa don toi thieu phai dat; thieu se bi thu them phan chenh lech
-    DepositAmount       DECIMAL(18,2) NOT NULL DEFAULT 0,  -- tien coc bat buoc khi dat truoc phong nay
-    Amenities           NVARCHAR(500) NULL,                 -- vd: TV, dan karaoke, may lanh rieng, view song...
+    RoomFee             DECIMAL(18,2) NOT NULL DEFAULT 0,  -- phí thuê phòng / lượt
+    MinimumBillAmount   DECIMAL(18,2) NOT NULL DEFAULT 0,  -- hóa đơn tối thiểu phải đạt; thiếu sẽ thu thêm chênh lệch
+    DepositAmount       DECIMAL(18,2) NOT NULL DEFAULT 0,  -- tiền cọc bắt buộc khi đặt trước phòng này
+    Amenities           NVARCHAR(500) NULL,                 -- TV, dàn karaoke, máy lạnh riêng...
     Description         NVARCHAR(500) NULL,
     CONSTRAINT FK_VIPRoomDetails_DiningTables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId)
 );
 GO
 
--- Trigger dam bao chi ban co TableType = 'VIP' moi duoc phep co dong
--- trong VIPRoomDetails (khong the dung CHECK constraint vi phai tham
--- chieu sang bang DiningTables).
+-- Trigger đảm bảo chỉ bàn có TableType = 'VIP' mới được phép có dòng trong VIPRoomDetails
 CREATE TRIGGER trg_VIPRoomDetails_ValidateTableType
 ON VIPRoomDetails
 AFTER INSERT, UPDATE
@@ -106,7 +113,7 @@ BEGIN
         WHERE t.TableType <> N'VIP'
     )
     BEGIN
-        RAISERROR (N'Chi ban/phong co TableType = ''VIP'' moi duoc khai bao VIPRoomDetails.', 16, 1);
+        RAISERROR (N'Chỉ bàn/phòng có TableType = ''VIP'' mới được khai báo VIPRoomDetails.', 16, 1);
         ROLLBACK TRANSACTION;
     END
 END;
@@ -115,11 +122,7 @@ GO
 CREATE INDEX IX_DiningTables_TableType ON DiningTables(TableType);
 GO
 
--- Trigger CHIEU NGUOC LAI cua trigger tren: chan viec doi TableType cua
--- 1 ban TU 'VIP' SANG loai khac khi ban do van con dong du lieu trong
--- VIPRoomDetails (tranh de lai du lieu "mo coi" - VIPRoomDetails van ton
--- tai nhung ban lien quan da khong con la VIP nua). Muon doi loai ban
--- thi phai XOA VIPRoomDetails cua ban do TRUOC.
+-- Trigger chặn việc đổi TableType của bàn từ 'VIP' sang loại khác khi bàn đó vẫn còn VIPRoomDetails
 CREATE TRIGGER trg_DiningTables_PreventOrphanVIPDetails
 ON DiningTables
 AFTER UPDATE
@@ -136,33 +139,92 @@ BEGIN
         WHERE d.TableType = N'VIP' AND i.TableType <> N'VIP'
     )
     BEGIN
-        RAISERROR (N'Khong the doi TableType khoi ''VIP'' vi ban/phong nay van con du lieu trong VIPRoomDetails. Hay xoa VIPRoomDetails cua ban nay truoc.', 16, 1);
+        RAISERROR (N'Không thể đổi TableType khỏi ''VIP'' vì bàn/phòng này vẫn còn dữ liệu trong VIPRoomDetails. Hãy xóa VIPRoomDetails của bàn này trước.', 16, 1);
         ROLLBACK TRANSACTION;
     END
 END;
 GO
 
+/* ======================================================================
+   NHÓM 3: KHÁCH HÀNG & TÀI KHOẢN WEB (Customer, CustomerAccounts, CustomerRefreshTokens)
+   ====================================================================== */
+
+CREATE TABLE Customers (
+    CustomerId      INT IDENTITY(1,1) PRIMARY KEY,
+    FullName        NVARCHAR(100) NOT NULL,
+    Phone           NVARCHAR(20)  NOT NULL UNIQUE,
+    Email           NVARCHAR(100) NULL,
+    PasswordHash    NVARCHAR(500) NULL,              -- Mật khẩu Web khách hàng
+    DateOfBirth     DATE NULL,
+    LoyaltyPoint    INT NOT NULL DEFAULT 0,
+    MemberLevel     NVARCHAR(20) NOT NULL DEFAULT N'ThanhVien', -- ThanhVien, Bac, Vang, KimCuong
+    AvatarUrl       NVARCHAR(1000) NULL,             -- URL ảnh đại diện
+    CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE()
+);
+
+-- Tài khoản web cho khách hàng (mật khẩu + trạng thái khóa + reset token)
+CREATE TABLE CustomerAccounts (
+    CustomerId              INT NOT NULL PRIMARY KEY,
+    PasswordHash            NVARCHAR(200) NOT NULL,
+    IsActive                BIT NOT NULL CONSTRAINT DF_CustomerAccounts_IsActive DEFAULT(1),
+    FailedLoginCount        INT NOT NULL CONSTRAINT DF_CustomerAccounts_Failed DEFAULT(0),
+    LockedUntil             DATETIME2 NULL,
+    PasswordResetTokenHash  NVARCHAR(100) NULL,
+    PasswordResetExpiresAt  DATETIME2 NULL,
+    CreatedAt               DATETIME2 NOT NULL CONSTRAINT DF_CustomerAccounts_CreatedAt DEFAULT(GETDATE()),
+    LastLoginAt             DATETIME2 NULL,
+    CONSTRAINT FK_CustomerAccounts_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId)
+);
+
+CREATE INDEX IX_CustomerAccounts_ResetToken ON CustomerAccounts(PasswordResetTokenHash);
+
+-- Phiên đăng nhập Web (Refresh token)
+CREATE TABLE CustomerRefreshTokens (
+    TokenId         INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    CustomerId      INT NOT NULL,
+    TokenHash       NVARCHAR(100) NOT NULL,
+    ExpiresAt       DATETIME2 NOT NULL,
+    RevokedAt       DATETIME2 NULL,
+    CreatedAt       DATETIME2 NOT NULL CONSTRAINT DF_CustomerRefreshTokens_CreatedAt DEFAULT(GETDATE()),
+    CONSTRAINT FK_CustomerRefreshTokens_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId)
+);
+
+CREATE UNIQUE INDEX UX_CustomerRefreshTokens_Hash ON CustomerRefreshTokens(TokenHash);
+CREATE INDEX IX_CustomerRefreshTokens_Customer ON CustomerRefreshTokens(CustomerId, RevokedAt);
+GO
+
+/* ======================================================================
+   NHÓM 4: ĐẶT BÀN & XẾP HÀNG CHỜ (Reservation, WaitingQueue)
+   ====================================================================== */
+
 CREATE TABLE Reservations (
     ReservationId   INT IDENTITY(1,1) PRIMARY KEY,
     TableId         INT NOT NULL,
-    CustomerId      INT NULL,                        -- co the null neu khach vang lai
+    CustomerId      INT NULL,                        -- có thể null nếu khách vãng lai
     CustomerName    NVARCHAR(100) NULL,
     CustomerPhone   NVARCHAR(20) NULL,
     ReservationTime DATETIME2 NOT NULL,
+    DurationMinutes INT NOT NULL CONSTRAINT DF_Reservations_DurationMinutes DEFAULT(30), -- Thời gian giữ bàn (phút)
     NumberOfGuests  INT NOT NULL DEFAULT 1,
-    Status          NVARCHAR(20) NOT NULL DEFAULT N'DaXacNhan', -- DaXacNhan, DaNhanBan, DaHuy, KhongDen
-    DepositAmount   DECIMAL(18,2) NOT NULL DEFAULT 0, -- tien coc yeu cau (thuong > 0 neu dat phong VIP)
+    Status          NVARCHAR(20) NOT NULL DEFAULT N'ChoXacNhan', -- ChoXacNhan, DaXacNhan, DaNhanBan, DaHuy, KhongDen, HoanTat
+    DepositAmount   DECIMAL(18,2) NOT NULL DEFAULT 0, -- tiền cọc yêu cầu
     DepositPaid     BIT NOT NULL DEFAULT 0,
     DepositPaidAt   DATETIME2 NULL,
     Note            NVARCHAR(255) NULL,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
-    CONSTRAINT FK_Reservations_Tables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId)
+    CancelledByUserId INT NULL,
+    CancelledAt     DATETIME2 NULL,
+    Source          NVARCHAR(20) NOT NULL CONSTRAINT DF_Reservations_Source DEFAULT N'NhanVien', -- NhanVien, Web
+    BookingGroupId  INT NULL,                         -- Mã nhóm đặt nhiều bàn cùng lúc
+    CONSTRAINT FK_Reservations_Tables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId),
+    CONSTRAINT FK_Reservations_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId),
+    CONSTRAINT FK_Reservations_CancelledByUser FOREIGN KEY (CancelledByUserId) REFERENCES Users(UserId)
 );
 
--- Khach vang lai xep hang cho ban (KHONG dat truoc, khac Reservations)
+-- Khách vãng lai xếp hàng chờ bàn
 CREATE TABLE WaitingQueue (
     QueueId             INT IDENTITY(1,1) PRIMARY KEY,
-    QueueDate           DATE NOT NULL DEFAULT CAST(GETDATE() AS DATE), -- so thu tu reset moi ngay
+    QueueDate           DATE NOT NULL DEFAULT CAST(GETDATE() AS DATE), -- reset số thứ tự mỗi ngày
     QueueNumber         INT NOT NULL,
     CustomerName        NVARCHAR(100) NULL,
     CustomerPhone       NVARCHAR(20) NULL,
@@ -178,15 +240,7 @@ CREATE TABLE WaitingQueue (
 );
 GO
 
--- Trigger tu sinh so thu tu tang dan theo TUNG NGAY.
--- TOI UU: dung WITH (UPDLOCK, HOLDLOCK) de khoa doc khi tinh MAX(QueueNumber),
--- tranh 2 khach bam lay so CUNG LUC bi cap trung 1 so (race condition giua
--- CAC TRANSACTION khac nhau).
--- FIX THEM: dung ROW_NUMBER() de danh so tang dan NGAY BEN TRONG cung 1
--- batch insert (truong hop 1 cau lenh INSERT chen NHIEU dong cung luc,
--- vd insert hang loat) - neu khong co ROW_NUMBER, ca hai dong trong CUNG
--- 1 lenh se cung nhin thay 1 gia tri MAX(QueueNumber) cu va bi cap TRUNG
--- 1 so, vi pham UQ_WaitingQueue_DateNumber.
+-- Trigger tự sinh số thứ tự tăng dần theo từng ngày
 CREATE TRIGGER trg_WaitingQueue_AutoNumber
 ON WaitingQueue
 INSTEAD OF INSERT
@@ -219,7 +273,7 @@ BEGIN
     INSERT INTO WaitingQueue (QueueDate, QueueNumber, CustomerName, CustomerPhone, NumberOfGuests, Status, CheckInTime, EstimatedWaitMinutes)
     SELECT
         ni.EffectiveQueueDate,
-        mp.BaseNumber + ni.RowSeq,          -- moi dong trong batch cong don tiep theo, khong bao gio trung nhau
+        mp.BaseNumber + ni.RowSeq,
         ni.CustomerName,
         ni.CustomerPhone,
         ni.NumberOfGuests,
@@ -233,40 +287,37 @@ BEGIN
 END;
 GO
 
--- Vi du dung: chi can INSERT binh thuong, KHONG can tu dien QueueNumber
--- INSERT INTO WaitingQueue (CustomerName, CustomerPhone, NumberOfGuests) VALUES (N'Anh Tu', N'0909xxxxxx', 4);
-
 CREATE INDEX IX_WaitingQueue_Date_Status ON WaitingQueue(QueueDate, Status);
 GO
 
 /* ======================================================================
-   NHOM 3: THUC DON (Station, Category, MenuItem, Combo)
+   NHÓM 5: THỰC ĐƠN & KHO NGUYÊN LIỆU (Station, Category, MenuItem, Combo, Ingredient)
    ====================================================================== */
 
-CREATE TABLE Stations (                              -- Bo phan che bien: Bep, Quay nuoc...
+CREATE TABLE Stations (                              -- Bộ phận chế biến: Bếp, Quầy nước...
     StationId   INT IDENTITY(1,1) PRIMARY KEY,
-    StationName NVARCHAR(50) NOT NULL UNIQUE          -- "Bep", "QuayNuoc"
+    StationName NVARCHAR(50) NOT NULL UNIQUE
 );
 
 CREATE TABLE Categories (
     CategoryId      INT IDENTITY(1,1) PRIMARY KEY,
-    CategoryName    NVARCHAR(50) NOT NULL,            -- Mon khai vi, Mon chinh, Do uong...
+    CategoryName    NVARCHAR(50) NOT NULL,            -- Món khai vị, Món chính, Đồ uống...
     CategoryType    NVARCHAR(20) NOT NULL DEFAULT N'MonAn' -- MonAn, ThucUong
 );
 
 CREATE TABLE MenuItems (
     MenuItemId      INT IDENTITY(1,1) PRIMARY KEY,
     CategoryId      INT NOT NULL,
-    StationId       INT NULL,                         -- mon nay do bo phan nao che bien (Bep/Quay nuoc)
+    StationId       INT NULL,                         -- Món do bộ phận nào chế biến (Bếp / Quầy nước)
     ItemName        NVARCHAR(100) NOT NULL,
     Description     NVARCHAR(500) NULL,
     Price           DECIMAL(18,2) NOT NULL,
     Unit            NVARCHAR(20) NULL DEFAULT N'Phan',
     ImageUrl        NVARCHAR(500) NULL,
-    IsAvailable     BIT NOT NULL DEFAULT 1,           -- con ban / het mon (Module Nguyen lieu tu dong cap nhat)
-    IsFreeRefill    BIT NOT NULL DEFAULT 0,           -- co ap dung chinh sach goi them (refill) khong
-    FreeRefillLimit INT NOT NULL DEFAULT 2,           -- so lan goi them MIEN PHI
-    RefillPrice     DECIMAL(18,2) NULL,               -- gia tinh tu lan vuot FreeRefillLimit
+    IsAvailable     BIT NOT NULL DEFAULT 1,           -- Còn bán / Hết món (Kho tự động cập nhật)
+    IsFreeRefill    BIT NOT NULL DEFAULT 0,           -- Áp dụng chính sách gọi thêm
+    FreeRefillLimit INT NOT NULL DEFAULT 2,           -- Số lần gọi thêm miễn phí
+    RefillPrice     DECIMAL(18,2) NULL,               -- Giá tính từ lần vượt FreeRefillLimit
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_MenuItems_Categories FOREIGN KEY (CategoryId) REFERENCES Categories(CategoryId),
     CONSTRAINT FK_MenuItems_Stations FOREIGN KEY (StationId) REFERENCES Stations(StationId)
@@ -280,7 +331,7 @@ CREATE TABLE Combos (
     IsAvailable     BIT NOT NULL DEFAULT 1
 );
 
-CREATE TABLE ComboItems (                            -- chi tiet mon trong combo
+CREATE TABLE ComboItems (                            -- Chi tiết món trong combo
     ComboItemId     INT IDENTITY(1,1) PRIMARY KEY,
     ComboId         INT NOT NULL,
     MenuItemId      INT NOT NULL,
@@ -289,98 +340,105 @@ CREATE TABLE ComboItems (                            -- chi tiet mon trong combo
     CONSTRAINT FK_ComboItems_MenuItems FOREIGN KEY (MenuItemId) REFERENCES MenuItems(MenuItemId)
 );
 
--- Nay moi gan StationId cho Employees (dat sau vi Stations moi vua tao)
+-- Gán StationId cho Employees
 ALTER TABLE Employees ADD StationId INT NULL
     CONSTRAINT FK_Employees_Stations FOREIGN KEY REFERENCES Stations(StationId);
 GO
 
-/* ======================================================================
-   NHOM 3B: KHO NGUYEN LIEU & CONG THUC MON (Ingredient, Recipe, Stock)
-   Muc dich: nhan vien phuc vu thay ngay mon nao con/het khi goi mon,
-             khong can doi bep bao lai (yeu cau tu GVHD).
-   ====================================================================== */
-
 CREATE TABLE Ingredients (
     IngredientId    INT IDENTITY(1,1) PRIMARY KEY,
     IngredientName  NVARCHAR(100) NOT NULL,
-    Unit            NVARCHAR(20)  NOT NULL,           -- "gram", "ml", "cai"...
+    Unit            NVARCHAR(20)  NOT NULL,           -- gram, ml, cái...
     CurrentStock    DECIMAL(18,2) NOT NULL DEFAULT 0,
-    MinStockAlert   DECIMAL(18,2) NOT NULL DEFAULT 0, -- nguong canh bao sap het
+    MinStockAlert   DECIMAL(18,2) NOT NULL DEFAULT 0, -- Ngưỡng cảnh báo sắp hết
     UpdatedAt       DATETIME2 NOT NULL DEFAULT GETDATE()
 );
 
--- Cong thuc mon an (BOM). 1 mon can NHIEU nguyen lieu, 1 nguyen lieu dung cho NHIEU mon
+-- Công thức món ăn (BOM): 1 món cần nhiều nguyên liệu, 1 nguyên liệu dùng cho nhiều món
 CREATE TABLE MenuItemIngredients (
     MenuItemIngredientId INT IDENTITY(1,1) PRIMARY KEY,
     MenuItemId      INT NOT NULL,
     IngredientId    INT NOT NULL,
-    QuantityRequired DECIMAL(18,2) NOT NULL,          -- can bao nhieu Unit cho 1 PHAN mon nay
+    QuantityRequired DECIMAL(18,2) NOT NULL,          -- Cần bao nhiêu Unit cho 1 phần món này
     CONSTRAINT FK_MII_MenuItems FOREIGN KEY (MenuItemId) REFERENCES MenuItems(MenuItemId),
     CONSTRAINT FK_MII_Ingredients FOREIGN KEY (IngredientId) REFERENCES Ingredients(IngredientId),
     CONSTRAINT UQ_MenuItem_Ingredient UNIQUE (MenuItemId, IngredientId)
 );
 
--- So nhat ky nhap/xuat kho - nguon du lieu goc, KHONG sua truc tiep CurrentStock
+-- Sổ nhật ký nhập/xuất kho
 CREATE TABLE StockTransactions (
     StockTransactionId INT IDENTITY(1,1) PRIMARY KEY,
     IngredientId    INT NOT NULL,
     ChangeType      NVARCHAR(20) NOT NULL,            -- NhapKho, XuatBanMon, DieuChinh, HuyMon
-    QuantityChange  DECIMAL(18,2) NOT NULL,            -- duong = nhap them, am = xuat di
+    QuantityChange  DECIMAL(18,2) NOT NULL,            -- Dương = nhập thêm, Âm = xuất đi
     RelatedOrderItemId INT NULL,
     Note            NVARCHAR(255) NULL,
     CreatedBy       INT NULL,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_StockTx_Ingredients FOREIGN KEY (IngredientId) REFERENCES Ingredients(IngredientId),
     CONSTRAINT FK_StockTx_Users FOREIGN KEY (CreatedBy) REFERENCES Users(UserId)
-    -- Luu y: FK toi OrderItems duoc them BEN DUOI, sau khi bang OrderItems ton tai.
 );
 GO
 
 /* ======================================================================
-   NHOM 4: ORDER & BEP (Order, OrderItem, KitchenTicket, DishStatus)
+   NHÓM 6: ĐẶT MÓN & BẾP (Order, OrderItem, KitchenTicket, DishStatus, OrderReview, Priorities)
    ====================================================================== */
 
 CREATE TABLE Orders (
     OrderId         INT IDENTITY(1,1) PRIMARY KEY,
-    TableId         INT NOT NULL,
+    TableId         INT NULL,                         -- NULL với đơn Mang Về
+    OrderType       NVARCHAR(10) NOT NULL CONSTRAINT DF_Orders_OrderType DEFAULT N'TaiBan', -- TaiBan, MangVe
+    TakeawayNumber  INT NULL,                         -- Số thứ tự đơn mang về
     EmployeeId      INT NOT NULL,
     CustomerId      INT NULL,
     OrderTime       DATETIME2 NOT NULL DEFAULT GETDATE(),
     Status          NVARCHAR(20) NOT NULL DEFAULT N'DangMo', -- DangMo, DaThanhToan, DaHuy
+    PaymentRequestedByUserId INT NULL,                -- User yêu cầu thanh toán
+    PaymentRequestedAt DATETIME2 NULL,
     Note            NVARCHAR(255) NULL,
-    TotalAmount     DECIMAL(18,2) NOT NULL DEFAULT 0,  -- duoc trigger trg_OrderItems_SyncOrderTotal tu dong cap nhat
-    RowVer          ROWVERSION NOT NULL,               -- kiem soat concurrency cho Order (vd 2 thu ngan cung mo thanh toan 1 ban)
+    ClientRequestId UNIQUEIDENTIFIER NULL,            -- Khóa chống trùng lặp từ Web (Idempotent)
+    ClientRequestHash VARCHAR(64) NULL,               -- Hash request từ Web
+    Source          NVARCHAR(20) NOT NULL CONSTRAINT DF_Orders_Source DEFAULT N'NhanVien', -- NhanVien, Web
+    TotalAmount     DECIMAL(18,2) NOT NULL DEFAULT 0,  -- Trigger tự động đồng bộ
+    RowVer          ROWVERSION NOT NULL,               -- Kiểm soát concurrency
     CONSTRAINT FK_Orders_Tables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId),
-    CONSTRAINT FK_Orders_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(EmployeeId)
+    CONSTRAINT FK_Orders_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(EmployeeId),
+    CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId),
+    CONSTRAINT FK_Orders_PaymentRequestedByUser FOREIGN KEY (PaymentRequestedByUserId) REFERENCES Users(UserId),
+    CONSTRAINT CK_Orders_OrderType_Table CHECK (
+        (OrderType = N'TaiBan' AND TableId IS NOT NULL)
+        OR
+        (OrderType = N'MangVe' AND TableId IS NULL AND TakeawayNumber IS NOT NULL)
+    )
 );
 
 CREATE TABLE OrderItems (
     OrderItemId     INT IDENTITY(1,1) PRIMARY KEY,
     OrderId         INT NOT NULL,
-    MenuItemId      INT NULL,                         -- 1 trong 2: MenuItemId hoac ComboId
+    MenuItemId      INT NULL,                         -- 1 trong 2: MenuItemId hoặc ComboId
     ComboId         INT NULL,
     Quantity        INT NOT NULL DEFAULT 1,
-    UnitPrice       DECIMAL(18,2) NOT NULL,            -- gia tai thoi diem order
+    UnitPrice       DECIMAL(18,2) NOT NULL,            -- Giá tại thời điểm order
     Note            NVARCHAR(255) NULL,
     Status          NVARCHAR(20) NOT NULL DEFAULT N'MoiGoi', -- MoiGoi, DangCheBien, DaCheBien, DaPhucVu, DaHuy
-    IsRefillRequest      BIT NOT NULL DEFAULT 0,       -- true = day la lan "goi them" cua mon da goi truoc do
-    RefillSequenceNumber INT NULL,                     -- lan goi them thu may (trigger tu tinh)
+    CancelReason    NVARCHAR(255) NULL,
+    CancelledByUserId INT NULL,
+    IsRefillRequest      BIT NOT NULL DEFAULT 0,       -- True = lần gọi thêm
+    IsTakeaway      BIT NOT NULL CONSTRAINT DF_OrderItems_IsTakeaway DEFAULT 0, -- Món khách xin mang về
+    RefillSequenceNumber INT NULL,                     -- Lần gọi thêm thứ mấy (trigger tự tính)
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
-    RowVer          ROWVERSION NOT NULL,               -- kiem soat concurrency: dam bao 2 nguoi (vd Bep vs
-                                                         -- PhucVu) khong ghi de trang thai cua nhau tren CUNG
-                                                         -- 1 mon; app phai gui kem RowVer da doc truoc do vao
-                                                         -- menh de WHERE khi UPDATE Status
+    RowVer          ROWVERSION NOT NULL,
     CONSTRAINT FK_OrderItems_Orders FOREIGN KEY (OrderId) REFERENCES Orders(OrderId),
     CONSTRAINT FK_OrderItems_MenuItems FOREIGN KEY (MenuItemId) REFERENCES MenuItems(MenuItemId),
     CONSTRAINT FK_OrderItems_Combos FOREIGN KEY (ComboId) REFERENCES Combos(ComboId),
+    CONSTRAINT FK_OrderItems_CancelledByUser FOREIGN KEY (CancelledByUserId) REFERENCES Users(UserId),
     CONSTRAINT CK_OrderItems_ItemType CHECK (
         (MenuItemId IS NOT NULL AND ComboId IS NULL) OR
         (MenuItemId IS NULL AND ComboId IS NOT NULL)
     )
 );
 
--- Bo sung FK con thieu tu StockTransactions den OrderItems (dat o day vi
--- OrderItems moi vua duoc tao, khong the tao truoc do)
+-- Khóa ngoại từ StockTransactions đến OrderItems
 ALTER TABLE StockTransactions
     ADD CONSTRAINT FK_StockTx_OrderItems FOREIGN KEY (RelatedOrderItemId) REFERENCES OrderItems(OrderItemId);
 GO
@@ -388,7 +446,7 @@ GO
 CREATE TABLE KitchenTickets (
     KitchenTicketId INT IDENTITY(1,1) PRIMARY KEY,
     OrderItemId     INT NOT NULL,
-    StationId       INT NULL,                          -- phieu gui toi bo phan nao (Bep/Quay nuoc)
+    StationId       INT NULL,                          -- Phiếu gửi tới bộ phận nào (Bếp / Quầy nước)
     SentTime        DATETIME2 NOT NULL DEFAULT GETDATE(),
     ChefId          INT NULL,
     Status          NVARCHAR(20) NOT NULL DEFAULT N'ChoXuLy', -- ChoXuLy, DangCheBien, HoanThanh
@@ -407,12 +465,43 @@ CREATE TABLE DishStatusHistory (
     CONSTRAINT FK_DishStatusHistory_OrderItems FOREIGN KEY (OrderItemId) REFERENCES OrderItems(OrderItemId),
     CONSTRAINT FK_DishStatusHistory_Users FOREIGN KEY (ChangedBy) REFERENCES Users(UserId)
 );
+
+-- Đánh giá món ăn và trải nghiệm đơn hàng của khách hàng
+CREATE TABLE OrderReviews (
+    ReviewId        INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_OrderReviews PRIMARY KEY,
+    OrderId         INT NOT NULL,
+    OrderItemId     INT NULL,                         -- Có giá trị = đánh giá món; NULL = đánh giá đơn chung
+    CustomerId      INT NOT NULL,
+    Rating          TINYINT NOT NULL,
+    Comment         NVARCHAR(1000) NULL,
+    CreatedAt       DATETIME2 NOT NULL CONSTRAINT DF_OrderReviews_CreatedAt DEFAULT (SYSUTCDATETIME()),
+    UpdatedAt       DATETIME2 NOT NULL CONSTRAINT DF_OrderReviews_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+    IsVisible       BIT NOT NULL CONSTRAINT DF_OrderReviews_IsVisible DEFAULT (1),
+    ModerationStatus NVARCHAR(16) NOT NULL CONSTRAINT DF_OrderReviews_ModerationStatus DEFAULT (N'Public'),
+    CONSTRAINT FK_OrderReviews_Orders FOREIGN KEY (OrderId) REFERENCES Orders(OrderId),
+    CONSTRAINT FK_OrderReviews_OrderItems FOREIGN KEY (OrderItemId) REFERENCES OrderItems(OrderItemId),
+    CONSTRAINT FK_OrderReviews_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId),
+    CONSTRAINT CK_OrderReviews_Rating CHECK (Rating BETWEEN 1 AND 5)
+);
+
+-- Bảng đánh dấu ưu tiên chế biến từ ứng dụng Mobile
+CREATE TABLE MobileKitchenPriorities (
+    PriorityId          INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    PriorityScope       NVARCHAR(20) NOT NULL,         -- 'Table' hoặc 'Item'
+    TableId             INT NULL,
+    OrderItemId         INT NULL,
+    IsActive            BIT NOT NULL CONSTRAINT DF_MobileKitchenPriorities_IsActive DEFAULT (1),
+    RequestedByUserId   INT NULL,
+    RequestedAt         DATETIME2 NOT NULL CONSTRAINT DF_MobileKitchenPriorities_RequestedAt DEFAULT (GETDATE()),
+    UpdatedAt           DATETIME2 NOT NULL CONSTRAINT DF_MobileKitchenPriorities_UpdatedAt DEFAULT (GETDATE()),
+    CONSTRAINT FK_MobileKitchenPriorities_Tables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId),
+    CONSTRAINT FK_MobileKitchenPriorities_OrderItems FOREIGN KEY (OrderItemId) REFERENCES OrderItems(OrderItemId),
+    CONSTRAINT FK_MobileKitchenPriorities_Users FOREIGN KEY (RequestedByUserId) REFERENCES Users(UserId)
+);
 GO
 
 /* ----------------------------------------------------------------------
-   TRIGGER 1 (MOI - TOI UU): tu dong dong bo Orders.TotalAmount moi khi
-   OrderItems thay doi (them/sua/xoa). Ban goc KHONG co trigger nay nen
-   TotalAmount de bi lech neu app quen tinh lai.
+   TRIGGER 1: Tự động đồng bộ Orders.TotalAmount khi OrderItems thay đổi
    ---------------------------------------------------------------------- */
 CREATE TRIGGER trg_OrderItems_SyncOrderTotal
 ON OrderItems
@@ -431,7 +520,7 @@ BEGIN
             SELECT SUM(oi.Quantity * oi.UnitPrice)
             FROM OrderItems oi
             WHERE oi.OrderId = o.OrderId
-              AND oi.Status <> N'DaHuy'          -- mon da huy khong tinh vao tong tien
+              AND oi.Status <> N'DaHuy'          -- Món đã hủy không tính vào tổng tiền
         ), 0)
     FROM Orders o
     INNER JOIN AffectedOrders ao ON ao.OrderId = o.OrderId;
@@ -439,10 +528,7 @@ END;
 GO
 
 /* ----------------------------------------------------------------------
-   TRIGGER 2 (SUA - TOI UU): tru kho nguyen lieu khi khach goi mon,
-   XU LY CA COMBO (ban goc chi tru kho khi goi mon le, bo sot combo).
-   Logic combo: 1 combo -> nhieu MenuItem (qua ComboItems) -> nhieu
-   nguyen lieu (qua MenuItemIngredients), nhan don voi so luong combo.
+   TRIGGER 2: Trừ kho nguyên liệu khi order món lẻ hoặc combo
    ---------------------------------------------------------------------- */
 CREATE TRIGGER trg_OrderItems_DeductStock
 ON OrderItems
@@ -451,27 +537,26 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- Truong hop 1: goi mon le truc tiep
+    -- Trường hợp 1: Gọi món lẻ trực tiếp
     INSERT INTO StockTransactions (IngredientId, ChangeType, QuantityChange, RelatedOrderItemId, Note)
     SELECT
         bom.IngredientId,
         N'XuatBanMon',
         -1 * bom.QuantityRequired * ins.Quantity,
         ins.OrderItemId,
-        N'Tu dong tru khi order mon le'
+        N'Tự động trừ khi order món lẻ'
     FROM inserted ins
     INNER JOIN MenuItemIngredients bom ON bom.MenuItemId = ins.MenuItemId
     WHERE ins.MenuItemId IS NOT NULL;
 
-    -- Truong hop 2 (TOI UU - bo sung): goi COMBO -> tru kho theo tung
-    -- mon con trong combo do, nhan them so luong mon trong ComboItems
+    -- Trường hợp 2: Gọi Combo -> Trừ kho từng món con trong combo
     INSERT INTO StockTransactions (IngredientId, ChangeType, QuantityChange, RelatedOrderItemId, Note)
     SELECT
         bom.IngredientId,
         N'XuatBanMon',
         -1 * bom.QuantityRequired * ci.Quantity * ins.Quantity,
         ins.OrderItemId,
-        N'Tu dong tru khi order combo'
+        N'Tự động trừ khi order combo'
     FROM inserted ins
     INNER JOIN ComboItems ci ON ci.ComboId = ins.ComboId
     INNER JOIN MenuItemIngredients bom ON bom.MenuItemId = ci.MenuItemId
@@ -480,8 +565,7 @@ END;
 GO
 
 /* ----------------------------------------------------------------------
-   TRIGGER 3: ap dung chinh sach refill (2 lan dau mien phi, tu lan 3
-   tinh phi) cho cac mon co IsFreeRefill = 1.
+   TRIGGER 3: Áp dụng chính sách refill cho các món có IsFreeRefill = 1
    ---------------------------------------------------------------------- */
 CREATE TRIGGER trg_OrderItems_ApplyRefillPolicy
 ON OrderItems
@@ -518,21 +602,13 @@ BEGIN
 END;
 GO
 
--- QUAN TRONG: co 3 trigger AFTER INSERT tren cung bang OrderItems
--- (trg_OrderItems_SyncOrderTotal, trg_OrderItems_DeductStock,
--- trg_OrderItems_ApplyRefillPolicy). SQL Server KHONG dam bao thu tu
--- chay giua nhieu AFTER trigger cung loai neu khong khai bao ro rang.
--- Phai ep trg_OrderItems_ApplyRefillPolicy (sua UnitPrice cho refill)
--- chay TRUOC TIEN, va trg_OrderItems_SyncOrderTotal (tinh lai TotalAmount
--- dua tren UnitPrice) chay SAU CUNG, neu khong TotalAmount co the bi
--- tinh sai gia refill.
+-- Đảm bảo thứ tự trigger: ApplyRefillPolicy chạy đầu, SyncOrderTotal chạy cuối
 EXEC sp_settriggerorder @triggername = N'dbo.trg_OrderItems_ApplyRefillPolicy', @order = 'First', @stmttype = 'INSERT';
 EXEC sp_settriggerorder @triggername = N'dbo.trg_OrderItems_SyncOrderTotal', @order = 'Last', @stmttype = 'INSERT';
 GO
 
 /* ----------------------------------------------------------------------
-   TRIGGER 4: khi ton kho thay doi (StockTransactions) -> cap nhat lai
-   CurrentStock va tu dong tinh lai IsAvailable cho cac mon lien quan.
+   TRIGGER 4: Cập nhật CurrentStock và IsAvailable khi xuất/nhập kho
    ---------------------------------------------------------------------- */
 CREATE TRIGGER trg_StockTransactions_UpdateStock
 ON StockTransactions
@@ -569,10 +645,9 @@ BEGIN
 END;
 GO
 
--- View tra nhanh "con du lam bao nhieu phan". TOI UU: lam ro NULL nghia
--- la "mon khong duoc quan ly theo cong thuc nguyen lieu" (luon coi la
--- con hang, phu thuoc co IsAvailable thu cong), KHAC voi 0 nghia la
--- "het nguyen lieu that su".
+/* ----------------------------------------------------------------------
+   VIEW 1: Xem nhanh số phần khả dụng của món theo công thức kho
+   ---------------------------------------------------------------------- */
 CREATE VIEW vw_MenuItemAvailability AS
 SELECT
     mi.MenuItemId,
@@ -586,72 +661,29 @@ SELECT
         FROM MenuItemIngredients bom
         INNER JOIN Ingredients ing ON ing.IngredientId = bom.IngredientId
         WHERE bom.MenuItemId = mi.MenuItemId
-    ) AS EstimatedServingsLeft   -- NULL = khong quan ly theo cong thuc; 0 = het hang that
+    ) AS EstimatedServingsLeft
 FROM MenuItems mi;
 GO
 
 /* ======================================================================
-   NHOM 5: THANH TOAN (Invoice, Payment, chiet khau thanh vien)
+   NHÓM 7: HÓA ĐƠN & THANH TOÁN (Invoice, Payment, DiscountCampaign)
    ====================================================================== */
 
-CREATE TABLE Invoices (
-    InvoiceId       INT IDENTITY(1,1) PRIMARY KEY,
-    OrderId         INT NOT NULL,                    -- KHONG con UNIQUE: 1 Order co the tach thanh NHIEU Invoice (chia bill)
-    InvoiceDate     DATETIME2 NOT NULL DEFAULT GETDATE(),
-    SubTotal        DECIMAL(18,2) NOT NULL,
-    DiscountAmount  DECIMAL(18,2) NOT NULL DEFAULT 0,
-    AppliedCampaignId INT NULL,                        -- chien dich giam gia (neu co) da ap dung cho hoa don nay, de sau nay truy vet/thong ke
-    VoucherId       INT NULL,
-    TaxAmount       DECIMAL(18,2) NOT NULL DEFAULT 0,
-    VIPRoomFee      DECIMAL(18,2) NOT NULL DEFAULT 0, -- phi thue phong VIP (neu ban thuoc TableType='VIP')
-    VIPMinimumGap   DECIMAL(18,2) NOT NULL DEFAULT 0, -- phan chenh lech thu them neu SubTotal chua dat muc toi thieu
-    TotalAmount     DECIMAL(18,2) NOT NULL,
-    Status          NVARCHAR(20) NOT NULL DEFAULT N'ChuaThanhToan', -- ChuaThanhToan, DaThanhToan, DaHuy
-    CreatedBy       INT NULL,
-    RowVer          ROWVERSION NOT NULL,               -- kiem soat concurrency khi thanh toan (tranh 2 nguoi cung xu ly 1 hoa don)
-    CONSTRAINT FK_Invoices_Orders FOREIGN KEY (OrderId) REFERENCES Orders(OrderId),
-    CONSTRAINT FK_Invoices_Users FOREIGN KEY (CreatedBy) REFERENCES Users(UserId)
-);
-
-CREATE TABLE Payments (
-    PaymentId       INT IDENTITY(1,1) PRIMARY KEY,
-    InvoiceId       INT NOT NULL,
-    PaymentMethod   NVARCHAR(20) NOT NULL,           -- TienMat, TheNganHang, ViDienTu, ChuyenKhoan
-    Amount          DECIMAL(18,2) NOT NULL,
-    PaymentTime     DATETIME2 NOT NULL DEFAULT GETDATE(),
-    Status          NVARCHAR(20) NOT NULL DEFAULT N'ThanhCong', -- ThanhCong, ThatBai, HoanTien
-    TransactionRef  NVARCHAR(100) NULL,
-    CONSTRAINT FK_Payments_Invoices FOREIGN KEY (InvoiceId) REFERENCES Invoices(InvoiceId)
-);
-
--- Chien dich giam gia theo KHOANG NGAY (thay the co che bac hoa don co
--- dinh 3%/5% truoc day). Quan ly tu cau hinh tren giao dien: chon ngay
--- bat dau, ngay ket thuc, va % giam. Co 2 loai chien dich:
---   1) Ap dung cho TAT CA (RequireMembership = 0): moi hoa don, khong
---      phan biet khach vang lai hay thanh vien.
---   2) Chi ap dung cho "khach quen" (RequireMembership = 1): phai LA
---      thanh vien (co CustomerId) VA da quay lai quan >= MinVisitCount
---      lan trong VisitLookbackDays ngay gan nhat. Ca 2 nguong nay CUNG
---      cau hinh duoc tu giao dien theo tung chien dich, khong hardcode.
 CREATE TABLE DiscountCampaigns (
     CampaignId          INT IDENTITY(1,1) PRIMARY KEY,
-    CampaignName        NVARCHAR(100) NOT NULL,        -- vd: "Khuyen mai he 2026", "Tri an khach quen"
+    CampaignName        NVARCHAR(100) NOT NULL,
     StartDate           DATETIME2 NOT NULL,
     EndDate             DATETIME2 NOT NULL,
-    DiscountPercent     DECIMAL(5,2) NOT NULL,         -- 10.00 nghia la 10%
-    RequireMembership   BIT NOT NULL DEFAULT 0,        -- 1 = chi danh cho thanh vien dat dieu kien quay lai ben duoi
-    MinVisitCount       INT NULL,                      -- can toi thieu bao nhieu don hang trong khoang ngay duoi day (chi dung khi RequireMembership = 1)
-    VisitLookbackDays   INT NULL,                      -- tinh so lan quay lai trong bao nhieu ngay gan nhat (chi dung khi RequireMembership = 1)
-    IsActive            BIT NOT NULL DEFAULT 1,        -- tat nhanh 1 chien dich ma khong can xoa (giu lich su)
+    DiscountPercent     DECIMAL(5,2) NOT NULL,
+    RequireMembership   BIT NOT NULL DEFAULT 0,
+    MinVisitCount       INT NULL,
+    VisitLookbackDays   INT NULL,
+    IsActive            BIT NOT NULL DEFAULT 1,
     Note                NVARCHAR(255) NULL,
     CreatedBy           INT NULL,
     CreatedAt           DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT CK_DiscountCampaigns_DateRange CHECK (EndDate > StartDate),
     CONSTRAINT CK_DiscountCampaigns_Percent   CHECK (DiscountPercent BETWEEN 0 AND 100),
-    -- Neu chien dich yeu cau thanh vien "khach quen" thi BAT BUOC phai
-    -- khai bao ca 2 nguong (so lan + so ngay); neu chien dich ap dung
-    -- chung cho tat ca thi KHONG duoc khai bao 2 nguong nay (tranh nhap
-    -- nhang cau hinh thua khong dung toi).
     CONSTRAINT CK_DiscountCampaigns_MembershipRule CHECK (
         (RequireMembership = 0 AND MinVisitCount IS NULL AND VisitLookbackDays IS NULL)
         OR
@@ -665,19 +697,12 @@ GO
 CREATE INDEX IX_DiscountCampaigns_DateRange ON DiscountCampaigns(StartDate, EndDate) WHERE IsActive = 1;
 GO
 
--- Trigger chan tao/sua 1 chien dich active ma KHOANG NGAY bi giao voi 1
--- chien dich active KHAC nhung CUNG doi tuong ap dung (cung la
--- RequireMembership = 0, hoac cung la = 1). 2 chien dich khac doi tuong
--- (1 cho tat ca + 1 rieng cho khach quen) duoc phep chay CUNG luc, vi khi
--- tinh hoa don ham fn_GetActiveDiscountPercent se uu tien chien dich
--- "khach quen" truoc neu khach hang thoa dieu kien.
 CREATE TRIGGER trg_DiscountCampaigns_PreventOverlap
 ON DiscountCampaigns
 AFTER INSERT, UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
-    IF NOT EXISTS (SELECT 1 FROM inserted WHERE IsActive = 1) RETURN;
 
     IF EXISTS (
         SELECT 1
@@ -685,24 +710,18 @@ BEGIN
         INNER JOIN DiscountCampaigns c
             ON c.CampaignId <> i.CampaignId
            AND c.IsActive = 1
+           AND c.RequireMembership = i.RequireMembership
            AND i.IsActive = 1
-           AND c.RequireMembership = i.RequireMembership   -- chi so sanh trong CUNG 1 nhom doi tuong
            AND i.StartDate < c.EndDate
-           AND i.EndDate   > c.StartDate                   -- 2 khoang ngay giao nhau
+           AND i.EndDate   > c.StartDate
     )
     BEGIN
-        RAISERROR (N'Khoang ngay cua chien dich giam gia nay dang trung voi 1 chien dich khac CUNG doi tuong ap dung.', 16, 1);
+        RAISERROR (N'Khoảng ngày của chiến dịch giảm giá bị giao với một chiến dịch khác cùng loại đang hoạt động.', 16, 1);
         ROLLBACK TRANSACTION;
     END
 END;
 GO
 
--- Ham lay % giam gia dang ap dung cho 1 hoa don, tai 1 thoi diem cu the,
--- cua 1 khach hang cu the (@CustomerId = NULL neu khach vang lai).
--- Uu tien: neu khach la "khach quen" (thoa dieu kien 1 chien dich
--- RequireMembership=1 dang active) thi lay % cua chien dich do; neu
--- khong, lay % cua chien dich ap dung chung (RequireMembership=0) dang
--- active tai thoi diem do; neu khong co gi ca thi tra ve 0.
 CREATE FUNCTION fn_GetActiveDiscountPercent
 (
     @CustomerId INT,
@@ -713,8 +732,6 @@ AS
 BEGIN
     DECLARE @DiscountPercent DECIMAL(5,2) = 0;
 
-    -- Uu tien 1: chien dich rieng cho khach quen (phai la thanh vien VA
-    -- du so lan quay lai trong khung ngay chien dich yeu cau)
     IF @CustomerId IS NOT NULL
     BEGIN
         SELECT TOP 1 @DiscountPercent = c.DiscountPercent
@@ -734,8 +751,6 @@ BEGIN
         ORDER BY c.DiscountPercent DESC;
     END
 
-    -- Uu tien 2: neu khong thuoc dien "khach quen", thu chien dich ap
-    -- dung chung cho tat ca
     IF @DiscountPercent = 0
     BEGIN
         SELECT TOP 1 @DiscountPercent = c.DiscountPercent
@@ -750,18 +765,7 @@ BEGIN
     RETURN ISNULL(@DiscountPercent, 0);
 END;
 GO
--- Cach dung khi tao hoa don:
--- SELECT dbo.fn_GetActiveDiscountPercent(@CustomerId, GETDATE());
--- -> @CustomerId = NULL neu khach vang lai (se luon roi vao nhanh "ap
---    dung chung" neu co chien dich dang chay, hoac tra ve 0).
--- -> nhan % nay, tinh Invoices.DiscountAmount = SubTotal * %/100, va luu
---    lai Invoices.AppliedCampaignId (xem cot moi them ben duoi) de sau
---    nay truy vet hoa don nao da duoc ap dung chien dich nao.
 
--- Ham tinh phu phi VIP cho 1 hoa don, dua tren ban dang su dung va SubTotal:
--- = RoomFee (phi thue phong co dinh) + phan con thieu neu SubTotal chua
--- dat MinimumBillAmount cua phong do. Ban thuong (TableType='Thuong')
--- luon tra ve 0 cho ca 2 gia tri.
 CREATE FUNCTION fn_GetVIPRoomExtraCharge
 (
     @TableId INT,
@@ -786,13 +790,45 @@ BEGIN
     RETURN;
 END;
 GO
--- Cach dung khi tao hoa don (Backend C# hoac T-SQL truc tiep):
--- SELECT * FROM dbo.fn_GetVIPRoomExtraCharge(@TableId, @SubTotal);
--- -> lay RoomFee va MinimumGap de cong vao Invoices.VIPRoomFee / VIPMinimumGap,
---    roi tinh: TotalAmount = SubTotal - DiscountAmount + TaxAmount + VIPRoomFee + VIPMinimumGap
+
+CREATE TABLE Invoices (
+    InvoiceId       INT IDENTITY(1,1) PRIMARY KEY,
+    OrderId         INT NOT NULL,                    -- 1 Order có thể chia thành nhiều hóa đơn
+    InvoiceDate     DATETIME2 NOT NULL DEFAULT GETDATE(),
+    SubTotal        DECIMAL(18,2) NOT NULL,
+    DiscountAmount  DECIMAL(18,2) NOT NULL DEFAULT 0,
+    AppliedCampaignId INT NULL,                        -- Chiến dịch giảm giá áp dụng
+    VoucherId       INT NULL,
+    TaxAmount       DECIMAL(18,2) NOT NULL DEFAULT 0,
+    VIPRoomFee      DECIMAL(18,2) NOT NULL DEFAULT 0, -- Phí thuê phòng VIP
+    VIPMinimumGap   DECIMAL(18,2) NOT NULL DEFAULT 0, -- Chênh lệch hóa đơn tối thiểu phòng VIP
+    TotalAmount     DECIMAL(18,2) NOT NULL,
+    Status          NVARCHAR(20) NOT NULL DEFAULT N'ChuaThanhToan', -- ChuaThanhToan, DaThanhToan, DaHuy
+    CreatedBy       INT NULL,
+    RequestedByUserId INT NULL,                       -- User yêu cầu thanh toán
+    ConfirmedByUserId INT NULL,                       -- User thu tiền / xác nhận thanh toán
+    RowVer          ROWVERSION NOT NULL,               -- Kiểm soát concurrency
+    CONSTRAINT FK_Invoices_Orders FOREIGN KEY (OrderId) REFERENCES Orders(OrderId),
+    CONSTRAINT FK_Invoices_Users FOREIGN KEY (CreatedBy) REFERENCES Users(UserId),
+    CONSTRAINT FK_Invoices_RequestedByUser FOREIGN KEY (RequestedByUserId) REFERENCES Users(UserId),
+    CONSTRAINT FK_Invoices_ConfirmedByUser FOREIGN KEY (ConfirmedByUserId) REFERENCES Users(UserId)
+);
+
+CREATE TABLE Payments (
+    PaymentId       INT IDENTITY(1,1) PRIMARY KEY,
+    InvoiceId       INT NOT NULL,
+    PaymentMethod   NVARCHAR(20) NOT NULL,           -- TienMat, TheNganHang, ViDienTu, ChuyenKhoan
+    Amount          DECIMAL(18,2) NOT NULL,
+    PaymentTime     DATETIME2 NOT NULL DEFAULT GETDATE(),
+    TransactionCode NVARCHAR(100) NULL,
+    Status          NVARCHAR(20) NOT NULL DEFAULT N'ThanhCong', -- ThanhCong, ThatBai
+    Note            NVARCHAR(255) NULL,
+    CONSTRAINT FK_Payments_Invoices FOREIGN KEY (InvoiceId) REFERENCES Invoices(InvoiceId)
+);
+GO
 
 /* ======================================================================
-   NHOM 6: NHAN SU (Shift, ShiftAssignment, Task)
+   NHÓM 8: NHÂN SỰ & CHẤM CÔNG (Shift, ShiftAssignment, Areas, Tasks, Attendance)
    ====================================================================== */
 
 CREATE TABLE Shifts (
@@ -806,13 +842,38 @@ CREATE TABLE ShiftAssignments (
     ShiftAssignmentId INT IDENTITY(1,1) PRIMARY KEY,
     EmployeeId      INT NOT NULL,
     ShiftId         INT NOT NULL,
+    AreaId          INT NULL,                        -- Khu vực chính được phân công
     WorkDate        DATE NOT NULL,
     Status          NVARCHAR(20) NOT NULL DEFAULT N'DaXepLich', -- DaXepLich, DaDiemDanh, VangMat, DaHoanThanh
     CheckInTime     DATETIME2 NULL,
     CheckOutTime    DATETIME2 NULL,
     CONSTRAINT FK_ShiftAssignments_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(EmployeeId),
     CONSTRAINT FK_ShiftAssignments_Shifts FOREIGN KEY (ShiftId) REFERENCES Shifts(ShiftId),
+    CONSTRAINT FK_ShiftAssignments_Areas FOREIGN KEY (AreaId) REFERENCES Areas(AreaId),
     CONSTRAINT UQ_Employee_Shift_Date UNIQUE (EmployeeId, ShiftId, WorkDate)
+);
+
+-- Phân công nhiều khu vực cho một ca làm việc
+CREATE TABLE ShiftAssignmentAreas (
+    ShiftAssignmentId INT NOT NULL,
+    AreaId            INT NOT NULL,
+    CONSTRAINT PK_ShiftAssignmentAreas PRIMARY KEY (ShiftAssignmentId, AreaId),
+    CONSTRAINT FK_ShiftAssignmentAreas_ShiftAssignments FOREIGN KEY (ShiftAssignmentId) REFERENCES ShiftAssignments(ShiftAssignmentId) ON DELETE CASCADE,
+    CONSTRAINT FK_ShiftAssignmentAreas_Areas FOREIGN KEY (AreaId) REFERENCES Areas(AreaId)
+);
+
+-- Phân công nhân viên phụ trách khu vực (dài hạn hoặc theo ngày)
+CREATE TABLE EmployeeAreaAssignments (
+    EmployeeAreaAssignmentId INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    EmployeeId               INT NOT NULL,
+    AreaId                   INT NOT NULL,
+    WorkDate                 DATE NULL,                       -- NULL = phân công dài hạn; có giá trị = theo ngày
+    IsActive                 BIT NOT NULL CONSTRAINT DF_EmployeeAreaAssignments_IsActive DEFAULT(1),
+    AssignedBy               INT NULL,
+    AssignedAt               DATETIME2 NOT NULL CONSTRAINT DF_EmployeeAreaAssignments_AssignedAt DEFAULT(GETDATE()),
+    CONSTRAINT FK_EmployeeAreaAssignments_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(EmployeeId),
+    CONSTRAINT FK_EmployeeAreaAssignments_Areas FOREIGN KEY (AreaId) REFERENCES Areas(AreaId),
+    CONSTRAINT FK_EmployeeAreaAssignments_AssignedBy FOREIGN KEY (AssignedBy) REFERENCES Users(UserId)
 );
 
 CREATE TABLE Tasks (
@@ -825,22 +886,23 @@ CREATE TABLE Tasks (
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_Tasks_Employees FOREIGN KEY (EmployeeId) REFERENCES Employees(EmployeeId)
 );
+
+-- Cấu hình tọa độ GPS quán và bán kính chấm công
+CREATE TABLE AttendanceSettings (
+    SettingId               INT NOT NULL CONSTRAINT PK_AttendanceSettings PRIMARY KEY,
+    RestaurantLatitude      DECIMAL(9, 6) NULL,
+    RestaurantLongitude     DECIMAL(9, 6) NULL,
+    RadiusMeters            FLOAT NOT NULL CONSTRAINT DF_AttendanceSettings_Radius DEFAULT (100),
+    MaxAccuracyMeters       FLOAT NOT NULL CONSTRAINT DF_AttendanceSettings_Accuracy DEFAULT (50),
+    UpdatedAt               DATETIME2 NULL,
+    UpdatedBy               INT NULL,
+    CONSTRAINT FK_AttendanceSettings_Users FOREIGN KEY (UpdatedBy) REFERENCES Users(UserId)
+);
 GO
 
 /* ======================================================================
-   NHOM 7: KHACH HANG & KHUYEN MAI (Customer, LoyaltyPoint, Promotion, Voucher)
+   NHÓM 9: TÍCH ĐIỂM & ƯU ĐÃI (LoyaltyPointHistory, Promotion, Voucher)
    ====================================================================== */
-
-CREATE TABLE Customers (
-    CustomerId      INT IDENTITY(1,1) PRIMARY KEY,
-    FullName        NVARCHAR(100) NOT NULL,
-    Phone           NVARCHAR(20)  NOT NULL UNIQUE,
-    Email           NVARCHAR(100) NULL,
-    DateOfBirth     DATE NULL,
-    LoyaltyPoint    INT NOT NULL DEFAULT 0,
-    MemberLevel     NVARCHAR(20) NOT NULL DEFAULT N'ThanhVien', -- ThanhVien, Bac, Vang, KimCuong
-    CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE()
-);
 
 CREATE TABLE LoyaltyPointHistory (
     HistoryId       INT IDENTITY(1,1) PRIMARY KEY,
@@ -849,8 +911,8 @@ CREATE TABLE LoyaltyPointHistory (
     Type            NVARCHAR(20) NOT NULL,            -- TichDiem, DoiDiem
     RelatedInvoiceId INT NULL,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
-    CONSTRAINT FK_LoyaltyHistory_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId),
-    CONSTRAINT FK_LoyaltyHistory_Invoices FOREIGN KEY (RelatedInvoiceId) REFERENCES Invoices(InvoiceId)
+    CONSTRAINT FK_LoyaltyPoint_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId),
+    CONSTRAINT FK_LoyaltyPoint_Invoices FOREIGN KEY (RelatedInvoiceId) REFERENCES Invoices(InvoiceId)
 );
 
 CREATE TABLE Promotions (
@@ -881,31 +943,28 @@ ALTER TABLE Invoices
 
 ALTER TABLE Invoices
     ADD CONSTRAINT FK_Invoices_DiscountCampaigns FOREIGN KEY (AppliedCampaignId) REFERENCES DiscountCampaigns(CampaignId);
-
-ALTER TABLE Reservations
-    ADD CONSTRAINT FK_Reservations_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId);
-
-ALTER TABLE Orders
-    ADD CONSTRAINT FK_Orders_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId);
 GO
 
 /* ======================================================================
-   NHOM 8: HE THONG - THONG BAO REALTIME & AUDIT LOG
+   NHÓM 10: THÔNG BÁO, AUDIT & PHÂN QUYỀN MOBILE (Notification, Audit, Permissions)
    ====================================================================== */
 
 CREATE TABLE Notifications (
     NotificationId  INT IDENTITY(1,1) PRIMARY KEY,
     Title           NVARCHAR(200) NOT NULL,
     Content         NVARCHAR(1000) NOT NULL,
-    NotificationType NVARCHAR(30) NOT NULL,           -- DonHang, DatBan, CaLam, HeThong, KhuyenMai
-    TargetRole      NVARCHAR(50) NULL,                -- FK toi Roles(RoleName) o duoi; NULL neu thong bao nham thang toi 1 user cu the qua TargetUserId
+    NotificationType NVARCHAR(30) NOT NULL,           -- DonHang, DatBan, CaLam, HeThong, KhuyenMai, CanhBaoKho
+    TargetRole      NVARCHAR(50) NULL,
     TargetUserId    INT NULL,
+    CustomerId      INT NULL,                         -- Khách hàng nhận thông báo
+    EventKey        NVARCHAR(200) NULL,               -- Khóa chống trùng thông báo
     RelatedEntityType NVARCHAR(50) NULL,
     RelatedEntityId INT NULL,
     IsRead          BIT NOT NULL DEFAULT 0,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_Notifications_Users FOREIGN KEY (TargetUserId) REFERENCES Users(UserId),
-    CONSTRAINT FK_Notifications_Roles FOREIGN KEY (TargetRole) REFERENCES Roles(RoleName)
+    CONSTRAINT FK_Notifications_Roles FOREIGN KEY (TargetRole) REFERENCES Roles(RoleName),
+    CONSTRAINT FK_Notifications_Customers FOREIGN KEY (CustomerId) REFERENCES Customers(CustomerId)
 );
 
 CREATE TABLE NotificationDeliveryLog (
@@ -938,97 +997,101 @@ CREATE TABLE AuditLogs (
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_AuditLogs_Users FOREIGN KEY (UserId) REFERENCES Users(UserId)
 );
+
+-- Nhật ký kiểm toán thao tác từ Mobile / WinForms
+CREATE TABLE MobileOperationLogs (
+    LogId               BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    UserId              INT NULL,
+    EmployeeCode        NVARCHAR(50) NULL,
+    HttpMethod          NVARCHAR(12) NOT NULL,
+    RequestPath         NVARCHAR(300) NOT NULL,
+    TableIds            NVARCHAR(500) NULL,
+    AreaNames           NVARCHAR(500) NULL,
+    OutsideAssignedArea BIT NOT NULL CONSTRAINT DF_MobileOperationLogs_Outside DEFAULT(0),
+    StatusCode          INT NOT NULL,
+    CreatedAt           DATETIME2 NOT NULL CONSTRAINT DF_MobileOperationLogs_CreatedAt DEFAULT(GETDATE()),
+    CONSTRAINT FK_MobileOperationLogs_Users FOREIGN KEY (UserId) REFERENCES Users(UserId)
+);
+
+-- Danh mục quyền ứng dụng Mobile
+CREATE TABLE MobilePermissions (
+    PermissionKey   NVARCHAR(100) NOT NULL PRIMARY KEY,
+    DisplayName     NVARCHAR(150) NOT NULL,
+    Description     NVARCHAR(500) NULL,
+    IsActive        BIT NOT NULL CONSTRAINT DF_MobilePermissions_IsActive DEFAULT(1)
+);
+
+-- Phân quyền Mobile cho từng Role
+CREATE TABLE RoleMobilePermissions (
+    RoleId          INT NOT NULL,
+    PermissionKey   NVARCHAR(100) NOT NULL,
+    IsAllowed       BIT NOT NULL CONSTRAINT DF_RoleMobilePermissions_IsAllowed DEFAULT(1),
+    UpdatedAt       DATETIME2 NOT NULL CONSTRAINT DF_RoleMobilePermissions_UpdatedAt DEFAULT(GETDATE()),
+    CONSTRAINT PK_RoleMobilePermissions PRIMARY KEY(RoleId, PermissionKey),
+    CONSTRAINT FK_RoleMobilePermissions_Roles FOREIGN KEY(RoleId) REFERENCES Roles(RoleId),
+    CONSTRAINT FK_RoleMobilePermissions_Permissions FOREIGN KEY(PermissionKey) REFERENCES MobilePermissions(PermissionKey)
+);
 GO
 
 /* ======================================================================
-   NHOM 9 (BO SUNG): GHEP BAN, CHIA HOA DON, HOAN KHO, LICH SU GIA,
-                     FEEDBACK, CANH BAO TON KHO
+   NHÓM 11: NGHIỆP VỤ NÂNG CAO (Ghép bàn, Chia hóa đơn, Đổi giá, Phản hồi)
    ====================================================================== */
 
-/* ----------------------------------------------------------------------
-   9A. GHEP BAN: 1 Order co the trai tren NHIEU ban (nhom khach ngoi 2
-   ban ke nhau nhung goi chung 1 order). Orders.TableId van giu lai lam
-   "ban chinh / ban dai dien" de tuong thich nguoc; bang OrderTables
-   duoi day liet ke DAY DU tat ca ban thuc su thuoc order do.
-   ---------------------------------------------------------------------- */
+-- Ghép bàn: 1 Order có thể trải trên nhiều bàn
 CREATE TABLE OrderTables (
     OrderTableId    INT IDENTITY(1,1) PRIMARY KEY,
     OrderId         INT NOT NULL,
     TableId         INT NOT NULL,
-    IsPrimaryTable  BIT NOT NULL DEFAULT 0,           -- ban chinh (trung voi Orders.TableId) hay ban ghep them
+    IsPrimaryTable  BIT NOT NULL DEFAULT 0,           -- Bàn chính hay bàn ghép thêm
     CONSTRAINT FK_OrderTables_Orders FOREIGN KEY (OrderId) REFERENCES Orders(OrderId),
     CONSTRAINT FK_OrderTables_Tables FOREIGN KEY (TableId) REFERENCES DiningTables(TableId),
     CONSTRAINT UQ_OrderTables_Order_Table UNIQUE (OrderId, TableId)
 );
-GO
--- Vi du ghep ban: khach ngoi ca ban A1 va A2, order chinh tao tren A1
--- INSERT INTO OrderTables (OrderId, TableId, IsPrimaryTable) VALUES (1, 1, 1); -- A1 la ban chinh
--- INSERT INTO OrderTables (OrderId, TableId, IsPrimaryTable) VALUES (1, 2, 0); -- A2 la ban ghep them
--- Khi ghep ban, nen cap nhat DiningTables.Status = 'DangPhucVu' cho CA HAI ban.
 
-/* ----------------------------------------------------------------------
-   9B. CHIA HOA DON: 1 Order co the tach thanh NHIEU Invoice (vd: 4
-   khach an chung 1 ban nhung moi nguoi tra tien rieng). Bang InvoiceItems
-   ghi ro moi Invoice lay nhung OrderItem nao, voi so luong bao nhieu
-   (ho tro chia theo MON, khong chi chia deu theo SO TIEN).
-   ---------------------------------------------------------------------- */
+-- Chia hóa đơn: 1 Order có thể tách thành nhiều Invoice
 CREATE TABLE InvoiceItems (
     InvoiceItemId   INT IDENTITY(1,1) PRIMARY KEY,
     InvoiceId       INT NOT NULL,
     OrderItemId     INT NOT NULL,
-    SplitQuantity   INT NOT NULL,                     -- so luong cua OrderItem nay duoc tinh vao Invoice nay
-    SplitAmount     DECIMAL(18,2) NOT NULL,            -- SplitQuantity * UnitPrice (luu san de truy van nhanh)
+    SplitQuantity   INT NOT NULL,
+    SplitAmount     DECIMAL(18,2) NOT NULL,
     CONSTRAINT FK_InvoiceItems_Invoices FOREIGN KEY (InvoiceId) REFERENCES Invoices(InvoiceId),
     CONSTRAINT FK_InvoiceItems_OrderItems FOREIGN KEY (OrderItemId) REFERENCES OrderItems(OrderItemId)
 );
 GO
--- Vi du: OrderItem "Tra sua tran chau" so luong 4 (1 dong OrderItems, Quantity=4)
--- duoc 2 khach chia doi -> 2 Invoice, moi Invoice 1 dong InvoiceItems voi
--- SplitQuantity = 2. Tong SplitQuantity cua 1 OrderItem tren tat ca Invoice
--- KHONG duoc vuot qua Quantity goc (kiem tra o tang ung dung khi tao hoa don).
 
-CREATE INDEX IX_InvoiceItems_OrderItemId ON InvoiceItems(OrderItemId);
-CREATE INDEX IX_InvoiceItems_InvoiceId   ON InvoiceItems(InvoiceId);
-GO
-
-/* ----------------------------------------------------------------------
-   9C. HUY MON -> HOAN KHO: khi mot OrderItems chuyen Status sang 'DaHuy'
-   MA VAN CON O trang thai 'MoiGoi' (bep CHUA bat dau che bien), tu dong
-   hoan lai dung so nguyen lieu da tru truoc do. Neu mon da 'DangCheBien'
-   tro len thi KHONG hoan (nguyen lieu coi nhu da dung, tranh gian lan).
-   ---------------------------------------------------------------------- */
+-- Hoàn kho khi hủy món chưa chế biến (trạng thái 'MoiGoi')
 CREATE TRIGGER trg_OrderItems_RestoreStockOnCancel
 ON OrderItems
 AFTER UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
-
     IF NOT UPDATE(Status) RETURN;
 
-    -- Truong hop 1: huy mon le (MenuItemId), chi hoan neu truoc do dang 'MoiGoi'
+    -- Món lẻ
     INSERT INTO StockTransactions (IngredientId, ChangeType, QuantityChange, RelatedOrderItemId, Note)
     SELECT
         bom.IngredientId,
         N'HuyMon',
-        bom.QuantityRequired * ins.Quantity,           -- duong = hoan lai kho
+        bom.QuantityRequired * ins.Quantity,
         ins.OrderItemId,
-        N'Tu dong hoan kho khi huy mon truoc khi che bien'
+        N'Tự động hoàn kho khi hủy món trước khi chế biến'
     FROM inserted ins
     INNER JOIN deleted del ON del.OrderItemId = ins.OrderItemId
     INNER JOIN MenuItemIngredients bom ON bom.MenuItemId = ins.MenuItemId
     WHERE ins.Status = N'DaHuy'
-      AND del.Status = N'MoiGoi'                       -- chi hoan neu TRUOC DO chua che bien
+      AND del.Status = N'MoiGoi'
       AND ins.MenuItemId IS NOT NULL;
 
-    -- Truong hop 2: huy combo -> hoan kho theo tung mon con trong combo
+    -- Combo
     INSERT INTO StockTransactions (IngredientId, ChangeType, QuantityChange, RelatedOrderItemId, Note)
     SELECT
         bom.IngredientId,
         N'HuyMon',
         bom.QuantityRequired * ci.Quantity * ins.Quantity,
         ins.OrderItemId,
-        N'Tu dong hoan kho khi huy combo truoc khi che bien'
+        N'Tự động hoàn kho khi hủy combo trước khi chế biến'
     FROM inserted ins
     INNER JOIN deleted del ON del.OrderItemId = ins.OrderItemId
     INNER JOIN ComboItems ci ON ci.ComboId = ins.ComboId
@@ -1038,15 +1101,8 @@ BEGIN
       AND ins.ComboId IS NOT NULL;
 END;
 GO
--- Luu y: trigger nay chi XU LY KHO. Viec Orders.TotalAmount giam theo
--- da duoc trg_OrderItems_SyncOrderTotal (Nhom 4) tu dong xu ly san, vi
--- trigger do da loai tru cac dong Status = 'DaHuy' khoi tong tien.
 
-/* ----------------------------------------------------------------------
-   9D. LICH SU GIA BAN: moi lan Price trong MenuItems thay doi, tu dong
-   luu lai gia cu/gia moi. Gia tai thoi diem ban van lay tu OrderItems.
-   UnitPrice (da luu san luc order) nen KHONG anh huong don don hang cu.
-   ---------------------------------------------------------------------- */
+-- Lịch sử giá bán món ăn
 CREATE TABLE MenuItemPriceHistory (
     PriceHistoryId  INT IDENTITY(1,1) PRIMARY KEY,
     MenuItemId      INT NOT NULL,
@@ -1075,17 +1131,12 @@ BEGIN
 END;
 GO
 
-CREATE INDEX IX_MenuItemPriceHistory_MenuItemId ON MenuItemPriceHistory(MenuItemId, ChangedAt);
-GO
-
-/* ----------------------------------------------------------------------
-   9E. DANH GIA / PHAN HOI SAU KHI THANH TOAN (Feedback)
-   ---------------------------------------------------------------------- */
+-- Đánh giá / Phản hồi sau khi thanh toán hóa đơn
 CREATE TABLE Feedbacks (
     FeedbackId      INT IDENTITY(1,1) PRIMARY KEY,
-    InvoiceId       INT NOT NULL,                     -- chi cho phep danh gia sau khi da co hoa don
-    CustomerId      INT NULL,                         -- null neu khach vang lai khong dang nhap
-    Rating          TINYINT NOT NULL,                 -- 1 den 5 sao
+    InvoiceId       INT NOT NULL,
+    CustomerId      INT NULL,
+    Rating          TINYINT NOT NULL,
     Comment         NVARCHAR(1000) NULL,
     CreatedAt       DATETIME2 NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_Feedbacks_Invoices FOREIGN KEY (InvoiceId) REFERENCES Invoices(InvoiceId),
@@ -1093,8 +1144,6 @@ CREATE TABLE Feedbacks (
     CONSTRAINT CK_Feedbacks_Rating CHECK (Rating BETWEEN 1 AND 5)
 );
 
--- Danh gia chi tiet tung mon trong hoa don (tuy chon, dung khi can biet
--- CU THE mon nao khach khong hai long thay vi chi 1 diem chung chung)
 CREATE TABLE FeedbackItems (
     FeedbackItemId  INT IDENTITY(1,1) PRIMARY KEY,
     FeedbackId      INT NOT NULL,
@@ -1106,17 +1155,7 @@ CREATE TABLE FeedbackItems (
 );
 GO
 
-CREATE INDEX IX_Feedbacks_InvoiceId ON Feedbacks(InvoiceId);
-CREATE INDEX IX_Feedbacks_Rating    ON Feedbacks(Rating);
-GO
-
-/* ----------------------------------------------------------------------
-   9F. CANH BAO NGUYEN LIEU SAP HET: tan dung cot MinStockAlert da co san
-   trong Ingredients. Moi khi CurrentStock duoc cap nhat (do trigger
-   trg_StockTransactions_UpdateStock o Nhom 3B thuc hien) va tut xuong
-   duoi nguong -> tu dong tao 1 Notification bao QuanLy, se duoc
-   NotificationService day qua SignalR/Email/FCM nhu cac thong bao khac.
-   ---------------------------------------------------------------------- */
+-- Cảnh báo nguyên liệu sắp hết qua Notification
 CREATE TRIGGER trg_Ingredients_LowStockAlert
 ON Ingredients
 AFTER UPDATE
@@ -1127,28 +1166,22 @@ BEGIN
 
     INSERT INTO Notifications (Title, Content, NotificationType, TargetRole, RelatedEntityType, RelatedEntityId)
     SELECT
-        N'Canh bao sap het nguyen lieu',
-        N'Nguyen lieu "' + i.IngredientName + N'" chi con ' + CAST(i.CurrentStock AS NVARCHAR(20))
-            + N' ' + i.Unit + N', duoi nguong canh bao (' + CAST(i.MinStockAlert AS NVARCHAR(20)) + N').',
+        N'Cảnh báo sắp hết nguyên liệu',
+        N'Nguyên liệu "' + i.IngredientName + N'" chỉ còn ' + CAST(i.CurrentStock AS NVARCHAR(20))
+            + N' ' + i.Unit + N', dưới ngưỡng cảnh báo (' + CAST(i.MinStockAlert AS NVARCHAR(20)) + N').',
         N'CanhBaoKho',
-        N'QuanLy',                                    -- gui cho toan bo user co role QuanLy
+        N'QuanLy',
         N'Ingredient',
         i.IngredientId
     FROM inserted i
     INNER JOIN deleted d ON d.IngredientId = i.IngredientId
     WHERE i.MinStockAlert > 0
       AND i.CurrentStock < i.MinStockAlert
-      AND d.CurrentStock >= i.MinStockAlert;           -- chi bao 1 LAN DUY NHAT luc vua tut qua nguong,
-                                                        -- tranh spam thong bao moi lan tru kho nho le
+      AND d.CurrentStock >= i.MinStockAlert;
 END;
 GO
 
-/* ----------------------------------------------------------------------
-   9G. GOI Y MON DUA TREN LICH SU KHACH HANG: khong can bang moi, chi can
-   1 VIEW tong hop tu du lieu da co (Orders + OrderItems). App goi view
-   nay, loc theo CustomerId, sap xep giam dan theo TimesOrdered de lay
-   ra "mon khach hay goi nhat" hien thi goi y khi khach dat mon lai.
-   ---------------------------------------------------------------------- */
+-- Gợi ý món ăn yêu thích dựa trên lịch sử khách hàng
 CREATE VIEW vw_CustomerFavoriteItems AS
 SELECT
     o.CustomerId,
@@ -1164,39 +1197,78 @@ WHERE o.CustomerId IS NOT NULL
   AND oi.Status <> N'DaHuy'
 GROUP BY o.CustomerId, oi.MenuItemId, mi.ItemName;
 GO
--- Cach dung: goi y 5 mon khach hay goi nhat khi khach quen (CustomerId=5) dat ban:
--- SELECT TOP 5 * FROM vw_CustomerFavoriteItems WHERE CustomerId = 5 ORDER BY TimesOrdered DESC;
 
 /* ======================================================================
-   INDEX PHU TRO CHO TRUY VAN NHANH VA CHO TRIGGER CHAY NHANH
+   TỐI ƯU HÓA: INDEX TOÀN DIỆN (CHỈ MỤC TRUY VẤN VÀ TÍNH TOÁN HIỆU NĂNG)
    ====================================================================== */
 
--- Index cu (giu nguyen tu ban goc)
+-- Index Người dùng & Quyền
 CREATE INDEX IX_UserRoles_UserId_IsActive  ON UserRoles(UserId, IsActive);
+
+-- Index Bàn & Khu vực
 CREATE INDEX IX_DiningTables_Status        ON DiningTables(Status);
+
+-- Index Đặt bàn
+CREATE INDEX IX_Reservations_Time_Status   ON Reservations(ReservationTime, Status);
+CREATE INDEX IX_Reservations_Customer      ON Reservations(CustomerId) WHERE CustomerId IS NOT NULL;
+CREATE INDEX IX_Reservations_CustomerId_ReservationTime ON Reservations(CustomerId, ReservationTime DESC) WHERE CustomerId IS NOT NULL;
+CREATE INDEX IX_Reservations_BookingGroup  ON Reservations(BookingGroupId) WHERE BookingGroupId IS NOT NULL;
+
+-- Index Đặt món
 CREATE INDEX IX_Orders_Status_TableId      ON Orders(Status, TableId);
 CREATE INDEX IX_Orders_CustomerId_OrderTime ON Orders(CustomerId, OrderTime) WHERE CustomerId IS NOT NULL;
-CREATE INDEX IX_OrderItems_OrderId_Status  ON OrderItems(OrderId, Status);
-CREATE INDEX IX_KitchenTickets_Status      ON KitchenTickets(Status);
-CREATE INDEX IX_Invoices_Status            ON Invoices(Status);
-CREATE INDEX IX_Reservations_Time_Status   ON Reservations(ReservationTime, Status);
-CREATE INDEX IX_Notifications_TargetUser_IsRead ON Notifications(TargetUserId, IsRead);
-CREATE INDEX IX_ShiftAssignments_WorkDate  ON ShiftAssignments(WorkDate);
-CREATE INDEX IX_AuditLogs_TableName_RecordId ON AuditLogs(TableName, RecordId);
+CREATE UNIQUE INDEX UX_Orders_Customer_ClientRequestId ON Orders(CustomerId, ClientRequestId) WHERE ClientRequestId IS NOT NULL;
+CREATE INDEX IX_Orders_Takeaway ON Orders(OrderTime, TakeawayNumber) WHERE TakeawayNumber IS NOT NULL;
 
--- Index MOI (TOI UU - bo sung cho cac cot duoc JOIN trong trigger,
--- vien tan suat cao khi order/tru kho, tranh table scan khi du lieu lon)
+CREATE INDEX IX_OrderItems_OrderId_Status  ON OrderItems(OrderId, Status);
 CREATE INDEX IX_OrderItems_MenuItemId      ON OrderItems(MenuItemId) WHERE MenuItemId IS NOT NULL;
 CREATE INDEX IX_OrderItems_ComboId         ON OrderItems(ComboId) WHERE ComboId IS NOT NULL;
+
+-- Index Đánh giá món
+CREATE UNIQUE INDEX UX_OrderReviews_OrderItemId ON OrderReviews(OrderItemId) WHERE OrderItemId IS NOT NULL;
+CREATE UNIQUE INDEX UX_OrderReviews_OrderId_Experience ON OrderReviews(OrderId) WHERE OrderItemId IS NULL;
+
+-- Index Bếp & Kho
+CREATE INDEX IX_KitchenTickets_Status      ON KitchenTickets(Status);
+CREATE INDEX IX_KitchenTickets_StationId   ON KitchenTickets(StationId);
 CREATE INDEX IX_MenuItemIngredients_IngredientId ON MenuItemIngredients(IngredientId);
 CREATE INDEX IX_StockTransactions_IngredientId   ON StockTransactions(IngredientId);
 CREATE INDEX IX_StockTransactions_RelatedOrderItemId ON StockTransactions(RelatedOrderItemId);
 CREATE INDEX IX_ComboItems_ComboId         ON ComboItems(ComboId);
 CREATE INDEX IX_MenuItems_StationId        ON MenuItems(StationId);
-CREATE INDEX IX_KitchenTickets_StationId   ON KitchenTickets(StationId);
 CREATE INDEX IX_OrderTables_TableId        ON OrderTables(TableId);
+CREATE INDEX IX_InvoiceItems_OrderItemId   ON InvoiceItems(OrderItemId);
+CREATE INDEX IX_InvoiceItems_InvoiceId     ON InvoiceItems(InvoiceId);
+CREATE INDEX IX_MenuItemPriceHistory_MenuItemId ON MenuItemPriceHistory(MenuItemId, ChangedAt);
+
+-- Index Hóa đơn & Phản hồi
+CREATE INDEX IX_Invoices_Status            ON Invoices(Status);
+CREATE INDEX IX_Invoices_CreatedBy_InvoiceDate ON Invoices(CreatedBy, InvoiceDate);
+CREATE INDEX IX_Feedbacks_InvoiceId        ON Feedbacks(InvoiceId);
+CREATE INDEX IX_Feedbacks_Rating           ON Feedbacks(Rating);
+
+-- Index Nhân sự & Phân công khu vực
+CREATE INDEX IX_ShiftAssignments_WorkDate  ON ShiftAssignments(WorkDate);
+CREATE INDEX IX_ShiftAssignmentAreas_Area  ON ShiftAssignmentAreas(AreaId);
+CREATE INDEX IX_EmployeeAreaAssignments_EmployeeDate ON EmployeeAreaAssignments(EmployeeId, WorkDate, IsActive);
+CREATE INDEX IX_EmployeeAreaAssignments_Area ON EmployeeAreaAssignments(AreaId, IsActive);
+
+-- Index Thông báo & Audit
+CREATE INDEX IX_Notifications_TargetUser_IsRead ON Notifications(TargetUserId, IsRead);
+CREATE INDEX IX_Notifications_CustomerId_IsRead_CreatedAt ON Notifications(CustomerId, IsRead, CreatedAt DESC) WHERE CustomerId IS NOT NULL;
+CREATE UNIQUE INDEX UX_Notifications_EventKey ON Notifications(EventKey) WHERE EventKey IS NOT NULL;
+CREATE INDEX IX_AuditLogs_TableName_RecordId ON AuditLogs(TableName, RecordId);
+CREATE INDEX IX_MobileOperationLogs_CreatedAt ON MobileOperationLogs(CreatedAt DESC);
+CREATE INDEX IX_MobileOperationLogs_EmployeeCode ON MobileOperationLogs(EmployeeCode, CreatedAt DESC);
+
+-- Index Ưu tiên chế biến Mobile
+CREATE INDEX IX_MobileKitchenPriorities_Table ON MobileKitchenPriorities(TableId, IsActive);
+CREATE INDEX IX_MobileKitchenPriorities_Item  ON MobileKitchenPriorities(OrderItemId, IsActive);
 GO
 
+/* ======================================================================
+   DỮ LIỆU KHỞI TẠO MẶC ĐỊNH (DEFAULT SEED DATA)
+   ====================================================================== */
 
 -- ======================================================================
 -- BƯỚC 1: NHÓM DANH MỤC GỐC (Roles, Stations, Areas, Categories, Shifts)
@@ -1242,7 +1314,8 @@ INSERT INTO Users (Username, PasswordHash, FullName, Phone, Email, IsActive) VAL
 (N'thungan01', N'$2b$11$ELlHJFrq5892n/CITm5CDOBrFsFEDtIfFrfe9Gc0ntaeg2xsbDy4S', N'Trần Thị Thu Ngân', N'0902222333', N'thungan@quanan.com', 1),
 (N'phucvu01', N'$2b$11$ELlHJFrq5892n/CITm5CDOBrFsFEDtIfFrfe9Gc0ntaeg2xsbDy4S', N'Lê Văn Phục Vụ', N'0903333444', N'phucvu@quanan.com', 1),
 (N'bep01', N'$2b$11$ELlHJFrq5892n/CITm5CDOBrFsFEDtIfFrfe9Gc0ntaeg2xsbDy4S', N'Phạm Bếp Trưởng', N'0904444555', N'bep@quanan.com', 1),
-(N'nhanvien_hybrid', N'$2b$11$ELlHJFrq5892n/CITm5CDOBrFsFEDtIfFrfe9Gc0ntaeg2xsbDy4S', N'Hoàng Kiêm Nhiệm', N'0905555666', N'hybrid@quanan.com', 1);
+(N'nhanvien_hybrid', N'$2b$11$ELlHJFrq5892n/CITm5CDOBrFsFEDtIfFrfe9Gc0ntaeg2xsbDy4S', N'Hoàng Kiêm Nhiệm', N'0905555666', N'hybrid@quanan.com', 1),
+(N'web-system', N'!DISABLED!', N'Đơn đặt từ Web', NULL, NULL, 0);
 
 INSERT INTO UserRoles (UserId, RoleId, AssignedBy) VALUES
 (1, (SELECT RoleId FROM Roles WHERE RoleName = N'QuanLy'), 1),
@@ -1257,7 +1330,8 @@ INSERT INTO Employees (UserId, EmployeeCode, Position, HireDate, Salary, Status,
 (2, N'NV002', N'ThuNgan', '2024-03-01', 8000000, N'DangLamViec', NULL),
 (3, N'NV003', N'PhucVu', '2024-05-10', 6500000, N'DangLamViec', NULL),
 (4, N'NV004', N'Bep', '2024-02-20', 9500000, N'DangLamViec', (SELECT StationId FROM Stations WHERE StationName = N'Bep')),
-(5, N'NV005', N'PhucVu', '2024-06-01', 7000000, N'DangLamViec', NULL);
+(5, N'NV005', N'PhucVu', '2024-06-01', 7000000, N'DangLamViec', NULL),
+((SELECT UserId FROM Users WHERE Username = N'web-system'), N'WEB', N'PhucVu', CAST(GETDATE() AS DATE), 0, N'NghiViec', NULL);
 GO
 
 -- ======================================================================
@@ -1353,22 +1427,90 @@ INSERT INTO Tasks (EmployeeId, TaskName, Description, DueDate, Status) VALUES
 ((SELECT EmployeeId FROM Employees WHERE UserId = 4), N'Kiểm tra kho thịt bò', N'Báo cáo số lượng tồn thực tế cho quản lý', DATEADD(HOUR, 4, GETDATE()), N'ChuaLam');
 GO
 
--- Thêm cột đánh dấu món MANG VỀ cho OrderItems.
--- Backend cũng tự thêm cột này khi khởi động (WinFormsCompatibilitySchemaService);
--- script này dùng để chạy tay trên DB có sẵn. Chạy nhiều lần an toàn (idempotent).
-IF OBJECT_ID(N'dbo.OrderItems', N'U') IS NOT NULL
-   AND COL_LENGTH(N'dbo.OrderItems', N'IsTakeaway') IS NULL
-BEGIN
-    ALTER TABLE dbo.OrderItems
-        ADD IsTakeaway BIT NOT NULL
-            CONSTRAINT DF_OrderItems_IsTakeaway DEFAULT 0 WITH VALUES;
-END;
-GO
+-- ======================================================================
+-- BƯỚC 7: CẤU HÌNH ĐIỂM DANH & QUYỀN MOBILE (AttendanceSettings, Permissions)
+-- ======================================================================
 
--- (Tùy chọn) Đánh dấu các món của đơn MANG VỀ cũ là mang về
-UPDATE oi
-SET oi.IsTakeaway = 1
-FROM dbo.OrderItems oi
-INNER JOIN dbo.Orders o ON o.OrderId = oi.OrderId
-WHERE o.OrderType = N'MangVe' AND oi.IsTakeaway = 0;
+IF NOT EXISTS (SELECT 1 FROM AttendanceSettings WHERE SettingId = 1)
+BEGIN
+    INSERT INTO AttendanceSettings (SettingId, RestaurantLatitude, RestaurantLongitude, RadiusMeters, MaxAccuracyMeters, UpdatedAt, UpdatedBy)
+    VALUES (1, NULL, NULL, 100, 50, NULL, NULL);
+END;
+
+MERGE dbo.MobilePermissions AS target
+USING (VALUES
+    (N'mobile.use',       N'Sử dụng Mobile',          N'Được đăng nhập và sử dụng ứng dụng Mobile'),
+    (N'screen.tables',    N'Màn hình bàn',           N'Được vào màn hình bàn và hóa đơn'),
+    (N'screen.kitchen',   N'Màn hình bếp',           N'Được vào màn hình bếp'),
+    (N'table.manage',     N'Thao tác bàn',           N'Nhận bàn, sửa số khách, chuyển/gộp/ghép/tách bàn'),
+    (N'order.create',     N'Gọi món',                N'Tạo món mới cho đơn'),
+    (N'order.cancel',     N'Hủy món',                N'Hủy món chưa chế biến'),
+    (N'order.serve',      N'Xác nhận phục vụ',       N'Đánh dấu món đã phục vụ'),
+    (N'payment.request',  N'Yêu cầu thanh toán',     N'Gửi yêu cầu thanh toán'),
+    (N'payment.complete', N'Hoàn tất thanh toán',    N'Thu tiền và hoàn tất hóa đơn'),
+    (N'kitchen.manage',   N'Thao tác bếp',           N'Nhận/chế biến/hoàn thành món tại bếp'),
+    (N'customer.manage',  N'Khách hàng thành viên',  N'Tìm, tạo và gắn khách hàng vào đơn'),
+    (N'area.all',         N'Tất cả khu vực',         N'Không bị giới hạn bởi phân công khu vực'),
+    (N'area.assign',      N'Phân công khu vực',      N'Được cấu hình nhân viên phụ trách khu vực'),
+    (N'access.configure', N'Cấu hình quyền',         N'Được thay đổi quyền của các vai trò'),
+    (N'statistics.view',  N'Xem thống kê',           N'Được xem doanh thu, món bán chạy và doanh thu theo nhân viên'),
+    (N'staff.manage',     N'Quản lý nhân viên',      N'Được phân ca, giao nhiệm vụ và xem lịch sử làm việc của nhân viên')
+) AS source(PermissionKey, DisplayName, Description)
+ON target.PermissionKey = source.PermissionKey
+WHEN MATCHED THEN UPDATE SET
+    DisplayName = source.DisplayName,
+    Description = source.Description,
+    IsActive = 1
+WHEN NOT MATCHED THEN INSERT(PermissionKey, DisplayName, Description, IsActive)
+    VALUES(source.PermissionKey, source.DisplayName, source.Description, 1);
+
+DECLARE @Defaults TABLE(RoleName NVARCHAR(100), PermissionKey NVARCHAR(100));
+INSERT INTO @Defaults(RoleName, PermissionKey) VALUES
+    (N'PhucVu', N'mobile.use'),
+    (N'PhucVu', N'screen.tables'),
+    (N'PhucVu', N'table.manage'),
+    (N'PhucVu', N'order.create'),
+    (N'PhucVu', N'order.cancel'),
+    (N'PhucVu', N'order.serve'),
+    (N'PhucVu', N'payment.request'),
+    (N'PhucVu', N'customer.manage'),
+    (N'ThuNgan', N'mobile.use'),
+    (N'ThuNgan', N'screen.tables'),
+    (N'ThuNgan', N'table.manage'),
+    (N'ThuNgan', N'order.create'),
+    (N'ThuNgan', N'order.cancel'),
+    (N'ThuNgan', N'order.serve'),
+    (N'ThuNgan', N'payment.request'),
+    (N'ThuNgan', N'payment.complete'),
+    (N'ThuNgan', N'customer.manage'),
+    (N'ThuNgan', N'area.all'),
+    (N'Bep', N'mobile.use'),
+    (N'Bep', N'screen.kitchen'),
+    (N'Bep', N'kitchen.manage'),
+    (N'Bep', N'area.all'),
+    (N'QuanLy', N'mobile.use'),
+    (N'QuanLy', N'screen.tables'),
+    (N'QuanLy', N'screen.kitchen'),
+    (N'QuanLy', N'table.manage'),
+    (N'QuanLy', N'order.create'),
+    (N'QuanLy', N'order.cancel'),
+    (N'QuanLy', N'order.serve'),
+    (N'QuanLy', N'payment.request'),
+    (N'QuanLy', N'payment.complete'),
+    (N'QuanLy', N'kitchen.manage'),
+    (N'QuanLy', N'customer.manage'),
+    (N'QuanLy', N'area.all'),
+    (N'QuanLy', N'area.assign'),
+    (N'QuanLy', N'access.configure'),
+    (N'QuanLy', N'statistics.view'),
+    (N'QuanLy', N'staff.manage');
+
+INSERT INTO RoleMobilePermissions(RoleId, PermissionKey, IsAllowed)
+SELECT r.RoleId, d.PermissionKey, 1
+FROM @Defaults d
+INNER JOIN Roles r ON r.RoleName = d.RoleName
+WHERE NOT EXISTS (
+    SELECT 1 FROM RoleMobilePermissions rp
+    WHERE rp.RoleId = r.RoleId AND rp.PermissionKey = d.PermissionKey
+);
 GO

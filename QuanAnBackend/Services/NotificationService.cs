@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Data.SqlClient;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
@@ -13,11 +14,16 @@ public class NotificationService
 {
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
+    private readonly ILogger<NotificationService> _logger;
 
-    public NotificationService(AppDbContext db, IHubContext<OrderHub> hub)
+    public NotificationService(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        ILogger<NotificationService> logger)
     {
         _db = db;
         _hub = hub;
+        _logger = logger;
     }
 
     public async Task CreateAsync(
@@ -98,6 +104,76 @@ public class NotificationService
             await _hub.Clients
                 .Group($"dept-{targetRole}")
                 .SendAsync("NotificationReceived", mobilePayload);
+        }
+    }
+
+    public async Task CreateForCustomerAsync(
+        int customerId,
+        string title,
+        string content,
+        NotificationType type,
+        string eventKey,
+        string? relatedEntityType = null,
+        int? relatedEntityId = null)
+    {
+        if (customerId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(customerId));
+        if (string.IsNullOrWhiteSpace(eventKey) || eventKey.Length > 200)
+            throw new ArgumentException("Event key must contain 1 to 200 characters.", nameof(eventKey));
+
+        var exists = await _db.Notifications.AnyAsync(n => n.EventKey == eventKey);
+        if (exists) return;
+
+        var notification = new Notification
+        {
+            CustomerId = customerId,
+            Title = title,
+            Content = content,
+            NotificationType = type,
+            RelatedEntityType = relatedEntityType,
+            RelatedEntityId = relatedEntityId,
+            EventKey = eventKey,
+            IsRead = false,
+            CreatedAt = DateTime.Now
+        };
+        _db.Notifications.Add(notification);
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException exception) when (
+            exception.GetBaseException() is SqlException { Number: 2601 or 2627 })
+        {
+            _db.Entry(notification).State = EntityState.Detached;
+            _logger.LogInformation(
+                "Skipped duplicate customer notification for event {EventKey}.",
+                eventKey);
+            return;
+        }
+
+        try
+        {
+            await _hub.Clients
+                .Group($"customer-{customerId}")
+                .SendAsync("NewCustomerNotification", new
+                {
+                    id = notification.NotificationId,
+                    title = notification.Title,
+                    message = notification.Content,
+                    notificationType = notification.NotificationType.ToString(),
+                    relatedEntityType = notification.RelatedEntityType,
+                    relatedEntityId = notification.RelatedEntityId,
+                    isRead = notification.IsRead,
+                    createdAt = notification.CreatedAt
+                });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Customer notification {NotificationId} was saved, but realtime delivery failed for customer {CustomerId}.",
+                notification.NotificationId,
+                customerId);
         }
     }
 

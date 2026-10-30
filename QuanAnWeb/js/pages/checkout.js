@@ -1,18 +1,22 @@
-import { hasCustomerSession } from '../api/session.js?auth-session-2';
+import { hasCustomerSession, hasCustomerRole, isTokenExpired } from '../api/session.js?auth-session-2';
 import { ensureCustomerSession } from '../api/authSession.js?auth-session-2';
 import { menuApi } from '../api/menuApi.js?auth-session-2';
 import { orderApi } from '../api/orderApi.js?auth-session-2';
 import { profileApi } from '../api/profileApi.js?auth-session-2';
 import { tableApi } from '../api/tableApi.js?auth-session-2';
 import { readCart, writeCart } from '../components/cartStore.js';
-import { renderCheckoutCart, renderCheckoutMessage, renderCheckoutRecovery, renderCheckoutTables } from '../components/checkoutView.js';
+import { renderCheckoutCart, renderCheckoutMessage, renderCheckoutRecovery, renderCheckoutTables, renderCheckoutTableAlert } from '../components/checkoutView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
+import { realtimeClient } from '../realtime/realtimeClient.js';
 
 const authState = document.querySelector('[data-checkout-auth-state]');
 const checkoutForm = document.querySelector('[data-checkout-form]');
 const cartElement = document.querySelector('[data-checkout-cart]');
 const customerElement = document.querySelector('[data-checkout-customer]');
 const tableSelect = document.querySelector('[data-checkout-table]');
+const tableGridContainer = document.getElementById('checkout-table-selector');
+const tableCountBadge = document.getElementById('checkout-available-tables-count');
+const tableAlertContainer = document.getElementById('checkout-table-alert');
 const statusElement = document.querySelector('[data-checkout-status]');
 const recoveryElement = document.querySelector('[data-checkout-recovery]');
 const submitButton = document.querySelector('[data-checkout-submit]');
@@ -34,6 +38,9 @@ async function initializeCheckout() {
     let sessionExpired = false;
     let uncertainSubmission = false;
     let savedRequest = null;
+    let selectedTableId = '';
+    let activeAreaFilter = 'all';
+    let cachedAvailableTables = [];
     const catalogErrors = new Map();
     const AVAILABLE_TABLE_STATUS = [0];
 
@@ -105,8 +112,11 @@ async function initializeCheckout() {
             !sessionExpired &&
             !uncertainSubmission &&
             hasCustomerSession() &&
+            hasCustomerRole() &&
+            !isTokenExpired() &&
             customerLoaded &&
             tablesLoaded &&
+            Boolean(tableSelect.value) &&
             cart.length > 0 &&
             !pending
         );
@@ -261,19 +271,124 @@ async function initializeCheckout() {
         updateSubmit();
     }
 
-    async function loadTables() {
+    function handleTableSelection(id) {
+        if (!id) return;
+        selectedTableId = String(id);
+        tableSelect.value = String(id);
+        renderCheckoutTableAlert(tableAlertContainer, null);
+        setStatus('');
+        tableSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        updateSubmit();
+
+        renderCheckoutTables(tableSelect, cachedAvailableTables, {
+            gridContainer: tableGridContainer,
+            countBadge: tableCountBadge,
+            selectedTableId,
+            activeAreaFilter,
+            onSelectTable: handleTableSelection,
+            onSelectArea: handleAreaFilter
+        });
+    }
+
+    function handleAreaFilter(area) {
+        activeAreaFilter = area;
+        renderCheckoutTables(tableSelect, cachedAvailableTables, {
+            gridContainer: tableGridContainer,
+            countBadge: tableCountBadge,
+            selectedTableId,
+            activeAreaFilter,
+            onSelectTable: handleTableSelection,
+            onSelectArea: handleAreaFilter
+        });
+    }
+
+    async function loadTables(realtimeData = null) {
+        const previousTable = selectedTableId || tableSelect.value;
         try {
-            const tables = await tableApi.getTables();
+            // Lấy danh sách bàn trống thực tế từ Backend
+            const tables = await tableApi.getAvailableTables();
             if (sessionExpired) return;
-            renderCheckoutTables(tableSelect, tables, { availableStatusValues: AVAILABLE_TABLE_STATUS });
+
+            let effectiveTables = tables;
+
+            // Xử lý cập nhật tức thời từ sự kiện realtime nếu có
+            if (realtimeData && (realtimeData.tableId !== undefined || realtimeData.TableId !== undefined)) {
+                const rtId = String(realtimeData.tableId ?? realtimeData.TableId);
+                const rtStatus = String(realtimeData.status ?? realtimeData.Status ?? '').toLowerCase();
+                const isRtFree = rtStatus === 'trong' || rtStatus === '0' || realtimeData.status === 0 || realtimeData.Status === 0;
+
+                if (!isRtFree) {
+                    // Bàn chuyển sang bận -> lập tức loại khỏi danh sách bàn trống
+                    effectiveTables = effectiveTables.filter(t => String(t.id) !== rtId);
+                } else if (!effectiveTables.some(t => String(t.id) === rtId)) {
+                    // Bàn chuyển sang trống -> bổ sung vào danh sách nếu chưa có
+                    effectiveTables = [
+                        ...effectiveTables,
+                        {
+                            id: Number(rtId),
+                            name: realtimeData.tableName ?? realtimeData.TableName ?? `Bàn ${rtId}`,
+                            capacity: 4,
+                            status: 'Trong',
+                            areaName: realtimeData.areaName ?? realtimeData.AreaName ?? 'Tầng 1 - Khu A'
+                        }
+                    ];
+                }
+            }
+
+            cachedAvailableTables = effectiveTables;
             tablesLoaded = true;
-            if (!tables.some((table) => table.status === 'Trong')) {
-                renderCheckoutMessage(authState, 'Hiện chưa có bàn khả dụng. Vui lòng thử lại sau.', { type: 'warning' });
+
+            // Kiểm tra xem bàn đã chọn trước đó có còn trống không
+            const isPreviousStillAvailable = previousTable && effectiveTables.some(t => String(t.id) === String(previousTable));
+
+            if (previousTable && !isPreviousStillAvailable) {
+                // Bàn đang chọn vừa chuyển sang trạng thái bận!
+                selectedTableId = '';
+                tableSelect.value = '';
+
+                let busyName = `Bàn #${previousTable}`;
+                if (realtimeData && (String(realtimeData.tableId) === String(previousTable) || String(realtimeData.TableId) === String(previousTable))) {
+                    busyName = realtimeData.tableName || realtimeData.TableName || busyName;
+                }
+
+                renderCheckoutTableAlert(
+                    tableAlertContainer,
+                    `${busyName} vừa được sử dụng hoặc chuyển sang trạng thái bận. Vui lòng chọn bàn trống khác.`
+                );
+                setStatus(`${busyName} vừa chuyển sang trạng thái bận. Vui lòng chọn bàn khác.`, true);
+            } else if (isPreviousStillAvailable) {
+                selectedTableId = String(previousTable);
+                tableSelect.value = String(previousTable);
+            } else {
+                selectedTableId = '';
+                tableSelect.value = '';
+            }
+
+            renderCheckoutTables(tableSelect, effectiveTables, {
+                gridContainer: tableGridContainer,
+                countBadge: tableCountBadge,
+                selectedTableId,
+                activeAreaFilter,
+                onSelectTable: handleTableSelection,
+                onSelectArea: handleAreaFilter
+            });
+
+            if (effectiveTables.length === 0) {
+                renderCheckoutMessage(authState, 'Hiện chưa có bàn trống khả dụng. Vui lòng thử lại sau.', { type: 'warning' });
             }
         } catch (error) {
             tablesLoaded = false;
+            selectedTableId = '';
             tableSelect.replaceChildren(new Option('Không thể tải danh sách bàn', ''));
             tableSelect.disabled = true;
+            if (tableGridContainer) {
+                tableGridContainer.innerHTML = `
+                    <div class="rounded-xl border border-red-200 bg-red-50 p-4 text-xs md:text-sm text-red-800 text-center">
+                        <p class="font-bold">Không thể tải danh sách bàn trống.</p>
+                        <p class="mt-1">${error?.message || 'Lỗi kết nối đến máy chủ.'}</p>
+                    </div>
+                `;
+            }
             setStatus(error?.message || 'Không thể tải danh sách bàn.', true);
         }
         updateSubmit();
@@ -513,6 +628,10 @@ async function initializeCheckout() {
             });
             showRecoveredOrder(validateOrderResponse(result, body));
         } catch (error) {
+            if (error?.status === 409) {
+                // Nếu bàn vừa bị chiếm ngay lúc bấm tạo đơn, tải lại danh sách bàn ngay
+                void loadTables();
+            }
             const definitivelyRejected =
                 error?.status === 400 ||
                 error?.status === 404 ||
@@ -540,6 +659,7 @@ async function initializeCheckout() {
 
     updateCart();
 
+    // Phân biệt rõ các trạng thái xác thực và phân quyền
     if (!hasCustomerSession()) {
         checkoutForm.classList.add('hidden');
         authState.classList.remove('hidden');
@@ -548,7 +668,36 @@ async function initializeCheckout() {
             'Bạn cần đăng nhập tài khoản khách hàng để tiếp tục đặt món.',
             {
                 loginHref: '/pages/auth/login_register.html?returnUrl=%2Fpages%2Fcheckout%2Findex.html',
+                type: 'info'
+            }
+        );
+        return;
+    }
+
+    if (isTokenExpired()) {
+        sessionExpired = true;
+        checkoutForm.classList.add('hidden');
+        authState.classList.remove('hidden');
+        renderCheckoutMessage(
+            authState,
+            'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục.',
+            {
+                loginHref: '/pages/auth/login_register.html?returnUrl=%2Fpages%2Fcheckout%2Findex.html',
                 type: 'warning'
+            }
+        );
+        return;
+    }
+
+    if (!hasCustomerRole()) {
+        checkoutForm.classList.add('hidden');
+        authState.classList.remove('hidden');
+        renderCheckoutMessage(
+            authState,
+            'Tài khoản hiện tại không có quyền đặt món với vai trò khách hàng. Vui lòng đăng nhập bằng tài khoản khách hàng.',
+            {
+                loginHref: '/pages/auth/login_register.html?returnUrl=%2Fpages%2Fcheckout%2Findex.html',
+                type: 'error'
             }
         );
         return;
@@ -574,8 +723,12 @@ async function initializeCheckout() {
             setStatus('Yêu cầu trước chưa được đối soát. Hãy kiểm tra hoặc xử lý an toàn yêu cầu cũ trước khi gửi giỏ hàng hiện tại.', true);
             return;
         }
-        if (!hasCustomerSession()) {
+        if (!hasCustomerSession() || isTokenExpired()) {
             handleUnauthorized();
+            return;
+        }
+        if (!hasCustomerRole()) {
+            setStatus('Tài khoản hiện tại không có quyền đặt món với vai trò khách hàng.', true);
             return;
         }
         if (cart.length === 0) {
@@ -636,10 +789,14 @@ async function initializeCheckout() {
 
             // Tự động chuyển hướng về trang lịch sử đơn hàng sau 2 giây
             setTimeout(() => {
-                window.location.href = '../profile/index.html';
+                window.location.href = '../profile/index.html#orders';
             }, 2000);
 
         } catch (error) {
+            if (error?.status === 409) {
+                // Nếu bàn vừa bị chiếm ngay lúc bấm tạo đơn, tải lại danh sách bàn ngay
+                void loadTables();
+            }
             const definitivelyRejected =
                 error?.status === 400 ||
                 error?.status === 404 ||
@@ -675,6 +832,27 @@ async function initializeCheckout() {
         if (/409|conflict|không còn khả dụng|đã được sử dụng/i.test(message)) return message;
         return message || 'Không thể tạo đơn. Giỏ hàng vẫn được giữ lại.';
     }
+
+    realtimeClient.on('TableStatusUpdated', (data) => {
+        if (!pending && !sessionExpired) loadTables(data);
+    });
+    realtimeClient.on('MenuItemUpdated', () => {
+        if (!pending && !sessionExpired) refreshCatalogPrices();
+    });
+    realtimeClient.on('DishStatusChanged', () => {
+        if (!pending && !sessionExpired) refreshCatalogPrices();
+    });
+    realtimeClient.on('CustomerProfileUpdated', () => {
+        if (!pending && !sessionExpired) loadCustomer();
+    });
+    realtimeClient.on('sync', () => {
+        if (!pending && !sessionExpired) {
+            loadTables();
+            refreshCatalogPrices();
+            loadCustomer();
+        }
+    });
+    realtimeClient.start().catch(() => {});
 }
 
 initializeCheckout();

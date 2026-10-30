@@ -19,12 +19,20 @@ public class OrderRoutingService
 
     public async Task RouteNewOrderItemsAsync(int orderId, List<int> newOrderItemIds)
     {
+        if (newOrderItemIds.Count == 0) return;
+
+        var existingTicketItemIds = await _db.KitchenTickets
+            .AsNoTracking()
+            .Where(ticket => newOrderItemIds.Contains(ticket.OrderItemId))
+            .Select(ticket => ticket.OrderItemId)
+            .ToListAsync();
+
         var items = await _db.OrderItems
             .Include(oi => oi.MenuItem)!
                 .ThenInclude(mi => mi!.Station)
             .Include(oi => oi.Order)
                 .ThenInclude(o => o!.Table)
-            .Where(oi => newOrderItemIds.Contains(oi.OrderItemId))
+            .Where(oi => newOrderItemIds.Contains(oi.OrderItemId) && !existingTicketItemIds.Contains(oi.OrderItemId))
             .ToListAsync();
 
         var groupedByStation = items

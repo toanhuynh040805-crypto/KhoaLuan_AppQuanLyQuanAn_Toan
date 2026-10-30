@@ -49,7 +49,8 @@ public class Order
 
     public string? Note { get; set; }
     // Khóa chống trùng khi web gửi lại cùng một yêu cầu (idempotent). Null với đơn của nhân viên.
-    public string? ClientRequestId { get; set; }
+    public Guid? ClientRequestId { get; set; }
+    public string? ClientRequestHash { get; set; }
 
     // Nguồn tạo đơn: "Web" hoặc "NhanVien" (xem OrderSources).
     public string Source { get; set; } = OrderSources.NhanVien;

@@ -86,6 +86,10 @@
                 <span class="material-symbols-outlined">local_offer</span>
                 <span class="text-sm font-medium">Khuyến mãi</span>
             </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../reviews/index.html">
+                <span class="material-symbols-outlined">rate_review</span>
+                <span class="text-sm font-medium">Đánh giá món ăn</span>
+            </a>
             <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../booking/lookup.html">
                 <span class="material-symbols-outlined">search</span>
                 <span class="text-sm font-medium">Tra cứu / hủy</span>
@@ -107,7 +111,7 @@
         <!-- TopAppBar / Thanh tìm kiếm và thông tin tài khoản -->
         <header class="bg-surface-container-lowest shadow-sm flex justify-between items-center w-full px-6 md:px-8 py-4 sticky top-0 z-40 border-b border-outline-variant/40">
             <div class="flex items-center gap-4 flex-1">
-                <button class="md:hidden text-on-surface" type="button" data-mobile-menu-toggle aria-controls="menu-mobile-navigation" aria-expanded="false" aria-label="Mở điều hướng">
+                <button class="md:hidden text-on-surface p-2 -ml-2 rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center min-w-[44px] min-h-[44px]" type="button" data-mobile-menu-toggle aria-controls="menu-mobile-navigation" aria-expanded="false" aria-label="Mở điều hướng">
                     <span class="material-symbols-outlined">menu</span>
                 </button>
                 <div class="relative w-full max-w-md items-center">
@@ -125,14 +129,12 @@
                     <span class="min-w-5 rounded-full bg-primary px-1 text-center text-xs font-bold text-on-primary" data-cart-count>1</span>
                 </button>
 
-                <button class="text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-full" title="Thông báo" type="button">
-                    <span class="material-symbols-outlined">notifications</span>
-                </button>
-                <button class="text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-full hidden sm:block" title="Trợ giúp" type="button">
-                    <span class="material-symbols-outlined">help</span>
-                </button>
-                
-                <div class="h-8 w-[1px] bg-outline-variant mx-1 hidden sm:block"></div>
+                <div class="relative" id="notification-bell-wrapper">
+                    <button id="btn-notification-bell" data-notification-bell class="relative text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary/40" title="Thông báo" type="button" aria-label="Thông báo" aria-haspopup="true" aria-expanded="false">
+                        <span class="material-symbols-outlined text-[20px]">notifications</span>
+                        <span data-notification-badge class="hidden absolute top-0.5 right-0.5 min-w-[18px] h-[18px] px-1 bg-primary text-on-primary text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-surface">0</span>
+                    </button>
+                </div>
                 
                 <!-- Hồ sơ Khách Hàng -->
                 <a href="../auth/login_register.html" data-customer-account data-profile-href="../profile/index.html" data-login-href="../auth/login_register.html" class="flex items-center gap-2 hover:bg-surface-container-high transition-all p-2 rounded-lg">
@@ -146,13 +148,14 @@
             </div>
         </header>
 
-        <nav id="menu-mobile-navigation" data-mobile-menu class="hidden border-b border-outline-variant/40 bg-surface-container-lowest p-4 md:hidden" aria-label="Điều hướng chính">
+        <nav id="menu-mobile-navigation" data-mobile-menu class="hidden border-b border-outline-variant/40 bg-surface-container-lowest p-4 md:hidden shadow-sm" aria-label="Điều hướng chính">
             <div class="grid gap-1">
                 <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../../index.html">Trang chủ</a>
-                <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="./index.html">Thực đơn</a>
+                <a class="rounded-lg px-3 py-2 text-sm font-semibold text-primary bg-surface-container-high" href="./index.html">Thực đơn</a>
                 <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../booking/index.html">Đặt bàn</a>
                 <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../promotions/index.html">Khuyến mãi</a>
-                <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../booking/lookup.html">Tra cứu đặt bàn</a>
+                <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../reviews/index.html">Đánh giá món ăn</a>
+                <a class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../booking/lookup.html">Tra cứu / hủy</a>
                 <a href="../auth/login_register.html" data-customer-account data-profile-href="../profile/index.html" data-login-href="../auth/login_register.html" class="rounded-lg px-3 py-2 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high"><span data-customer-link-label>Đăng nhập</span></a>
                 <button type="button" data-customer-logout class="hidden rounded-lg px-3 py-2 text-left text-sm font-medium text-error hover:bg-error-container">Đăng xuất</button>
             </div>
@@ -181,7 +184,7 @@
     <!-- 1. Vùng chứa Giỏ hàng dạng trượt -->
     <div id="menu-cart" data-cart-root></div>
 
-    <!-- 2. ĐÃ BỔ SUNG: Vùng chứa Cửa sổ hiển thị chi tiết món ăn khi bấm nút 3 chấm -->
+    <!-- 2. Vùng chứa Cửa sổ Modal hiển thị chi tiết món ăn khi nhấn vào ảnh -->
     <div id="dish-detail-container" data-dish-detail-root class="fixed inset-0 z-[60] hidden pointer-events-none"></div>
 
     <!-- 3. ĐÃ BỔ SUNG: Vùng chứa các thông báo nhỏ (Toast) góc màn hình -->

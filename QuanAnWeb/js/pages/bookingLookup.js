@@ -2,6 +2,7 @@ import { bookingApi } from '../api/bookingApi.js?auth-session-2';
 // Đã sửa: Import thêm hàm getReservationStatusLabel để dùng hiển thị trạng thái
 import { isReservationCancellable, renderReservationDetails, getReservationStatusLabel } from '../components/bookingView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
+import { realtimeClient } from '../realtime/realtimeClient.js';
 
 const form = document.querySelector('[data-booking-lookup-form]');
 const statusElement = document.querySelector('[data-lookup-status]');
@@ -126,4 +127,23 @@ if (form && statusElement && resultElement) {
             submitButton.disabled = false;
         }
     });
+
+    async function reloadCurrentReservationSilently() {
+        if (!currentReservation) return;
+        const code = form.elements.reservationCode.value.trim().replace(/^#/, '');
+        const phone = form.elements.phone.value.trim();
+        if (!code || !phone) return;
+        try {
+            const reservation = await bookingApi.lookupBooking(code, phone);
+            if (reservation && typeof reservation === 'object') {
+                renderLookupReservation(reservation, code, phone);
+            }
+        } catch (e) {
+            console.debug('Silent lookup reload failed:', e);
+        }
+    }
+
+    realtimeClient.on('ReservationUpdated', reloadCurrentReservationSilently);
+    realtimeClient.on('sync', reloadCurrentReservationSilently);
+    realtimeClient.start().catch(() => {});
 }

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đánh giá món ăn - GustoPOS</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ac2d00",
+                        "on-primary": "#ffffff",
+                        "primary-container": "#d53e0b",
+                        "on-primary-container": "#fffbff",
+                        "secondary": "#546067",
+                        "secondary-container": "#d7e4ec",
+                        "tertiary": "#00685c",
+                        "background": "#f9f9f9",
+                        "surface": "#ffffff",
+                        "surface-variant": "#e2e2e2",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-low": "#f3f3f3",
+                        "surface-container": "#eeeeee",
+                        "surface-container-high": "#e8e8e8",
+                        "surface-container-highest": "#e2e2e2",
+                        "on-surface": "#1a1c1c",
+                        "on-background": "#1a1c1c",
+                        "on-surface-variant": "#5b4139",
+                        "outline-variant": "#e4beb4",
+                        "error": "#ba1a1a"
+                    },
+                    fontFamily: {
+                        "inter": ["Inter", "sans-serif"]
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.fill-active {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased min-h-screen flex flex-col md:flex-row relative">
+
+    <!-- Sidebar Đồng bộ với toàn hệ thống GustoPOS -->
+    <aside class="hidden md:flex flex-col h-screen w-64 fixed left-0 top-0 bg-surface border-r border-outline-variant/60 py-8 shadow-sm z-50">
+        <div class="px-6 mb-8 flex items-center gap-3">
+            <span class="material-symbols-outlined text-primary text-3xl" style="font-variation-settings: 'FILL' 1;">restaurant</span>
+            <div>
+                <h1 class="font-bold text-xl text-primary leading-tight">GustoPOS</h1>
+                <p class="text-xs text-secondary font-medium">Chi nhánh chính</p>
+            </div>
+        </div>
+        <nav class="flex-1 flex flex-col gap-1.5 px-3">
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../../index.html">
+                <span class="material-symbols-outlined">home</span>
+                <span class="text-sm font-medium">Trang chủ web</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../menu/index.html">
+                <span class="material-symbols-outlined">restaurant_menu</span>
+                <span class="text-sm font-medium">Thực đơn</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../booking/index.html">
+                <span class="material-symbols-outlined">table_restaurant</span>
+                <span class="text-sm font-medium">Đặt bàn</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../promotions/index.html">
+                <span class="material-symbols-outlined">local_offer</span>
+                <span class="text-sm font-medium">Khuyến mãi</span>
+            </a>
+            <a class="flex items-center gap-4 bg-primary text-on-primary rounded-lg px-4 py-3 shadow-sm" href="./index.html">
+                <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">rate_review</span>
+                <span class="text-sm font-semibold">Đánh giá món ăn</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../booking/lookup.html">
+                <span class="material-symbols-outlined">search</span>
+                <span class="text-sm font-medium">Tra cứu / hủy</span>
+            </a>
+            <a class="flex items-center gap-4 text-on-surface-variant rounded-lg px-4 py-3 hover:bg-surface-container-high transition-colors" href="../profile/index.html">
+                <span class="material-symbols-outlined">person</span>
+                <span class="text-sm font-medium">Hồ sơ cá nhân</span>
+            </a>
+        </nav>
+        <div class="px-4 mt-auto">
+            <a href="../booking/index.html" class="w-full bg-primary text-on-primary text-sm font-semibold py-3 rounded-lg flex justify-center items-center gap-2 hover:opacity-95 transition-opacity shadow-sm">
+                <span class="material-symbols-outlined text-[18px]">table_restaurant</span> Đặt bàn ngay
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="min-w-0 flex-1 md:ml-64 flex flex-col min-h-screen">
+        <!-- Top App Bar -->
+        <header class="bg-surface-container-lowest/95 backdrop-blur-md shadow-sm flex justify-between items-center w-full px-4 sm:px-6 md:px-10 py-3.5 sm:py-4 sticky top-0 z-40 border-b border-outline-variant/40">
+            <div class="flex items-center gap-2 sm:gap-3">
+                <button class="md:hidden text-on-surface p-2 -ml-2 rounded-lg hover:bg-surface-container-high transition-colors flex items-center justify-center min-w-[44px] min-h-[44px]" type="button" data-mobile-menu-toggle aria-controls="reviews-mobile-navigation" aria-expanded="false" aria-label="Mở điều hướng">
+                    <span class="material-symbols-outlined text-[24px]">menu</span>
+                </button>
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <span class="material-symbols-outlined text-primary text-2xl" style="font-variation-settings: 'FILL' 1;">reviews</span>
+                    <div>
+                        <h2 class="text-base sm:text-lg font-bold text-on-surface leading-tight">Đánh giá &amp; Nhận xét</h2>
+                        <p class="text-xs text-on-surface-variant hidden sm:block">Dữ liệu đánh giá thực tế từ khách hàng GustoPOS</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nút User / Đăng nhập động & Chuông thông báo -->
+            <div class="flex items-center gap-2 sm:gap-3">
+                <div class="relative" id="notification-bell-wrapper">
+                    <button id="btn-notification-bell" data-notification-bell class="relative text-on-surface-variant hover:text-primary transition-colors p-2 rounded-full hover:bg-surface-container-high focus:outline-none focus:ring-2 focus:ring-primary/40 min-w-[44px] min-h-[44px] flex items-center justify-center" title="Thông báo" type="button" aria-label="Thông báo" aria-haspopup="true" aria-expanded="false">
+                        <span class="material-symbols-outlined text-[22px]">notifications</span>
+                        <span data-notification-badge class="hidden absolute top-0.5 right-0.5 min-w-[18px] h-[18px] px-1 bg-primary text-on-primary text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-surface">0</span>
+                    </button>
+                </div>
+                <a href="../profile/index.html" data-customer-account data-profile-href="../profile/index.html" data-login-href="../auth/login_register.html" class="flex items-center gap-2 p-1.5 px-2.5 sm:px-3 hover:bg-surface-container-high rounded-xl transition-colors border border-outline-variant/40">
+                    <div class="w-8 h-8 rounded-full bg-surface-variant flex items-center justify-center overflow-hidden border border-outline-variant">
+                        <img id="review-user-avatar" class="w-full h-full object-cover hidden" alt="Avatar">
+                        <span id="review-user-avatar-fallback" class="material-symbols-outlined text-on-surface-variant text-[18px]">person</span>
+                    </div>
+                    <span id="review-user-name" data-customer-name class="text-xs font-semibold text-on-surface hidden sm:inline">Tài khoản</span>
+                </a>
+            </div>
+        </header>
+
+        <!-- Mobile Navigation Drawer -->
+        <nav id="reviews-mobile-navigation" data-mobile-menu class="hidden border-b border-outline-variant/40 bg-surface-container-lowest p-4 md:hidden shadow-sm sticky top-[65px] sm:top-[73px] z-40" aria-label="Điều hướng chính">
+            <div class="grid gap-1">
+                <a class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../../index.html">Trang chủ</a>
+                <a class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../menu/index.html">Thực đơn</a>
+                <a class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../booking/index.html">Đặt bàn</a>
+                <a class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../promotions/index.html">Khuyến mãi</a>
+                <a class="rounded-lg px-3 py-2.5 text-sm font-semibold text-primary bg-surface-container-high" href="./index.html">Đánh giá món ăn</a>
+                <a class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high" href="../booking/lookup.html">Tra cứu / hủy</a>
+                <a href="../auth/login_register.html" data-customer-account data-profile-href="../profile/index.html" data-login-href="../auth/login_register.html" class="rounded-lg px-3 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-high flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[20px]">account_circle</span>
+                    <span data-customer-link-label>Đăng nhập</span>
+                </a>
+                <button type="button" data-customer-logout class="hidden rounded-lg px-3 py-2.5 text-left text-sm font-medium text-error hover:bg-error-container flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[20px]">logout</span>
+                    Đăng xuất
+                </button>
+            </div>
+        </nav>
+
+        <!-- Page Container -->
+        <div class="p-6 md:p-10 max-w-7xl mx-auto w-full flex-1 space-y-8">
+            <!-- Hero Banner -->
+            <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-primary to-primary-container text-white p-8 md:p-10 shadow-md">
+                <div class="relative z-10 max-w-2xl space-y-3">
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/20 backdrop-blur-sm text-white">
+                        <span class="material-symbols-outlined text-[16px]">verified</span> Minh bạch & Đích thực
+                    </span>
+                    <h2 class="text-2xl md:text-3xl font-extrabold tracking-tight">Món ăn ngon được khách hàng yêu thích</h2>
+                    <p class="text-sm md:text-base text-white/90 leading-relaxed">
+                        Toàn bộ điểm đánh giá và nhận xét được tổng hợp từ thực khách đã đặt món, thanh toán và thưởng thức thực tế tại nhà hàng.
+                    </p>
+                </div>
+                <!-- Background decorative icon -->
+                <span class="material-symbols-outlined absolute -right-6 -bottom-8 text-[180px] text-white/10 select-none pointer-events-none" style="font-variation-settings: 'FILL' 1;">dinner_dining</span>
+            </div>
+
+            <!-- Tab Navigation Header -->
+            <div class="flex items-center border-b border-outline-variant/60 gap-4 sm:gap-8 overflow-x-auto">
+                <button type="button" id="tab-btn-top-dishes" class="tab-btn flex items-center gap-2 pb-3.5 text-sm font-bold border-b-2 border-primary text-primary transition whitespace-nowrap">
+                    <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">star</span>
+                    <span>Món được đánh giá ngon</span>
+                </button>
+                <button type="button" id="tab-btn-my-reviewable" class="tab-btn flex items-center gap-2 pb-3.5 text-sm font-semibold border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition whitespace-nowrap">
+                    <span class="material-symbols-outlined text-[20px]">rate_review</span>
+                    <span>Món bạn có thể đánh giá</span>
+                    <span id="badge-my-reviewable-count" class="hidden px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary">0</span>
+                </button>
+                <button type="button" id="tab-btn-moderation" class="tab-btn hidden items-center gap-2 pb-3.5 text-sm font-semibold border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition whitespace-nowrap">
+                    <span class="material-symbols-outlined text-[20px]">admin_panel_settings</span>
+                    <span>Kiểm duyệt đánh giá</span>
+                    <span id="badge-pending-count" class="hidden px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500 text-white">0</span>
+                </button>
+            </div>
+
+            <!-- ============================================================== -->
+            <!-- TAB 1: MÓN ĂN ĐƯỢC ĐÁNH GIÁ NGON (TOP RATED DISHES) -->
+            <!-- ============================================================== -->
+            <section id="pane-top-dishes" class="space-y-6">
+                <!-- Filter Bar -->
+                <div class="bg-surface-container-lowest p-4 md:p-5 rounded-2xl border border-outline-variant/60 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
+                    <div class="relative w-full md:w-80">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">search</span>
+                        <input type="search" id="input-search-dish" placeholder="Tìm tên món ăn..." class="w-full pl-10 pr-4 py-2.5 bg-surface-container-low border border-outline-variant/60 rounded-xl text-sm text-on-surface placeholder:text-on-surface-variant/60 focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition">
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
+                        <div class="flex items-center gap-2">
+                            <label for="select-category" class="text-xs font-semibold text-on-surface-variant whitespace-nowrap">Danh mục:</label>
+                            <select id="select-category" class="bg-surface-container-low border border-outline-variant/60 rounded-xl px-3 py-2 text-sm text-on-surface focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition">
+                                <option value="">Tất cả danh mục</option>
+                            </select>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <label for="select-sort" class="text-xs font-semibold text-on-surface-variant whitespace-nowrap">Sắp xếp:</label>
+                            <select id="select-sort" class="bg-surface-container-low border border-outline-variant/60 rounded-xl px-3 py-2 text-sm text-on-surface focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition">
+                                <option value="highest_rating">⭐ Điểm đánh giá cao nhất</option>
+                                <option value="most_reviewed">🔥 Nhiều đánh giá nhất</option>
+                                <option value="name">Tên món (A - Z)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dishes Grid / Container -->
+                <div id="top-dishes-container" class="min-h-[300px]">
+                    <!-- Rendered by reviews.js -->
+                </div>
+            </section>
+
+            <!-- ============================================================== -->
+            <!-- TAB 2: MÓN ĂN BẠN CÓ THỂ ĐÁNH GIÁ (MY REVIEWABLE ITEMS) -->
+            <!-- ============================================================== -->
+            <section id="pane-my-reviewable" class="space-y-6 hidden">
+                <!-- Logged-in Header & Filter -->
+                <div id="my-reviewable-header" class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-lg font-bold text-on-surface">Món ăn trong đơn hàng của bạn</h3>
+                        <p class="text-xs text-on-surface-variant mt-0.5">Chỉ những món đã được phục vụ và hoàn tất thanh toán mới đủ điều kiện đánh giá</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" data-my-filter="all" class="my-filter-btn px-3.5 py-1.5 rounded-lg text-xs font-bold bg-primary text-on-primary shadow-sm transition">Tất cả</button>
+                        <button type="button" data-my-filter="unreviewed" class="my-filter-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-on-surface-variant hover:text-on-surface transition">Chưa đánh giá</button>
+                        <button type="button" data-my-filter="reviewed" class="my-filter-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-on-surface-variant hover:text-on-surface transition">Đã đánh giá</button>
+                    </div>
+                </div>
+
+                <!-- Content Container -->
+                <div id="my-reviewable-container" class="min-h-[300px]">
+                    <!-- Rendered by reviews.js -->
+                </div>
+            </section>
+
+            <!-- ============================================================== -->
+            <!-- TAB 3: KIỂM DUYỆT ĐÁNH GIÁ (MODERATION - DÀNH CHO QUẢN LÝ) -->
+            <!-- ============================================================== -->
+            <section id="pane-moderation" class="space-y-6 hidden">
+                <div class="bg-surface-container-lowest p-5 rounded-2xl border border-outline-variant/60 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+                            <span class="material-symbols-outlined text-primary">security</span>
+                            <span>Kiểm duyệt phản hồi thực khách</span>
+                        </h3>
+                        <p class="text-xs text-on-surface-variant mt-0.5">Xử lý đánh giá chứa từ ngữ nhạy cảm, phê duyệt nội dung công khai hoặc ẩn đánh giá vi phạm.</p>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button type="button" data-mod-filter="" class="mod-filter-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-primary text-on-primary">Tất cả</button>
+                        <button type="button" data-mod-filter="Pending" class="mod-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-amber-800 hover:bg-amber-100">Chờ duyệt</button>
+                        <button type="button" data-mod-filter="Public" class="mod-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-emerald-800 hover:bg-emerald-100">Đã công khai</button>
+                        <button type="button" data-mod-filter="Rejected" class="mod-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-rose-800 hover:bg-rose-100">Từ chối</button>
+                        <button type="button" data-mod-filter="Hidden" class="mod-filter-btn px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-neutral-700 hover:bg-neutral-200">Đã ẩn</button>
+                    </div>
+                </div>
+
+                <div id="moderation-container" class="min-h-[300px]">
+                    <!-- Rendered by reviews.js -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- ============================================================== -->
+    <!-- MODAL 1: XEM CHI TIẾT ĐÁNH GIÁ MÓN ĂN -->
+    <!-- ============================================================== -->
+    <div id="modal-dish-reviews" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm hidden" role="dialog" aria-modal="true">
+        <div class="bg-surface-container-lowest max-w-2xl w-full rounded-3xl shadow-2xl border border-outline-variant overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- Header Modal -->
+            <div class="p-6 border-b border-outline-variant/40 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <img id="modal-dish-img" class="w-14 h-14 rounded-xl object-cover border border-outline-variant" src="" alt="Món ăn">
+                    <div>
+                        <h3 id="modal-dish-title" class="font-bold text-lg text-on-surface">Chi tiết đánh giá món ăn</h3>
+                        <p id="modal-dish-category" class="text-xs text-primary font-semibold">Danh mục</p>
+                    </div>
+                </div>
+                <button type="button" id="btn-close-dish-modal" class="w-9 h-9 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+
+            <!-- Body Modal -->
+            <div class="p-6 overflow-y-auto space-y-6 flex-1">
+                <!-- Rating Summary Box -->
+                <div class="bg-surface-container-low rounded-2xl p-5 border border-outline-variant/60 flex flex-col sm:flex-row items-center gap-6">
+                    <div class="text-center sm:text-left sm:border-r sm:border-outline-variant/60 sm:pr-6 shrink-0">
+                        <div class="text-4xl font-extrabold text-on-surface" id="modal-dish-avg">0.0</div>
+                        <div class="flex items-center justify-center sm:justify-start gap-1 my-1 text-amber-400" id="modal-dish-stars">
+                            <!-- 5 stars -->
+                        </div>
+                        <p class="text-xs text-on-surface-variant font-medium" id="modal-dish-total">0 đánh giá thực tế</p>
+                    </div>
+                    <!-- Rating Breakdown Bars -->
+                    <div class="flex-1 w-full space-y-1.5" id="modal-rating-breakdown">
+                        <!-- Bars 5, 4, 3, 2, 1 -->
+                    </div>
+                </div>
+
+                <!-- Filter by Star -->
+                <div class="flex items-center justify-between gap-2 border-b border-outline-variant/40 pb-3 flex-wrap">
+                    <div class="flex items-center gap-1.5 flex-wrap" id="modal-star-filter-buttons">
+                        <button type="button" data-star="" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-bold bg-primary text-on-primary">Tất cả</button>
+                        <button type="button" data-star="5" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-variant">5 sao</button>
+                        <button type="button" data-star="4" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-variant">4 sao</button>
+                        <button type="button" data-star="3" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-variant">3 sao</button>
+                        <button type="button" data-star="2" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-variant">2 sao</button>
+                        <button type="button" data-star="1" class="star-filter-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-surface-container text-on-surface hover:bg-surface-variant">1 sao</button>
+                    </div>
+                    <select id="modal-dish-sort" class="text-xs bg-surface-container border border-outline-variant/60 rounded-lg px-2.5 py-1 text-on-surface focus:outline-none">
+                        <option value="newest">Mới nhất</option>
+                        <option value="oldest">Cũ nhất</option>
+                    </select>
+                </div>
+
+                <!-- Reviews List -->
+                <div id="modal-reviews-list" class="space-y-4">
+                    <!-- Reviews rendered dynamically -->
+                </div>
+
+                <!-- Load More Button -->
+                <div id="modal-load-more-container" class="text-center pt-2 hidden">
+                    <button type="button" id="btn-modal-load-more" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-surface-container hover:bg-surface-variant text-on-surface transition">
+                        <span>Tải thêm đánh giá</span>
+                        <span class="material-symbols-outlined text-[16px]">expand_more</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- MODAL 2: FORM VIẾT / CHỈNH SỬA ĐÁNH GIÁ MÓN ĂN -->
+    <!-- ============================================================== -->
+    <div id="modal-review-form" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm hidden" role="dialog" aria-modal="true">
+        <div class="bg-surface-container-lowest max-w-lg w-full rounded-3xl shadow-2xl border border-outline-variant overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-outline-variant/40 flex items-center justify-between">
+                <div>
+                    <h3 id="form-modal-title" class="font-bold text-lg text-on-surface">Đánh giá món ăn</h3>
+                    <p id="form-modal-subtitle" class="text-xs text-on-surface-variant">Đơn hàng #0</p>
+                </div>
+                <button type="button" id="btn-close-form-modal" class="w-9 h-9 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+
+            <form id="dish-review-form" class="p-6 space-y-5 overflow-y-auto">
+                <!-- Star Rating -->
+                <div>
+                    <label class="block text-sm font-semibold text-on-surface mb-2">Chấm điểm chất lượng món:</label>
+                    <div class="flex items-center gap-2" id="form-star-picker-container">
+                        <!-- Star picker buttons -->
+                    </div>
+                    <span id="form-star-label" class="text-xs font-bold text-primary mt-1.5 inline-block">Tuyệt vời (5 sao)</span>
+                </div>
+
+                <!-- Comment Input -->
+                <div>
+                    <label for="form-review-comment" class="block text-sm font-semibold text-on-surface mb-1.5">
+                        Nhận xét của bạn <span class="text-xs font-normal text-on-surface-variant">(không bắt buộc)</span>:
+                    </label>
+                    <textarea id="form-review-comment" rows="4" maxlength="1000" placeholder="Hãy chia sẻ cảm nhận về hương vị, độ tươi ngon và cách trình bày món ăn này..." class="w-full rounded-2xl border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface placeholder:text-on-surface-variant/60 focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition"></textarea>
+                    <div class="flex justify-between items-center text-xs text-on-surface-variant mt-1 px-1">
+                        <span id="form-review-error" class="text-error font-medium"></span>
+                        <span><span id="form-review-char-count">0</span>/1000</span>
+                    </div>
+                </div>
+
+                <div class="rounded-xl bg-surface-container-low p-3.5 border border-outline-variant/40 text-[11px] text-on-surface-variant flex items-start gap-2">
+                    <span class="material-symbols-outlined text-secondary text-[16px] shrink-0 mt-0.5">verified_user</span>
+                    <span>Đánh giá văn minh giúp xây dựng cộng đồng ẩm thực chất lượng. Các nhận xét vi phạm từ ngữ sẽ được bộ lọc tự động kiểm duyệt.</span>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="pt-2 flex justify-end gap-3">
+                    <button type="button" id="btn-cancel-form" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-on-surface-variant hover:bg-surface-container transition">
+                        Hủy
+                    </button>
+                    <button type="submit" id="btn-submit-review" class="inline-flex items-center gap-2 bg-primary text-on-primary text-sm font-semibold px-6 py-2.5 rounded-xl shadow-sm hover:opacity-95 disabled:opacity-50 transition">
+                        <span class="material-symbols-outlined text-[18px]">send</span>
+                        <span id="btn-submit-text">Gửi đánh giá</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none" aria-live="polite"></div>
+
+    <script type="module" src="../../js/pages/reviews.js"></script>
+</body>
+</html>
+

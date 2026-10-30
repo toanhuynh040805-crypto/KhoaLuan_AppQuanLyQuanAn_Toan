@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Models;
 using Microsoft.AspNetCore.Authorization;
+using System.Data;
 
 namespace QuanAnBackend.Controllers;
 
@@ -90,6 +91,40 @@ public class MenuController : ControllerBase
         return Ok(items);
     }
 
+    [HttpGet("featured")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetFeatured()
+    {
+        var items = await _db.MenuItems
+            .AsNoTracking()
+            .Where(menuItem => menuItem.IsAvailable)
+            .Select(menuItem => new
+            {
+                Id = menuItem.MenuItemId,
+                Name = menuItem.ItemName,
+                menuItem.Price,
+                DepartmentId = menuItem.StationId ?? 0,
+                DepartmentName = menuItem.Station != null ? menuItem.Station.StationName : "",
+                menuItem.CategoryId,
+                CategoryName = menuItem.Category != null ? menuItem.Category.CategoryName : "",
+                Category = menuItem.Category != null ? menuItem.Category.CategoryName : "",
+                menuItem.Unit,
+                menuItem.Description,
+                menuItem.ImageUrl,
+                menuItem.IsAvailable,
+                TotalQuantitySold = _db.OrderItems
+                    .Where(orderItem => orderItem.MenuItemId == menuItem.MenuItemId &&
+                        orderItem.Status != KitchenStatus.DaHuy)
+                    .Sum(orderItem => (int?)orderItem.Quantity) ?? 0
+            })
+            .OrderByDescending(menuItem => menuItem.TotalQuantitySold)
+            .ThenBy(menuItem => menuItem.Id)
+            .Take(3)
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
     [HttpGet("categories")]
     [AllowAnonymous]
     public async Task<IActionResult> GetCategoryNames()
@@ -121,6 +156,42 @@ public class MenuController : ControllerBase
 
         if (m is null) return NotFound();
 
+        var connection = _db.Database.GetDbConnection();
+        var closeConnection = connection.State != ConnectionState.Open;
+        var ingredients = new List<string>();
+        try
+        {
+            if (closeConnection) await connection.OpenAsync();
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT ingredient.IngredientName
+                FROM MenuItemIngredients AS recipe
+                INNER JOIN Ingredients AS ingredient ON ingredient.IngredientId = recipe.IngredientId
+                WHERE recipe.MenuItemId = @MenuItemId
+                ORDER BY ingredient.IngredientName;
+                """;
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@MenuItemId";
+            parameter.Value = id;
+            command.Parameters.Add(parameter);
+
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                if (!reader.IsDBNull(0)) ingredients.Add(reader.GetString(0));
+            }
+        }
+        catch
+        {
+            // Nếu bảng MenuItemIngredients chưa tồn tại hoặc không có nguyên liệu, bỏ qua lỗi
+        }
+        finally
+        {
+            if (closeConnection && connection.State == ConnectionState.Open)
+                await connection.CloseAsync();
+        }
+
         return Ok(new
         {
             Id = m.MenuItemId,
@@ -134,7 +205,8 @@ public class MenuController : ControllerBase
             m.Unit,
             m.Description,
             m.ImageUrl,
-            m.IsAvailable
+            m.IsAvailable,
+            Ingredients = ingredients
         });
     }
 

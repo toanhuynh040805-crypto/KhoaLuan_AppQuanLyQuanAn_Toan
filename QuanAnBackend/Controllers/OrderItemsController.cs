@@ -24,12 +24,18 @@ public class OrderItemsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
+    private readonly ILogger<OrderItemsController> _logger;
 
-    public OrderItemsController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications)
+    public OrderItemsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        ILogger<OrderItemsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -232,6 +238,38 @@ public class OrderItemsController : ControllerBase
         {
             await _db.SaveChangesAsync();
 
+            if (item.Order?.CustomerId is int customerId)
+            {
+                var statusLabel = request.NewStatus switch
+                {
+                    KitchenStatus.DangCheBien => "đang được chế biến",
+                    KitchenStatus.DaCheBien => "đã chế biến xong",
+                    KitchenStatus.DaPhucVu => "đã được phục vụ",
+                    KitchenStatus.DaHuy => "đã bị hủy",
+                    _ => "đã được cập nhật"
+                };
+                await _notifications.CreateForCustomerAsync(
+                    customerId,
+                    "Cập nhật món trong đơn hàng",
+                    $"Món {item.MenuItem?.ItemName ?? "ăn"} trong đơn #{item.OrderId} {statusLabel}.",
+                    NotificationType.DonHang,
+                    $"order-item-status:{item.OrderItemId}:{(int)request.NewStatus}:{DateTime.Now.Ticks}",
+                    "Order",
+                    item.OrderId);
+            }
+
+            try
+            {
+                await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+                {
+                    orderId = item.OrderId
+                });
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Order {OrderId} item status was saved but realtime notification failed.", item.OrderId);
+            }
+
             if (request.NewStatus == KitchenStatus.DaHuy)
             {
                 await _hub.Clients.All.SendAsync("OrderItemCancelled", new
@@ -311,6 +349,38 @@ public class OrderItemsController : ControllerBase
             });
         }
         await _db.SaveChangesAsync();
+
+        var customerId = items.Select(item => item.Order?.CustomerId).FirstOrDefault(id => id.HasValue);
+        if (customerId.HasValue)
+        {
+            var statusLabel = status switch
+            {
+                KitchenStatus.DangCheBien => "đang được chế biến",
+                KitchenStatus.DaCheBien => "đã chế biến xong",
+                KitchenStatus.DaPhucVu => "đã được phục vụ",
+                _ => "đã được cập nhật"
+            };
+            await _notifications.CreateForCustomerAsync(
+                customerId.Value,
+                "Cập nhật các món trong đơn hàng",
+                $"{items.Count} món trong đơn #{orderId} {statusLabel}.",
+                NotificationType.DonHang,
+                $"order-items-status:{orderId}:{(int)status}:{DateTime.UtcNow.Ticks}",
+                "Order",
+                orderId);
+        }
+
+        try
+        {
+            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            {
+                orderId
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Order {OrderId} items status was saved but realtime notification failed.", orderId);
+        }
 
         foreach (var item in items) await BroadcastItemStatusAsync(item);
         return Ok(new { updated = items.Count });

@@ -43,13 +43,20 @@ public class OrdersController : ControllerBase
     private readonly OrderRoutingService _routingService;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
+    private readonly ILogger<OrdersController> _logger;
 
-    public OrdersController(AppDbContext db, OrderRoutingService routingService, IHubContext<OrderHub> hub, NotificationService notifications)
+    public OrdersController(
+        AppDbContext db,
+        OrderRoutingService routingService,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        ILogger<OrdersController> logger)
     {
         _db = db;
         _routingService = routingService;
         _hub = hub;
         _notifications = notifications;
+        _logger = logger;
     }
 
     [HttpPost("add-items")]
@@ -599,6 +606,22 @@ public class OrdersController : ControllerBase
 
         await _db.SaveChangesAsync();
 
+        if (request.ReservationId.HasValue)
+        {
+            var checkedInReservation = await _db.Reservations.FindAsync(request.ReservationId.Value);
+            if (checkedInReservation?.CustomerId is int reservationCustomerId)
+            {
+                await _notifications.CreateForCustomerAsync(
+                    reservationCustomerId,
+                    "Đã nhận bàn",
+                    "Nhà hàng đã ghi nhận bạn đến nhận bàn.",
+                    NotificationType.DatBan,
+                    $"reservation-status:{checkedInReservation.ReservationId}:{(int)ReservationStatus.DaXacNhan}:{(int)ReservationStatus.DaNhanBan}",
+                    "Reservation",
+                    checkedInReservation.ReservationId);
+            }
+        }
+
         await _hub.Clients.All.SendAsync("TableStatusUpdated", new
         {
             TableId = table.TableId,
@@ -736,13 +759,14 @@ public class OrdersController : ControllerBase
             });
         }
 
+        var finishedReservations = new List<Reservation>();
         if (order.Table is not null && order.Table.Status == TableStatus.DangPhucVu)
         {
             order.Table.Status = TableStatus.Trong;
 
             // FIX: giong PaymentsController.Create - huy don giua chung cung phai
             // dong luot dat ban tuong ung, khong de no ket dinh o DaNhanBan mai.
-            var finishedReservations = await _db.Reservations
+            finishedReservations = await _db.Reservations
                 .Where(r => r.TableId == order.Table.TableId && r.Status == ReservationStatus.DaNhanBan)
                 .ToListAsync();
             foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
@@ -774,6 +798,41 @@ public class OrdersController : ControllerBase
             new[] { "QuanLy", "Bep" },
             relatedEntityType: "Order",
             relatedEntityId: order.OrderId);
+
+        if (order.CustomerId.HasValue)
+        {
+            await _notifications.CreateForCustomerAsync(
+                order.CustomerId.Value,
+                "Đơn hàng đã bị hủy",
+                $"Đơn hàng #{order.OrderId} đã được nhà hàng hủy.",
+                NotificationType.DonHang,
+                $"order-cancelled:{order.OrderId}",
+                "Order",
+                order.OrderId);
+        }
+        foreach (var reservation in finishedReservations.Where(reservation => reservation.CustomerId.HasValue))
+        {
+            await _notifications.CreateForCustomerAsync(
+                reservation.CustomerId!.Value,
+                "Đặt bàn đã hoàn tất",
+                "Lượt đặt bàn của bạn đã hoàn tất.",
+                NotificationType.DatBan,
+                $"reservation-status:{reservation.ReservationId}:{(int)ReservationStatus.DaNhanBan}:{(int)ReservationStatus.HoanTat}",
+                "Reservation",
+                reservation.ReservationId);
+        }
+
+        try
+        {
+            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            {
+                orderId = order.OrderId
+            });
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to broadcast order cancellation to order-management group for order {OrderId}", order.OrderId);
+        }
 
         return Ok(new { Id = order.OrderId, Status = order.Status });
     }
@@ -1324,6 +1383,12 @@ public class OrdersController : ControllerBase
 
         if (order is null) return NotFound();
 
+        var paymentStatus = await _db.Payments
+            .Where(payment => payment.Invoice != null && payment.Invoice.OrderId == order.OrderId)
+            .OrderByDescending(payment => payment.PaymentTime)
+            .Select(payment => payment.Status.ToString())
+            .FirstOrDefaultAsync();
+
         return Ok(new
         {
             Id = order.OrderId,
@@ -1343,6 +1408,7 @@ public class OrdersController : ControllerBase
                 MemberLevel = order.Customer.MemberLevel
             },
             Status = order.Status,
+            PaymentStatus = paymentStatus,
             CreatedAt = order.OrderTime,
             order.TotalAmount,
             OrderItems = order.OrderItems.Select(oi => new

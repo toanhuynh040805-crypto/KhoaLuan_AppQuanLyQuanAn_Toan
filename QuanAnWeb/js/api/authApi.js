@@ -15,5 +15,12 @@ export const authApi = {
     },
     forgotPassword: async (email) => {
         return await apiClient.post('/auth/forgot-password', { email });
+    },
+    resetPassword: async (token, newPassword) => {
+        return await apiClient.post('/auth/reset-password', { token, newPassword });
+    },
+    completeGoogleProfile: async (profileData) => {
+        // profileData: { email, fullName, phone }
+        return await apiClient.post('/auth/google/complete-profile', profileData);
     }
 };
