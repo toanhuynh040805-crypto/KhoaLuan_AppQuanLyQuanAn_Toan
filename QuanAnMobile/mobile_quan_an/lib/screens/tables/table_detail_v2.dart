@@ -14,6 +14,7 @@ import '../../services/api_client.dart';
 import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
@@ -69,6 +70,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
+  Timer? _relativeTimeTimer;
   bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
@@ -138,12 +140,20 @@ class _TableDetailV2State extends State<TableDetailV2> {
         (_) => unawaited(_heartbeatTableLock()),
       );
     }
+
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
     _paymentRequestLockTimer?.cancel();
+    _relativeTimeTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
@@ -387,6 +397,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: oldItem.unitPrice,
           status: event.status,
           note: oldItem.note,
+          createdAt: oldItem.createdAt,
           isTakeaway: oldItem.isTakeaway,
         );
       }
@@ -826,6 +837,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: current.unitPrice,
           status: status,
           note: current.note,
+          createdAt: current.createdAt,
           isTakeaway: current.isTakeaway,
         );
       });
@@ -874,6 +886,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
             unitPrice: item.unitPrice,
             status: 'Đã phục vụ',
             note: item.note,
+            createdAt: item.createdAt,
             isTakeaway: item.isTakeaway,
           );
         }).toList();
@@ -941,6 +954,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
         unitPrice: current.unitPrice,
         status: current.status,
         note: current.note,
+        createdAt: current.createdAt,
         isTakeaway:
             current.isTakeaway,
       );
@@ -2079,6 +2093,32 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       fontSize: 13,
                     ),
                   ),
+                  if (item.createdAt != null) ...[
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_outlined,
+                          size: 13,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Gọi lúc ${formatClockTime(item.createdAt)} • '
+                            '${formatTimeAgo(item.createdAt)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (item.note != null &&
                       item.note!
                           .trim()
