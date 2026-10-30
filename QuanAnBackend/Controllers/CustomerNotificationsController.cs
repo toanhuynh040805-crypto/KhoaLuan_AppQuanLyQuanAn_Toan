@@ -3,12 +3,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 
 namespace QuanAnBackend.Controllers;
 
 [ApiController]
 [Route("api/customers/me/notifications")]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public sealed class CustomerNotificationsController : ControllerBase
 {
     private readonly AppDbContext _db;
