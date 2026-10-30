@@ -122,6 +122,7 @@ class RealtimeService {
   HubConnection? _connection;
   String? _employeeCode;
   String? _roleKey;
+  String? _departmentName;
 
   // Khi Thu ngân/Quản lý vừa tự thanh toán, backend phát PaymentCompleted và
   // TableStatusUpdated gần như cùng lúc. TableScreen nằm dưới route chi tiết
@@ -173,10 +174,14 @@ class RealtimeService {
   Future<void> start({
     required String employeeCode,
     required String roleKey,
+    String? departmentName,
   }) async {
+    final String normalizedDepartment = departmentName?.trim() ?? '';
+
     if (_connection != null &&
         _employeeCode == employeeCode &&
-        _roleKey == roleKey) {
+        _roleKey == roleKey &&
+        (_departmentName ?? '') == normalizedDepartment) {
       return;
     }
 
@@ -184,6 +189,7 @@ class RealtimeService {
 
     _employeeCode = employeeCode;
     _roleKey = roleKey;
+    _departmentName = normalizedDepartment;
 
     final HttpConnectionOptions httpOptions = HttpConnectionOptions(
       accessTokenFactory: () async => _apiClient.accessToken ?? '',
@@ -324,6 +330,7 @@ class RealtimeService {
           connection,
           employeeCode,
           roleKey,
+          normalizedDepartment,
         );
       },
     );
@@ -336,6 +343,7 @@ class RealtimeService {
       connection,
       employeeCode,
       roleKey,
+      normalizedDepartment,
     );
   }
 
@@ -343,6 +351,7 @@ class RealtimeService {
     HubConnection connection,
     String employeeCode,
     String roleKey,
+    String departmentName,
   ) async {
     await connection.invoke(
       'JoinEmployeeGroup',
@@ -351,11 +360,22 @@ class RealtimeService {
       ],
     );
 
-    if (roleKey.trim().isNotEmpty) {
+    final String normalizedRole = roleKey.trim();
+    if (normalizedRole.isNotEmpty) {
+      await connection.invoke(
+        'JoinRoleGroup',
+        args: <Object>[
+          normalizedRole,
+        ],
+      );
+    }
+
+    final String normalizedDepartment = departmentName.trim();
+    if (normalizedDepartment.isNotEmpty) {
       await connection.invoke(
         'JoinDepartmentGroup',
         args: <Object>[
-          roleKey,
+          normalizedDepartment,
         ],
       );
     }
@@ -367,6 +387,7 @@ class RealtimeService {
     _connection = null;
     _employeeCode = null;
     _roleKey = null;
+    _departmentName = null;
     _recentLocalPaymentTables.clear();
 
     if (connection != null) {
