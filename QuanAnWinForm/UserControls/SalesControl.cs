@@ -119,10 +119,21 @@ public partial class SalesControl : UserControl
     {
         try
         {
-            _allMenuItems = (await _api.GetMenuAsync())
-                .OrderBy(m => m.CategoryId).ThenBy(m => m.Id).ToList();
-            await RefreshTablesAsync();
-            await RefreshCampaignsAsync();
+            // Ba nguồn dữ liệu độc lập: tải song song để màn POS mở nhanh hơn.
+            var menuTask = _api.GetMenuAsync();
+            var tablesTask = RefreshTablesAsync();
+            var campaignsTask = RefreshCampaignsAsync();
+
+            await Task.WhenAll(menuTask, tablesTask, campaignsTask);
+
+            if (IsDisposed || Disposing)
+                return;
+
+            _allMenuItems = (await menuTask)
+                .OrderBy(m => m.CategoryId)
+                .ThenBy(m => m.Id)
+                .ToList();
+
             RenderCategoryTabs();
             FilterCategory(_selectedCategoryId);
 
@@ -131,9 +142,14 @@ public partial class SalesControl : UserControl
             else if (_preselectedTakeawayOrderId == 0)
                 SetMode(takeaway: true); // 0 = mở sẵn chế độ Mang về để tạo đơn mới
         }
+        catch (OperationCanceledException)
+        {
+            // Chuyển màn hình trong lúc đang tải: không hiện popup lỗi.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được dữ liệu: {ex.Message}");
+            if (!IsDisposed && !Disposing && Visible)
+                MessageBox.Show($"Không tải được dữ liệu: {ex.Message}");
         }
     }
 
