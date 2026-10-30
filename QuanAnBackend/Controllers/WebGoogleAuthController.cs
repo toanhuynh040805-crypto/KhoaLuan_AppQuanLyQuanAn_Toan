@@ -20,18 +20,15 @@ public class WebGoogleAuthController : ControllerBase
     private const string DefaultReturnPage = "pages/profile/index.html";
 
     private readonly AppDbContext _context;
-    private readonly JwtTokenService _jwtTokenService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<WebGoogleAuthController> _logger;
 
     public WebGoogleAuthController(
         AppDbContext context,
-        JwtTokenService jwtTokenService,
         IConfiguration configuration,
         ILogger<WebGoogleAuthController> logger)
     {
         _context = context;
-        _jwtTokenService = jwtTokenService;
         _configuration = configuration;
         _logger = logger;
     }
@@ -100,13 +97,7 @@ public class WebGoogleAuthController : ControllerBase
 
         _logger.LogInformation("[Google Auth] Đăng nhập thành công cho Customer ID: {CustomerId}, Email: {Email}.", customer.CustomerId, normalizedEmail);
 
-        var userForToken = new User
-        {
-            UserId = customer.CustomerId,
-            Username = customer.Email ?? customer.Phone ?? normalizedEmail,
-            FullName = customer.FullName ?? fullName
-        };
-        var (token, _) = _jwtTokenService.GenerateToken(userForToken, new List<string> { "Customer" });
+        var (token, _) = CustomerTokens.CreateAccessToken(_configuration, customer);
 
         var encodedToken = Uri.EscapeDataString(token);
         var separator = safeReturnPage.Contains('?') ? "&" : "?";
@@ -158,13 +149,7 @@ public class WebGoogleAuthController : ControllerBase
 
         _logger.LogInformation("[Google Auth] Đăng ký tài khoản mới thành công: Customer ID {CustomerId}, Phone {Phone}, Email {Email}.", newCustomer.CustomerId, trimmedPhone, trimmedEmail);
 
-        var userForToken = new User
-        {
-            UserId = newCustomer.CustomerId,
-            Username = newCustomer.Email ?? newCustomer.Phone ?? trimmedEmail,
-            FullName = newCustomer.FullName
-        };
-        var (token, _) = _jwtTokenService.GenerateToken(userForToken, new List<string> { "Customer" });
+        var (token, _) = CustomerTokens.CreateAccessToken(_configuration, newCustomer);
 
         return Ok(new
         {
