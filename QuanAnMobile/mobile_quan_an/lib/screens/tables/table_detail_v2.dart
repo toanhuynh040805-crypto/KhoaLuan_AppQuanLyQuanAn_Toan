@@ -1578,6 +1578,42 @@ class _TableDetailV2State extends State<TableDetailV2> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _handleTopMenuAction(String value) async {
+    if (_closingAfterPayment) return;
+
+    switch (value) {
+      case 'receipt':
+        await _openReceiptPreview();
+        return;
+      case 'kitchen':
+        await _openKitchenRequests();
+        return;
+      case 'member':
+        await _openCustomerMembership();
+        return;
+      case 'history':
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderLogScreen(
+              tableId: currentTable.id,
+              tableName: _displayTableName(),
+            ),
+          ),
+        );
+        return;
+      case 'clear':
+        await _clearTableAndRelease();
+        return;
+      case 'transfer':
+      case 'merge':
+      case 'link':
+      case 'split':
+        await _handleTableMenuAction(value);
+        return;
+    }
+  }
+
   Color _statusColor(String status) {
     switch (status) {
       case 'Đang chế biến':
@@ -1610,8 +1646,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 : () => Navigator.pop(context, _result()),
             icon: const Icon(Icons.arrow_back),
           ),
+          titleSpacing: 0,
           title: Text(
             _displayTableName(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: AppTheme.textColor,
               fontWeight: FontWeight.bold,
@@ -1619,70 +1658,110 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
-            if (_canCompletePayment &&
-                orderItems.isNotEmpty &&
-                !_closingAfterPayment)
-              IconButton(
-                tooltip: 'Xem / in bill tạm tính',
-                onPressed:
-                    _openReceiptPreview,
-                icon: const Icon(
-                  Icons.print_outlined,
-                ),
-              ),
-            if (_canOrder && orderItems.isNotEmpty && !_closingAfterPayment)
-              IconButton(
-                tooltip: 'Yêu cầu xuống bếp',
-                onPressed: _openKitchenRequests,
-                icon: const Icon(Icons.restaurant),
-              ),
-            if (_canOrder && _isTableActive && !_closingAfterPayment)
-              IconButton(
-                tooltip: 'Khách hàng / Thành viên',
-                onPressed: _openCustomerMembership,
-                icon: Icon(
-                  _memberCustomer == null
-                      ? Icons.person_add_alt_1_outlined
-                      : Icons.person_outline,
-                  color: _memberCustomer == null ? null : Colors.green,
-                ),
-              ),
-            if (_canManageTables && !currentTable.isTakeaway)
-              IconButton(
-                tooltip: 'Nhật ký Order',
-                onPressed: _closingAfterPayment
-                    ? null
-                    : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => OrderLogScreen(
-                            tableId: currentTable.id,
-                            tableName: _displayTableName(),
-                          ),
-                        ),
+            PopupMenuButton<String>(
+              tooltip: 'Thao tác',
+              enabled: !_closingAfterPayment,
+              onSelected: _handleTopMenuAction,
+              itemBuilder: (context) => [
+                if (_canCompletePayment && orderItems.isNotEmpty)
+                  const PopupMenuItem(
+                    value: 'receipt',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.print_outlined),
+                      title: Text('Xem / in bill'),
+                    ),
+                  ),
+                if (_canOrder && orderItems.isNotEmpty)
+                  const PopupMenuItem(
+                    value: 'kitchen',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.restaurant_outlined),
+                      title: Text('Yêu cầu xuống bếp'),
+                    ),
+                  ),
+                if (_canOrder && _isTableActive)
+                  PopupMenuItem(
+                    value: 'member',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(
+                        _memberCustomer == null
+                            ? Icons.person_add_alt_1_outlined
+                            : Icons.person_outline,
+                        color: _memberCustomer == null ? null : Colors.green,
                       ),
-                icon: const Icon(Icons.history_outlined),
-              ),
-            if (_canManageTables && _isTableActive)
-              IconButton(
-                tooltip: currentTable.isTakeaway
-                    ? 'Xóa toàn bộ món và hủy đơn'
-                    : 'Xóa toàn bộ món và trả bàn',
-                onPressed: _closingAfterPayment ? null : _clearTableAndRelease,
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-              ),
-            if (_canManageTables && !currentTable.isTakeaway)
-              PopupMenuButton<String>(
-                tooltip: 'Thao tác bàn',
-                enabled: _isTableActive && !_tableActionRunning,
-                onSelected: _handleTableMenuAction,
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'transfer', child: Text('Chuyển bàn')),
-                  PopupMenuItem(value: 'merge', child: Text('Gộp đơn')),
-                  PopupMenuItem(value: 'link', child: Text('Ghép bàn')),
-                  PopupMenuItem(value: 'split', child: Text('Tách bàn')),
+                      title: const Text('Khách hàng / Thành viên'),
+                    ),
+                  ),
+                if (_canManageTables && !currentTable.isTakeaway)
+                  const PopupMenuItem(
+                    value: 'history',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.history_outlined),
+                      title: Text('Nhật ký Order'),
+                    ),
+                  ),
+                if (_canManageTables &&
+                    _isTableActive &&
+                    !currentTable.isTakeaway) ...[
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'transfer',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.swap_horiz),
+                      title: Text('Chuyển bàn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'merge',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.call_merge),
+                      title: Text('Gộp đơn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'link',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.link),
+                      title: Text('Ghép bàn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'split',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.call_split),
+                      title: Text('Tách bàn'),
+                    ),
+                  ),
                 ],
-              ),
+                if (_canManageTables && _isTableActive) ...[
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'clear',
+                    child: ListTile(
+                      dense: true,
+                      leading: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.redAccent,
+                      ),
+                      title: Text(
+                        currentTable.isTakeaway
+                            ? 'Xóa món và hủy đơn'
+                            : 'Xóa món và trả bàn',
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
         body: Column(
@@ -1695,6 +1774,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     _buildTableInfo(),
+                    const SizedBox(height: 10),
+                    _buildSummary(),
                     if (_guestCountEditorOpen) ...[
                       const SizedBox(height: 10),
                       _buildGuestCountEditor(),
@@ -1709,8 +1790,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                           child: _buildOrderItem(entry.key, entry.value),
                         ),
                       ),
-                    const SizedBox(height: 4),
-                    _buildSummary(),
                   ],
                 ),
               ),
@@ -1990,21 +2069,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       fontSize: 13,
                     ),
                   ),
-                  if (canEdit) ...[
-                    const SizedBox(
-                      height: 5,
-                    ),
-                    const Text(
-                      'Chạm vào món để sửa số lượng',
-                      style: TextStyle(
-                        color: AppTheme
-                            .orangeColor,
-                        fontSize: 11,
-                        fontWeight:
-                            FontWeight.w600,
-                      ),
-                    ),
-                  ],
                   if (item.note != null &&
                       item.note!
                           .trim()
@@ -2106,7 +2170,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
   Widget _buildSummary() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
