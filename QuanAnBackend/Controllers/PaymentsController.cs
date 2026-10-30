@@ -132,7 +132,7 @@ public class PaymentsController : ControllerBase
             0,
             0,
             total,
-            ReceiptProfile.BuildVietQrImageUrl(total, order.OrderId),
+            BuildMobileQrImagePath(total, order.OrderId),
             ReceiptProfile.BuildVietQrPayload(total, order.OrderId),
             ReceiptProfile.BankCode,
             ReceiptProfile.BankAccountNo,
@@ -142,6 +142,20 @@ public class PaymentsController : ControllerBase
             ReceiptProfile.ShopName,
             ReceiptProfile.ShopAddress
         ));
+    }
+
+    private static string BuildMobileQrImagePath(
+        decimal amount,
+        int orderId)
+    {
+        var amountText = decimal.Round(
+                amount,
+                0,
+                MidpointRounding.AwayFromZero)
+            .ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+
+        return $"/api/payments/qr-image?amount={Uri.EscapeDataString(amountText)}&orderId={orderId}";
     }
 
     // Dùng cho bill tạm tính WinForms khi giỏ hàng có món chưa lưu.
