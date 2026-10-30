@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 using System.Security.Claims;
@@ -36,7 +37,7 @@ public class ReservationsController : ControllerBase
 
     private async Task<int?> ResolveCustomerIdAsync(string? phone)
     {
-        if (User.IsInRole("Customer"))
+        if (User.IsInRole(CustomerAccessMiddleware.CustomerRole))
         {
             var customerId = CustomerTokens.GetCustomerId(User);
             return customerId.HasValue &&
@@ -494,7 +495,8 @@ public class ReservationsController : ControllerBase
         return Ok(new { Id = created[0].ReservationId, ReservationId = created[0].ReservationId, Count = created.Count, Ids = created.Select(r => r.ReservationId).ToList() });
     }
 
-    [Authorize(Roles = "Customer")]
+    [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+    [CustomerAccess]
     [HttpPost("me/{id:int}/cancel")]
     public async Task<IActionResult> CancelMyBooking(int id)
     {
