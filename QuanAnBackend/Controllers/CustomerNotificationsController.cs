@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Middleware;
+using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Controllers;
 
