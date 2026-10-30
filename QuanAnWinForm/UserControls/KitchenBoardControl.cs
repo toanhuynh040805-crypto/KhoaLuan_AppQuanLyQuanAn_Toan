@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Media;
 using QuanAnWinForm.Models;
@@ -14,6 +15,7 @@ public partial class KitchenBoardControl : UserControl
     private readonly SignalRService _signalR = new();
     private readonly ApiService _api = new();
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 15_000 };
+    private bool _isDisposed;
 
     private readonly Dictionary<int, TicketCard> _cardsByOrderId = new();
 
@@ -30,19 +32,39 @@ public partial class KitchenBoardControl : UserControl
         _stationId = stationId;
         InitializeComponent();
         lblTitle.Text = title;
+        WireRealtimeHandlers();
 
         Load += async (s, e) =>
         {
-            await LoadPendingTicketsAsync();
-            await ConnectSignalRAsync();
-            _refreshTimer.Tick += (s2, e2) => RefreshAllUrgency();
+            // API tải dữ liệu và SignalR độc lập: chạy song song để màn hình mở nhanh hơn.
+            await Task.WhenAll(
+                LoadPendingTicketsAsync(),
+                ConnectSignalRAsync());
+
+            if (_isDisposed) return;
+
+            _refreshTimer.Tick += async (s2, e2) =>
+            {
+                RefreshAllUrgency();
+
+                // AutomaticReconnect chỉ hoạt động sau khi đã kết nối thành công.
+                // Nếu lần kết nối đầu bị timeout, thử lại âm thầm; không spam MessageBox.
+                if (!_signalR.IsConnected)
+                {
+                    await ConnectSignalRAsync();
+                    if (_signalR.IsConnected && !_isDisposed)
+                        await LoadPendingTicketsAsync();
+                }
+            };
             _refreshTimer.Start();
         };
-        Disposed += async (s, e) =>
+
+        Disposed += (s, e) =>
         {
+            _isDisposed = true;
             _refreshTimer.Stop();
             _refreshTimer.Dispose();
-            await _signalR.DisconnectAsync();
+            _ = _signalR.DisconnectAsync();
         };
     }
 
@@ -95,40 +117,60 @@ public partial class KitchenBoardControl : UserControl
 
             UpdateEmptyState();
         }
+        catch (OperationCanceledException)
+        {
+            // Control đang đóng/chuyển trang: đây là hủy chủ động, không phải lỗi người dùng.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được các phiếu đang chờ: {ex.Message}");
+            if (!_isDisposed && Visible)
+                MessageBox.Show($"Không tải được các phiếu đang chờ: {ex.Message}");
+            else
+                Debug.WriteLine($"Load pending tickets ignored after navigation: {ex.Message}");
         }
+    }
+
+    private void WireRealtimeHandlers()
+    {
+        _signalR.OnNewTicket += payload =>
+        {
+            if (_isDisposed || IsDisposed) return;
+            if (InvokeRequired) BeginInvoke(() => AddTicketColumn(payload, playSound: true));
+            else AddTicketColumn(payload, playSound: true);
+        };
+
+        _signalR.OnItemStatusUpdated += payload =>
+        {
+            if (_isDisposed || IsDisposed) return;
+            if (InvokeRequired) BeginInvoke(() => HandleItemStatusUpdated(payload));
+            else HandleItemStatusUpdated(payload);
+        };
+
+        _signalR.OnOrderItemCancelled += payload =>
+        {
+            if (_isDisposed || IsDisposed) return;
+            if (InvokeRequired) BeginInvoke(() => HandleOrderItemCancelled(payload));
+            else HandleOrderItemCancelled(payload);
+        };
     }
 
     private async Task ConnectSignalRAsync()
     {
-        _signalR.OnNewTicket += payload =>
-        {
-            if (IsDisposed) return;
-            if (InvokeRequired) Invoke(() => AddTicketColumn(payload, playSound: true));
-            else AddTicketColumn(payload, playSound: true);
-        };
-        _signalR.OnItemStatusUpdated += payload =>
-        {
-            if (IsDisposed) return;
-            if (InvokeRequired) Invoke(() => HandleItemStatusUpdated(payload));
-            else HandleItemStatusUpdated(payload);
-        };
-        _signalR.OnOrderItemCancelled += payload =>
-        {
-            if (IsDisposed) return;
-            if (InvokeRequired) Invoke(() => HandleOrderItemCancelled(payload));
-            else HandleOrderItemCancelled(payload);
-        };
+        if (_isDisposed || IsDisposed) return;
 
         try
         {
             await _signalR.ConnectAndJoinDepartmentAsync(_departmentName);
         }
+        catch (OperationCanceledException)
+        {
+            // Rời màn hình/timeout ngắn hạn: retry timer sẽ xử lý nếu control còn sống.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không kết nối được realtime: {ex.Message}");
+            // Realtime là kênh bổ sung. Không chặn thao tác bằng popup;
+            // ghi debug và retry nền sau 15 giây.
+            Debug.WriteLine($"Realtime {_departmentName} unavailable: {ex.Message}");
         }
     }
 
