@@ -182,13 +182,25 @@ public partial class CustomerManagementControl : UserControl
     {
         try
         {
-            _customers = await _api.GetCustomersAsync();
+            var customers = await _api.GetCustomersAsync();
+
+            // Người dùng có thể đã chuyển màn hình trong lúc request đang chạy.
+            // Không chạm vào DataGridView sau khi control đã bị Dispose.
+            if (IsDisposed || Disposing)
+                return;
+
+            _customers = customers;
             ApplyFilter();
             RenderStatCards();
         }
+        catch (OperationCanceledException)
+        {
+            // Hủy request khi rời màn hình là bình thường, không hiện popup.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được danh sách khách hàng: {ex.Message}");
+            if (!IsDisposed && !Disposing && Visible)
+                MessageBox.Show($"Không tải được danh sách khách hàng: {ex.Message}");
         }
     }
 
