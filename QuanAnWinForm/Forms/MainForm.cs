@@ -19,6 +19,13 @@ public partial class MainForm : Form
 
     private List<NotificationDto> _notifications = new();
 
+    // Cache các màn quản trị ít phụ thuộc tham số/realtime. Các màn này trước đây
+    // bị Dispose + tạo lại mỗi lần đổi menu, khiến API/ảnh/bảng phải tải lại từ đầu.
+    private readonly Dictionary<string, UserControl> _contentCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private UserControl? _currentContent;
+    private string? _currentContentKey;
+
     // true khi dong form do nguoi dung bam "Dang xuat" (LoginForm dua vao day de biet
     // nen hien lai man hinh dang nhap hay thoat han ung dung).
     public bool LoggedOut { get; private set; }
@@ -276,12 +283,50 @@ public partial class MainForm : Form
 
     private void OnNavItemSelected(string key) => ShowContent(key, preselectedTableId: null);
 
+    // Các màn quản trị này không mang tham số điều hướng và không sở hữu kết nối
+    // realtime theo màn hình, nên giữ instance để quay lại gần như tức thì.
+    private static bool IsCacheableContent(string key) => key is
+        "dashboard" or
+        "menu" or
+        "customers" or
+        "staff" or
+        "revenue" or
+        "promotions" or
+        "settings";
+
+    private UserControl CreateContent(
+        string key,
+        int? preselectedTableId,
+        int? takeawayOrderId) => key switch
+    {
+        "dashboard" => new DashboardControl(),
+        "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
+        "tables" => BuildDiningTabsControl(),
+        "orders" => new OrderManagementControl(_userId),
+        "menu" => new MenuManagementControl(),
+        "customers" => new CustomerManagementControl(),
+        "staff" => new StaffControl(),
+        "kitchen" => new KitchenBoardControl(
+            _userId,
+            "Bep",
+            "Màn hình Bếp",
+            string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
+        "bar" => new KitchenBoardControl(
+            _userId,
+            "QuayNuoc",
+            "Màn hình Quầy nước",
+            string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
+        "revenue" => new RevenueControl(),
+        "promotions" => new PromotionsControl(_userId),
+        "settings" => new SettingsControl(),
+        _ => new DashboardControl(),
+    };
+
     // takeawayOrderId (chỉ dùng cho "sales"): 0 = mở chế độ Mang về để tạo đơn mới,
     // > 0 = mở đơn mang về đang mở đó để thanh toán.
     private void ShowContent(string key, int? preselectedTableId, int? takeawayOrderId = null)
     {
         // Tài khoản chế biến chỉ được mở đúng Station đã phân công.
-        // Backend vẫn là lớp bảo vệ cuối cùng; đoạn này giúp UI không cho đi nhầm màn.
         if (string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase))
         {
             if (IsBarStation(_stationName) && key == "kitchen")
@@ -290,49 +335,65 @@ public partial class MainForm : Form
                 key = "kitchen";
         }
 
-        // Popup là các Form nổi độc lập. Nếu giữ chúng mở trong lúc đổi màn hình,
-        // người dùng có cảm giác cửa sổ/nội dung bị chồng lên nhau.
+        // Bấm lại đúng màn hiện tại không tải lại toàn bộ nếu không có tham số mới.
+        if (string.Equals(_currentContentKey, key, StringComparison.OrdinalIgnoreCase) &&
+            preselectedTableId is null &&
+            takeawayOrderId is null &&
+            _currentContent is { IsDisposed: false })
+        {
+            return;
+        }
+
         _notificationPopup.Hide();
         _searchPopup.Hide();
 
         panelContent.SuspendLayout();
         try
         {
-            foreach (var old in panelContent.Controls.Cast<Control>().ToList())
+            if (_currentContent is not null && !_currentContent.IsDisposed)
             {
-                panelContent.Controls.Remove(old);
-                if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
-                else old.Dispose();
+                if (_currentContentKey is not null &&
+                    IsCacheableContent(_currentContentKey))
+                {
+                    // Giữ control trong panel nhưng ẩn đi: trạng thái UI và dữ liệu đã tải
+                    // được giữ lại, tránh request lại khi quay về.
+                    _currentContent.Visible = false;
+                }
+                else
+                {
+                    panelContent.Controls.Remove(_currentContent);
+                    var old = _currentContent;
+                    if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
+                    else old.Dispose();
+                }
             }
 
-            UserControl content = key switch
+            UserControl content;
+            if (IsCacheableContent(key) &&
+                _contentCache.TryGetValue(key, out var cached) &&
+                !cached.IsDisposed)
             {
-                "dashboard" => new DashboardControl(),
-                "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
-                "tables" => BuildDiningTabsControl(),
-                "orders" => new OrderManagementControl(_userId),
-                "menu" => new MenuManagementControl(),
-                "customers" => new CustomerManagementControl(),
-                "staff" => new StaffControl(),
-                "kitchen" => new KitchenBoardControl(
-                    _userId,
-                    "Bep",
-                    "Màn hình Bếp",
-                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
-                "bar" => new KitchenBoardControl(
-                    _userId,
-                    "QuayNuoc",
-                    "Màn hình Quầy nước",
-                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
-                "revenue" => new RevenueControl(),
-                "promotions" => new PromotionsControl(_userId),
-                "settings" => new SettingsControl(),
-                _ => new DashboardControl(),
-            };
+                content = cached;
+            }
+            else
+            {
+                content = CreateContent(key, preselectedTableId, takeawayOrderId);
+                content.Dock = DockStyle.Fill;
 
-            content.Dock = DockStyle.Fill;
-            panelContent.Controls.Add(content);
+                if (IsCacheableContent(key))
+                    _contentCache[key] = content;
+
+                panelContent.Controls.Add(content);
+            }
+
+            if (!panelContent.Controls.Contains(content))
+                panelContent.Controls.Add(content);
+
+            content.Visible = true;
             content.BringToFront();
+
+            _currentContent = content;
+            _currentContentKey = key;
         }
         finally
         {
