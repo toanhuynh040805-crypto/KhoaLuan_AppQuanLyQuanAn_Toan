@@ -206,7 +206,8 @@ public class ReservationsController : ControllerBase
         return null;
     }
 
-    [HttpGet("available-tables")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpGet("available-tables-legacy")]
     [AllowAnonymous]
     public async Task<IActionResult> GetAvailableTables(
         [FromQuery] DateTime? reservationTime,
@@ -279,7 +280,8 @@ public class ReservationsController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost("web")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpPost("web-legacy")]
     [AllowAnonymous]
     public async Task<IActionResult> CreateWeb([FromBody] System.Text.Json.JsonElement payload)
     {
@@ -537,7 +539,8 @@ public class ReservationsController : ControllerBase
         return Ok(new { Id = reservation.ReservationId, Status = reservation.Status });
     }
 
-    [HttpGet("lookup")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpGet("lookup-legacy")]
     [AllowAnonymous]
     public async Task<IActionResult> LookupBooking([FromQuery] string? code, [FromQuery] string? phone)
     {
@@ -548,7 +551,8 @@ public class ReservationsController : ControllerBase
         return Ok(ToPublicReservation(reservation));
     }
 
-    [HttpPost("cancel")]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [HttpPost("cancel-legacy")]
     [AllowAnonymous]
     public async Task<IActionResult> CancelBooking([FromQuery] string? code, [FromQuery] string? phone)
     {
