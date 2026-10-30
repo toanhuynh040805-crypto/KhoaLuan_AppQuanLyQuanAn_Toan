@@ -7,13 +7,15 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 
 [Route("api/orders")]
 [ApiController]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public class WebOrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
