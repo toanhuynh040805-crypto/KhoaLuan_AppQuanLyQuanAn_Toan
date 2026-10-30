@@ -43,7 +43,7 @@ public partial class SalesControl : UserControl
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
-    private readonly Button btnConfirmOrder = new() { Text = "✓ Xác nhận gọi món" };
+    private readonly Button btnConfirmOrder = new() { Text = "Xác nhận" };
 
     private bool CanViewPaymentReceiptQr
     {
@@ -292,8 +292,9 @@ public partial class SalesControl : UserControl
         // Hàng thao tác cuối:
         // - Xác nhận gọi món: nhỏ hơn, màu xanh, chỉ gửi món xuống đơn/bếp.
         // - Thanh toán: lớn hơn, chỉ hoàn tất sau bước xem bill + xác nhận.
-        btnConfirmOrder.SetBounds(0, 246, 146, 46);
-        btnConfirmOrder.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        // Hai nút cuối cân bằng nhau: 181px + khoảng cách 8px + 181px.
+        btnConfirmOrder.SetBounds(0, 246, 181, 46);
+        btnConfirmOrder.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
         btnConfirmOrder.FlatStyle = FlatStyle.Flat;
         btnConfirmOrder.FlatAppearance.BorderSize = 0;
         btnConfirmOrder.BackColor = Color.FromArgb(46, 125, 50);
@@ -301,7 +302,7 @@ public partial class SalesControl : UserControl
         btnConfirmOrder.Cursor = Cursors.Hand;
         btnConfirmOrder.UseVisualStyleBackColor = false;
 
-        btnThanhToan.SetBounds(154, 246, 216, 46);
+        btnThanhToan.SetBounds(189, 246, 181, 46);
 
         panelTotals.Controls.Add(btnReceiptPreview);
         panelTotals.Controls.Add(btnConfirmOrder);
