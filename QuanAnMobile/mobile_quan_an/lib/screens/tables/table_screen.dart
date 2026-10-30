@@ -16,6 +16,7 @@ import '../../services/notification_service.dart';
 import '../../services/realtime_service.dart';
 import '../../services/table_service.dart';
 import '../../services/table_lock_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../menu/menu_screen.dart';
 import '../notifications/notification_screen.dart';
@@ -44,6 +45,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
   StreamSubscription<TableStatusRealtimeEvent>? _tableStatusSubscription;
+  Timer? _relativeTimeTimer;
 
   bool _isLoading = true;
   String? _loadError;
@@ -228,6 +230,12 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadData();
     _startRealtime();
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
@@ -244,6 +252,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableStatusSubscription?.cancel();
+    _relativeTimeTimer?.cancel();
     _realtimeService.stop();
     super.dispose();
   }
@@ -1914,6 +1923,30 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     return _buildAreaView();
   }
 
+  DateTime? _firstOrderTime(List<OrderItem> items) {
+    DateTime? result;
+    for (final OrderItem item in items) {
+      final DateTime? value = item.createdAt;
+      if (value == null) continue;
+      if (result == null || value.isBefore(result)) {
+        result = value;
+      }
+    }
+    return result;
+  }
+
+  DateTime? _latestOrderTime(List<OrderItem> items) {
+    DateTime? result;
+    for (final OrderItem item in items) {
+      final DateTime? value = item.createdAt;
+      if (value == null) continue;
+      if (result == null || value.isAfter(result)) {
+        result = value;
+      }
+    }
+    return result;
+  }
+
   Widget _buildInvoiceView() {
     final List<RestaurantTable> items = _activeInvoiceTables;
 
@@ -1946,6 +1979,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   Widget _buildInvoiceCard(RestaurantTable table) {
     final List<OrderItem> items = tableOrders[table.id] ?? const <OrderItem>[];
     final int quantity = items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final DateTime? firstOrderAt = _firstOrderTime(items);
     final bool waiting = paymentRequestedTableIds.contains(table.id);
 
     return InkWell(
@@ -2024,6 +2058,18 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
             ),
+            if (firstOrderAt != null)
+              Text(
+                'Bắt đầu ${formatClockTime(firstOrderAt)} • '
+                'Đã mở ${formatElapsedDuration(firstOrderAt)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             if (!table.isTakeaway && table.guestCount != null)
               Text(
                 '${table.guestCount} khách',
@@ -2091,6 +2137,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     final Color color = _statusColor(table);
     final List<OrderItem> items = tableOrders[table.id] ?? const <OrderItem>[];
     final int quantity = items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final DateTime? latestOrderAt = _latestOrderTime(items);
 
     Color cardBackground = Colors.white;
     Color cardBorder = Colors.grey.shade200;
@@ -2210,6 +2257,17 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                 Text(
                   '$quantity món',
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+              if (latestOrderAt != null)
+                Text(
+                  'Gọi gần nhất ${formatTimeAgo(latestOrderAt)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               Text(
                 _formatMoney(table.amount ?? 0),
