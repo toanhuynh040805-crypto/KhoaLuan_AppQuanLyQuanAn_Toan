@@ -15,9 +15,12 @@ namespace QuanAnBackend.Controllers;
 public record CustomerOrderItemRequest(int MenuItemId, int Quantity, string? Note);
 public record CustomerOrderRequest(int TableId, Guid? ClientRequestId, List<CustomerOrderItemRequest>? Items);
 
-// Đặt món từ web cho khách đã đăng nhập. Giá luôn tính ở server.
+// Endpoint cũ được giữ để tương thích/debug. Luồng Web hiện tại dùng
+// WebOrdersController tại /api/orders/customer-order; tách route để tránh
+// hai action cùng bắt một request và gây AmbiguousMatchException.
 [ApiController]
-[Route("api/orders/customer-order")]
+[ApiExplorerSettings(IgnoreApi = true)]
+[Route("api/orders/customer-order-legacy")]
 [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
 [CustomerAccess]
 public class CustomerOrdersController : ControllerBase
