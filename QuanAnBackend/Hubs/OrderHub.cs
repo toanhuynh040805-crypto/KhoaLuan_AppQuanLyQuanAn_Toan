@@ -209,8 +209,8 @@ public class OrderHub : Hub
             if (!IsCustomer())
                 throw new HubException("Chỉ tài khoản khách hàng mới được tham gia nhóm khách hàng.");
 
-            var currentUserId = GetCurrentUserId();
-            if (currentUserId != customerId)
+            var currentCustomerId = GetCurrentCustomerId();
+            if (currentCustomerId != customerId)
                 throw new HubException("Bạn không có quyền tham gia nhóm của khách hàng khác.");
         }
         else
