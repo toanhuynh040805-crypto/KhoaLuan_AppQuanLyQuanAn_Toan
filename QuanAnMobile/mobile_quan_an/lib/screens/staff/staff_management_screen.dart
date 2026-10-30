@@ -1366,17 +1366,19 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                           DateTime.now().subtract(const Duration(days: 365)),
                       lastDate: DateTime.now().add(const Duration(days: 730)),
                     );
-                    if (picked != null) {
-                      setSheetState(() {
-                        dueAt = DateTime(
-                          picked.year,
-                          picked.month,
-                          picked.day,
-                          23,
-                          59,
-                        );
-                      });
+                    if (!sheetContext.mounted || picked == null) {
+                      return;
                     }
+
+                    setSheetState(() {
+                      dueAt = DateTime(
+                        picked.year,
+                        picked.month,
+                        picked.day,
+                        23,
+                        59,
+                      );
+                    });
                   },
                   trailing: dueAt == null
                       ? null
