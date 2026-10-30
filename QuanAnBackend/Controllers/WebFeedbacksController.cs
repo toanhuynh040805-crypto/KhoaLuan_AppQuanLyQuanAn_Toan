@@ -36,12 +36,7 @@ namespace QuanAnBackend.Controllers
         }
 
         private int? GetCurrentCustomerId()
-        {
-            var userIdStr = User.FindFirst("UserId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            return int.TryParse(userIdStr, out var customerId) && customerId > 0
-                ? customerId
-                : null;
-        }
+            => CustomerTokens.GetCustomerId(User);
 
         private IQueryable<Order> GetPaidOrders() => _context.Orders.Where(order =>
             order.Status == OrderStatus.DaThanhToan &&
