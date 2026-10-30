@@ -61,6 +61,7 @@ public class OrderItemDto
     public string? Note { get; set; }
     public int KitchenStatus { get; set; } // khớp enum KitchenStatus ở trên
     public bool IsTakeaway { get; set; }
+    public DateTime CreatedAt { get; set; }
 
     // Bổ sung 2 thuộc tính này để nhận lý do hủy và RowVer từ Backend
     public string? CancelReason { get; set; }
