@@ -20,7 +20,8 @@ public record TableOrderItemDto(
     decimal UnitPrice,
     string Status,
     string? Note,
-    bool IsTakeaway = false
+    bool IsTakeaway = false,
+    DateTime? CreatedAt = null
 );
 
 public record TableOrderGroupDto(
@@ -249,7 +250,8 @@ public class TablesController : ControllerBase
                     ) AS EffectiveUnitPrice,
                     oi.Status,
                     oi.Note,
-                    oi.IsTakeaway
+                    oi.IsTakeaway,
+                    oi.CreatedAt
                 FROM Orders o
                 INNER JOIN OrderItems oi ON oi.OrderId = o.OrderId
                 LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
@@ -291,7 +293,8 @@ public class TablesController : ControllerBase
                         reader.GetDecimal(4),
                         status,
                         reader.IsDBNull(6) ? null : reader.GetString(6),
-                        !reader.IsDBNull(7) && reader.GetBoolean(7)
+                        !reader.IsDBNull(7) && reader.GetBoolean(7),
+                        reader.IsDBNull(8) ? null : reader.GetDateTime(8)
                     )
                 );
             }
