@@ -73,10 +73,59 @@ public class CustomerAccountSchemaService
                     ON dbo.CustomerAccounts(PasswordResetTokenHash);
             END;
             """);
-                // Đơn đặt món từ web: cột nguồn + khóa chống trùng.
+        // Đơn đặt món từ web: UUID chống gửi trùng.
+        // Web tạo bằng crypto.randomUUID(), Backend dùng Guid?,
+        // SQL Server lưu bằng UNIQUEIDENTIFIER.
         await _db.Database.ExecuteSqlRawAsync("""
             IF COL_LENGTH(N'dbo.Orders', N'ClientRequestId') IS NULL
-                ALTER TABLE dbo.Orders ADD ClientRequestId NVARCHAR(64) NULL;
+            BEGIN
+                ALTER TABLE dbo.Orders
+                    ADD ClientRequestId UNIQUEIDENTIFIER NULL;
+            END
+            ELSE IF EXISTS
+            (
+                SELECT 1
+                FROM sys.columns c
+                INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+                WHERE c.object_id = OBJECT_ID(N'dbo.Orders')
+                  AND c.name = N'ClientRequestId'
+                  AND t.name <> N'uniqueidentifier'
+            )
+            BEGIN
+                -- Không chuyển nếu DB cũ chứa giá trị không phải GUID.
+                -- Dừng để tránh làm mất dữ liệu.
+                IF EXISTS
+                (
+                    SELECT 1
+                    FROM dbo.Orders
+                    WHERE ClientRequestId IS NOT NULL
+                      AND TRY_CONVERT(UNIQUEIDENTIFIER, ClientRequestId) IS NULL
+                )
+                BEGIN
+                    THROW 51001,
+                        'Orders.ClientRequestId contains legacy non-GUID values. Migration stopped to avoid data loss.',
+                        1;
+                END;
+
+                IF EXISTS
+                (
+                    SELECT 1 FROM sys.indexes
+                    WHERE name = N'UX_Orders_ClientRequestId'
+                      AND object_id = OBJECT_ID(N'dbo.Orders')
+                )
+                    DROP INDEX UX_Orders_ClientRequestId ON dbo.Orders;
+
+                IF EXISTS
+                (
+                    SELECT 1 FROM sys.indexes
+                    WHERE name = N'UX_Orders_Customer_ClientRequestId'
+                      AND object_id = OBJECT_ID(N'dbo.Orders')
+                )
+                    DROP INDEX UX_Orders_Customer_ClientRequestId ON dbo.Orders;
+
+                ALTER TABLE dbo.Orders
+                    ALTER COLUMN ClientRequestId UNIQUEIDENTIFIER NULL;
+            END;
 
             IF COL_LENGTH(N'dbo.Orders', N'Source') IS NULL
                 ALTER TABLE dbo.Orders
@@ -85,11 +134,22 @@ public class CustomerAccountSchemaService
             """);
 
         await _db.Database.ExecuteSqlRawAsync("""
-            IF NOT EXISTS (SELECT 1 FROM sys.indexes
-                           WHERE name = N'UX_Orders_ClientRequestId'
-                             AND object_id = OBJECT_ID(N'dbo.Orders'))
-                CREATE UNIQUE INDEX UX_Orders_ClientRequestId
-                    ON dbo.Orders(ClientRequestId)
+            IF EXISTS
+            (
+                SELECT 1 FROM sys.indexes
+                WHERE name = N'UX_Orders_ClientRequestId'
+                  AND object_id = OBJECT_ID(N'dbo.Orders')
+            )
+                DROP INDEX UX_Orders_ClientRequestId ON dbo.Orders;
+
+            IF NOT EXISTS
+            (
+                SELECT 1 FROM sys.indexes
+                WHERE name = N'UX_Orders_Customer_ClientRequestId'
+                  AND object_id = OBJECT_ID(N'dbo.Orders')
+            )
+                CREATE UNIQUE INDEX UX_Orders_Customer_ClientRequestId
+                    ON dbo.Orders(CustomerId, ClientRequestId)
                     WHERE ClientRequestId IS NOT NULL;
             """);
 
