@@ -2060,8 +2060,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
             ),
             if (firstOrderAt != null)
               Text(
-                'Bắt đầu ${formatClockTime(firstOrderAt)} • '
-                'Đã mở ${formatElapsedDuration(firstOrderAt)}',
+                formatElapsedCompact(firstOrderAt),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -2260,7 +2259,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                 ),
               if (latestOrderAt != null)
                 Text(
-                  'Gọi gần nhất ${formatTimeAgo(latestOrderAt)}',
+                  formatElapsedCompact(latestOrderAt),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
