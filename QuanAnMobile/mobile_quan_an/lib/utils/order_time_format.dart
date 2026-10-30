@@ -72,13 +72,26 @@ String formatElapsedCompact(DateTime? value) {
   }
 
   if (diff.inDays < 1) {
-    return '${diff.inHours}h';
+    final int hours = diff.inHours;
+    final int minutes = diff.inMinutes.remainder(60);
+
+    return minutes > 0
+        ? '${hours}h${minutes}'
+        : '${hours}h';
   }
 
   final int days = diff.inDays;
   final int hours = diff.inHours.remainder(24);
+  final int minutes = diff.inMinutes.remainder(60);
 
-  return hours > 0
-      ? '${days}n ${hours}h'
-      : '${days}n';
+  if (hours > 0 && minutes > 0) {
+    return '${days}n${hours}h${minutes}';
+  }
+  if (hours > 0) {
+    return '${days}n${hours}h';
+  }
+  if (minutes > 0) {
+    return '${days}n${minutes}ph';
+  }
+  return '${days}n';
 }
