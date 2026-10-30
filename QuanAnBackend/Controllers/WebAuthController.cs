@@ -9,8 +9,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
-[Route("api/customers")]
+// Legacy auth implementation kept only for rollback/reference.
+// Canonical customer authentication is CustomerAuthController at /api/customers/*.
+// Keeping a separate route prevents Swagger/ASP.NET endpoint conflicts.
+[Route("api/customers-legacy")]
 [ApiController]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class WebAuthController : ControllerBase
 {
     private readonly AppDbContext _context;
