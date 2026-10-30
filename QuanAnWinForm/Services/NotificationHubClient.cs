@@ -29,7 +29,15 @@ public class NotificationHubClient
     public async Task ConnectAsync(int userId, string roleName)
     {
         _connection = new HubConnectionBuilder()
-            .WithUrl(ApiConfig.HubUrl)
+            .WithUrl(ApiConfig.HubUrl, options =>
+            {
+                var token = SessionContext.Token;
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    options.AccessTokenProvider =
+                        () => Task.FromResult<string?>(token);
+                }
+            })
             .WithAutomaticReconnect()
             .Build();
 
