@@ -127,6 +127,25 @@ public class CustomerAccountSchemaService
                     ALTER COLUMN ClientRequestId UNIQUEIDENTIFIER NULL;
             END;
 
+            IF COL_LENGTH(N'dbo.Orders', N'ClientRequestHash') IS NULL
+            BEGIN
+                ALTER TABLE dbo.Orders
+                    ADD ClientRequestHash VARCHAR(64) NULL;
+            END
+            ELSE IF EXISTS
+            (
+                SELECT 1
+                FROM sys.columns c
+                INNER JOIN sys.types t ON c.user_type_id = t.user_type_id
+                WHERE c.object_id = OBJECT_ID(N'dbo.Orders')
+                  AND c.name = N'ClientRequestHash'
+                  AND (t.name <> N'varchar' OR c.max_length < 64)
+            )
+            BEGIN
+                ALTER TABLE dbo.Orders
+                    ALTER COLUMN ClientRequestHash VARCHAR(64) NULL;
+            END;
+
             IF COL_LENGTH(N'dbo.Orders', N'Source') IS NULL
                 ALTER TABLE dbo.Orders
                     ADD Source NVARCHAR(20) NOT NULL
