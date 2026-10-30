@@ -2105,8 +2105,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            'Gọi lúc ${formatClockTime(item.createdAt)} • '
-                            '${formatTimeAgo(item.createdAt)}',
+                            formatClockTime(item.createdAt),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
