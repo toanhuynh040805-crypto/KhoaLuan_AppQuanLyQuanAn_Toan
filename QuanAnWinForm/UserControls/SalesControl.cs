@@ -43,6 +43,7 @@ public partial class SalesControl : UserControl
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
+    private readonly Button btnConfirmOrder = new() { Text = "✓ Xác nhận gọi món" };
 
     private bool CanViewPaymentReceiptQr
     {
@@ -93,6 +94,7 @@ public partial class SalesControl : UserControl
         Load += async (s, e) => await LoadDataAsync();
         btnVietQr.Click += async (s, e) => await ProcessPaymentAsync(method: 1);
         btnThanhToan.Click += async (s, e) => await ProcessPaymentAsync(method: 0);
+        btnConfirmOrder.Click += async (s, e) => await ConfirmOrderAsync();
         lblInvoiceHistory.Click += async (s, e) => await OpenInvoiceHistoryDialogAsync();
         cbCampaign.SelectedIndexChanged += (s, e) => RenderCart();
 
@@ -284,10 +286,25 @@ public partial class SalesControl : UserControl
         btnReceiptPreview.Cursor = Cursors.Hand;
         btnReceiptPreview.FlatAppearance.BorderColor = AppColors.OutlineVariant;
 
-        // Dời hai nút thanh toán xuống để dành chỗ cho nút máy in.
-        btnVietQr.Top = 196;
-        btnThanhToan.Top = 246;
+        // VietQR nằm một hàng riêng.
+        btnVietQr.SetBounds(0, 196, 370, 42);
+
+        // Hàng thao tác cuối:
+        // - Xác nhận gọi món: nhỏ hơn, màu xanh, chỉ gửi món xuống đơn/bếp.
+        // - Thanh toán: lớn hơn, chỉ hoàn tất sau bước xem bill + xác nhận.
+        btnConfirmOrder.SetBounds(0, 246, 146, 46);
+        btnConfirmOrder.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        btnConfirmOrder.FlatStyle = FlatStyle.Flat;
+        btnConfirmOrder.FlatAppearance.BorderSize = 0;
+        btnConfirmOrder.BackColor = Color.FromArgb(46, 125, 50);
+        btnConfirmOrder.ForeColor = Color.White;
+        btnConfirmOrder.Cursor = Cursors.Hand;
+        btnConfirmOrder.UseVisualStyleBackColor = false;
+
+        btnThanhToan.SetBounds(154, 246, 216, 46);
+
         panelTotals.Controls.Add(btnReceiptPreview);
+        panelTotals.Controls.Add(btnConfirmOrder);
         panelTotals.Height = 300;
 
         // Bill có QR thanh toán chỉ dành cho Quản lý / Thu ngân.
@@ -296,6 +313,102 @@ public partial class SalesControl : UserControl
 
         btnReceiptPreview.Click += async (s, e) =>
             await ShowTemporaryReceiptAsync();
+    }
+
+    // Lưu các món đang chọn vào Order và gửi xuống bếp/quầy nhưng KHÔNG thanh toán.
+    // Sau khi thành công, tải lại đơn từ Backend để phần "Món đã gọi" là nguồn sự thật.
+    private async Task ConfirmOrderAsync()
+    {
+        if (!_isTakeaway && _selectedTableId is null)
+        {
+            MessageBox.Show("Vui lòng chọn bàn trước.");
+            return;
+        }
+
+        if (CartIsEmpty)
+        {
+            MessageBox.Show(
+                "Chưa có món mới để xác nhận.",
+                "Xác nhận gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        if (_isTakeaway && _existingOrder is not null)
+        {
+            MessageBox.Show(
+                "Đơn mang về này đã được gửi bếp. Vui lòng tạo đơn mang về mới nếu cần gọi thêm.",
+                "Xác nhận gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        btnConfirmOrder.Enabled = false;
+        btnThanhToan.Enabled = false;
+        btnVietQr.Enabled = false;
+
+        try
+        {
+            var items = BuildOrderItems();
+            if (items.Count == 0) return;
+
+            if (_isTakeaway)
+            {
+                var orderId = await _api.AddTakeawayOrderItemsAsync(_userId, items);
+                if (orderId is null)
+                {
+                    MessageBox.Show("Không tạo được đơn mang về.");
+                    return;
+                }
+
+                ClearCart();
+                await LoadTakeawayOrderAsync(orderId.Value);
+            }
+            else
+            {
+                var orderId = await _api.AddOrderItemsAsync(
+                    _selectedTableId!.Value,
+                    _userId,
+                    items);
+
+                if (orderId is null)
+                {
+                    MessageBox.Show("Không ghi nhận được món vừa gọi.");
+                    return;
+                }
+
+                ClearCart();
+                await LoadOpenOrderAsync(_selectedTableId.Value);
+            }
+
+            RenderCart();
+            UpdateSendKitchenButton();
+
+            MessageBox.Show(
+                "Đã xác nhận gọi món và gửi xuống bộ phận chế biến.",
+                "Gọi món thành công",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không xác nhận được món: {ex.Message}",
+                "Lỗi gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnConfirmOrder.IsDisposed)
+                btnConfirmOrder.Enabled = true;
+            if (!btnThanhToan.IsDisposed)
+                btnThanhToan.Enabled = true;
+            if (!btnVietQr.IsDisposed)
+                btnVietQr.Enabled = true;
+        }
     }
 
     private void SetMode(bool takeaway)
@@ -775,22 +888,75 @@ public partial class SalesControl : UserControl
     private Panel BuildCartRow(MenuItemDto item, int qty, bool takeawayLine = false)
     {
         var dict = takeawayLine ? _cartTake : _cart;
-        var row = new Panel { Size = new Size(360, _isTakeaway ? 56 : 72), Margin = new Padding(0, 0, 0, 6) };
 
-        var lblName = new Label { Text = item.Name, Font = AppFonts.LabelLg, Location = new Point(0, 4), Size = new Size(170, 20), AutoEllipsis = true };
-        var lblUnitPrice = new Label { Text = $"{item.Price:N0}đ / phần", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 26), AutoSize = true };
-        var lblSum = new Label { Text = $"{item.Price * qty:N0}đ", Font = AppFonts.LabelLg, Location = new Point(280, 16), Size = new Size(80, 20), TextAlign = ContentAlignment.MiddleRight };
+        // Dành hẳn một dòng cho nút chuyển mang về/tại chỗ.
+        // Chiều cao cũ 72px dễ bị cắt ở Windows scale 125%/150%.
+        var rowHeight = _isTakeaway ? 62 : 92;
+        var row = new Panel
+        {
+            Size = new Size(360, rowHeight),
+            Margin = new Padding(0, 0, 0, 8)
+        };
 
-        var btnMinus = new Button { Text = "-", Size = new Size(24, 24), Location = new Point(178, 14), FlatStyle = FlatStyle.Flat };
-        var lblQty = new Label { Text = qty.ToString(), Font = AppFonts.LabelLg, Location = new Point(206, 14), Size = new Size(28, 24), TextAlign = ContentAlignment.MiddleCenter };
-        var btnPlus = new Button { Text = "+", Size = new Size(24, 24), Location = new Point(238, 14), FlatStyle = FlatStyle.Flat };
+        var lblName = new Label
+        {
+            Text = item.Name,
+            Font = AppFonts.LabelLg,
+            Location = new Point(0, 4),
+            Size = new Size(170, 22),
+            AutoEllipsis = true
+        };
+
+        var lblUnitPrice = new Label
+        {
+            Text = $"{item.Price:N0}đ / phần",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(0, 28),
+            Size = new Size(170, 24),
+            AutoEllipsis = true
+        };
+
+        var lblSum = new Label
+        {
+            Text = $"{item.Price * qty:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(280, 16),
+            Size = new Size(80, 22),
+            TextAlign = ContentAlignment.MiddleRight
+        };
+
+        var btnMinus = new Button
+        {
+            Text = "-",
+            Size = new Size(26, 26),
+            Location = new Point(178, 12),
+            FlatStyle = FlatStyle.Flat
+        };
+        var lblQty = new Label
+        {
+            Text = qty.ToString(),
+            Font = AppFonts.LabelLg,
+            Location = new Point(207, 13),
+            Size = new Size(30, 26),
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        var btnPlus = new Button
+        {
+            Text = "+",
+            Size = new Size(26, 26),
+            Location = new Point(240, 12),
+            FlatStyle = FlatStyle.Flat
+        };
 
         btnMinus.Click += (s, e) =>
         {
             var (i, q) = dict[item.Id];
-            if (q <= 1) dict.Remove(item.Id); else dict[item.Id] = (i, q - 1);
+            if (q <= 1) dict.Remove(item.Id);
+            else dict[item.Id] = (i, q - 1);
             RenderCart();
         };
+
         btnPlus.Click += (s, e) =>
         {
             var (i, q) = dict[item.Id];
@@ -798,19 +964,35 @@ public partial class SalesControl : UserControl
             RenderCart();
         };
 
-        // Bán tại chỗ: cho chuyển từng phần của món sang "mang về" (và ngược lại).
+        // Bán tại chỗ: cho chuyển từng phần của món sang "mang về" và ngược lại.
         if (!_isTakeaway)
         {
             var btnMove = new Button
             {
                 Text = takeawayLine ? "← Chuyển tại chỗ" : "Chuyển mang về →",
-                Font = AppFonts.BodyMd,
-                Size = new Size(150, 22),
-                Location = new Point(0, 46),
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+                Size = new Size(166, 30),
+                Location = new Point(0, 56),
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseVisualStyleBackColor = false
             };
-            StyleCategoryButton(btnMove, takeawayLine);
+
+            if (takeawayLine)
+            {
+                btnMove.BackColor = AppColors.Primary;
+                btnMove.ForeColor = Color.White;
+                btnMove.FlatAppearance.BorderSize = 0;
+            }
+            else
+            {
+                btnMove.BackColor = Color.White;
+                btnMove.ForeColor = AppColors.OnSurfaceVariant;
+                btnMove.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+                btnMove.FlatAppearance.BorderSize = 1;
+            }
+
             btnMove.Click += (s, e) => MoveOneUnit(item, takeawayLine);
             row.Controls.Add(btnMove);
         }
