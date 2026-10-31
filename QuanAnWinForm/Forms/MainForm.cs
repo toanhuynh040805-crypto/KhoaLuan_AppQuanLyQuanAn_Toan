@@ -133,31 +133,41 @@ public partial class MainForm : Form
 
     private async Task InitNotificationsAsync()
     {
+        // Tải lịch sử thông báo và kết nối realtime là hai việc độc lập.
+        // Một request thông báo lỗi không được phép làm mất SignalR cả phiên.
         try
         {
             _notifications = await _api.GetNotificationsAsync(_userId, _roleName);
             UpdateBadge();
+        }
+        catch
+        {
+            _notifications = new List<NotificationDto>();
+            UpdateBadge();
+        }
 
-            _notificationHub.OnNewNotification += noti =>
+        _notificationHub.OnNewNotification += noti =>
+        {
+            // Callback SignalR chạy trên thread nền -> đẩy về UI thread.
+            if (IsHandleCreated)
             {
-                // Callback SignalR chay tren thread nen - phai Invoke ve UI thread
-                // truoc khi dong bo dong (cap nhat badge/list) hoac cham vao Control.
-                if (IsHandleCreated)
+                BeginInvoke(new Action(() =>
                 {
-                    BeginInvoke(new Action(() =>
-                    {
-                        _notifications.Insert(0, noti);
-                        UpdateBadge();
-                        if (_notificationPopup.Visible) _notificationPopup.Render(_notifications);
-                    }));
-                }
-            };
+                    _notifications.Insert(0, noti);
+                    UpdateBadge();
+                    if (_notificationPopup.Visible)
+                        _notificationPopup.Render(_notifications);
+                }));
+            }
+        };
 
+        try
+        {
             await _notificationHub.ConnectAsync(_userId, _roleName);
         }
         catch
         {
-            // Khong chan luong dang nhap/su dung app chi vi loi tai thong bao
+            // Không chặn ứng dụng. Health timer sẽ thử nối lại sau 5 giây.
         }
     }
 
