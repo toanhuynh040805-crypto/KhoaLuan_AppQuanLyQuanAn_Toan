@@ -1179,6 +1179,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 preview.transferContent,
             qrImageUrl:
                 preview.qrImageUrl,
+            qrPayload:
+                preview.qrPayload,
           ),
         ),
       );
