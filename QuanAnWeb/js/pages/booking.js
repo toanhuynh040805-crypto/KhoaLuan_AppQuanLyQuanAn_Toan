@@ -514,7 +514,9 @@ if (form) {
                     time: timeInput.value,
                     numberOfGuests: guestsInput.value,
                     customerName: nameInput.value,
-                    customerPhone: phoneInput.value
+                    customerPhone: phoneInput.value,
+                    durationMinutes: Number(batchResult?.durationMinutes ?? batchResult?.DurationMinutes ?? 30),
+                    holdUntil: batchResult?.holdUntil ?? batchResult?.HoldUntil ?? null
                 }));
                 location.assign(`./success.html?code=${encodeURIComponent(String(groupCode))}`);
                 return;
@@ -548,7 +550,9 @@ if (form) {
                 time: timeInput.value,
                 numberOfGuests: guestsInput.value,
                 customerName: nameInput.value,
-                customerPhone: phoneInput.value
+                customerPhone: phoneInput.value,
+                durationMinutes: Number(reservation?.durationMinutes ?? reservation?.DurationMinutes ?? 30),
+                holdUntil: reservation?.holdUntil ?? reservation?.HoldUntil ?? null
             }));
 
             location.assign(`./success.html?code=${encodeURIComponent(String(reservationCode))}`);
