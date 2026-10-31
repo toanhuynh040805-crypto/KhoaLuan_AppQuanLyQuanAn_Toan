@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../widgets/api_qr_image.dart';
 
 class ReceiptLineView {
   final String name;
@@ -506,22 +507,9 @@ class ReceiptPreviewScreen
                       child: SizedBox(
                         width: 220,
                         height: 220,
-                        child:
-                            Image.network(
-                          qrImageUrl,
-                          fit:
-                              BoxFit.contain,
-                          errorBuilder:
-                              (
-                                context,
-                                error,
-                                stackTrace,
-                              ) =>
-                                  const Center(
-                            child: Text(
-                              'Không tải được QR',
-                            ),
-                          ),
+                        child: ApiQrImage(
+                          imageUrl: qrImageUrl,
+                          fit: BoxFit.contain,
                         ),
                       ),
                     ),
