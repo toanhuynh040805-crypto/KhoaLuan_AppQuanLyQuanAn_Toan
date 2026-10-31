@@ -60,7 +60,8 @@ public sealed class ReservationReminderService : BackgroundService
             .Where(reservation =>
                 (reservation.Status == ReservationStatus.DaXacNhan ||
                  reservation.Status == ReservationStatus.ChoXacNhan) &&
-                reservation.ReservationTime <= now)
+                reservation.ReservationTime <= now &&
+                reservation.ReservationTime >= now.AddDays(-1))
             .OrderBy(reservation => reservation.ReservationTime)
             .ToListAsync(cancellationToken);
 
@@ -89,6 +90,12 @@ public sealed class ReservationReminderService : BackgroundService
 
             if (now < holdUntil)
             {
+                var stageAlreadyBroadcast = await db.Notifications.AnyAsync(
+                    notification =>
+                        notification.EventKey != null &&
+                        notification.EventKey.StartsWith($"reservation-due:{groupId}:"),
+                    cancellationToken);
+
                 await SendDueAsync(
                     notifications,
                     audience,
@@ -99,10 +106,17 @@ public sealed class ReservationReminderService : BackgroundService
                     reservationTime,
                     holdUntil,
                     now,
+                    !stageAlreadyBroadcast,
                     cancellationToken);
             }
             else
             {
+                var stageAlreadyBroadcast = await db.Notifications.AnyAsync(
+                    notification =>
+                        notification.EventKey != null &&
+                        notification.EventKey.StartsWith($"reservation-overdue:{groupId}:"),
+                    cancellationToken);
+
                 await SendOverdueAsync(
                     notifications,
                     audience,
@@ -113,6 +127,7 @@ public sealed class ReservationReminderService : BackgroundService
                     reservationTime,
                     holdUntil,
                     now,
+                    !stageAlreadyBroadcast,
                     cancellationToken);
             }
         }
@@ -128,6 +143,7 @@ public sealed class ReservationReminderService : BackgroundService
         DateTime reservationTime,
         DateTime holdUntil,
         DateTime now,
+        bool broadcastStage,
         CancellationToken cancellationToken)
     {
         var userIds = await audience.GetRecipientUserIdsAsync(
@@ -161,16 +177,19 @@ public sealed class ReservationReminderService : BackgroundService
                 groupId);
         }
 
-        await _hub.Clients.All.SendAsync(
-            "ReservationUpdated",
-            new
-            {
-                reservationId = groupId,
-                stage = "Due",
-                reservationTime,
-                holdUntil
-            },
-            cancellationToken);
+        if (broadcastStage)
+        {
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    reservationId = groupId,
+                    stage = "Due",
+                    reservationTime,
+                    holdUntil
+                },
+                cancellationToken);
+        }
     }
 
     private async Task SendOverdueAsync(
@@ -216,15 +235,18 @@ public sealed class ReservationReminderService : BackgroundService
                 groupId);
         }
 
-        await _hub.Clients.All.SendAsync(
-            "ReservationUpdated",
-            new
-            {
-                reservationId = groupId,
-                stage = "Overdue",
-                reservationTime,
-                holdUntil
-            },
-            cancellationToken);
+        if (broadcastStage)
+        {
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    reservationId = groupId,
+                    stage = "Overdue",
+                    reservationTime,
+                    holdUntil
+                },
+                cancellationToken);
+        }
     }
 }
