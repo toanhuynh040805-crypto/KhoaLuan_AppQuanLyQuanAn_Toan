@@ -12,7 +12,14 @@ namespace QuanAnWinForm.Services;
 public class NotificationHubClient
 {
     private HubConnection? _connection;
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
+    private int _userId;
+    private string _roleName = "";
+    private bool _disconnecting;
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
     public event Action<NotificationDto>? OnNewNotification;
 
@@ -25,10 +32,36 @@ public class NotificationHubClient
     public static event Action<OrderItemCancelledPayload>? OrderItemCancelled;
     public static event Action<PaymentRequestedPayload>? PaymentRequested;
     public static event Action<PaymentCompletedPayload>? PaymentCompleted;
+    public static event Action<OrderUpdatedPayload>? OrderUpdated;
+    public static event Action? ConnectionRestored;
 
     public async Task ConnectAsync(int userId, string roleName)
     {
-        _connection = new HubConnectionBuilder()
+        _userId = userId;
+        _roleName = roleName?.Trim() ?? "";
+        _disconnecting = false;
+        await EnsureConnectedAsync();
+    }
+
+    public async Task EnsureConnectedAsync()
+    {
+        if (_disconnecting || _userId <= 0 || string.IsNullOrWhiteSpace(_roleName) || IsConnected)
+            return;
+
+        await _connectGate.WaitAsync();
+        try
+        {
+            if (_disconnecting || IsConnected)
+                return;
+
+            if (_connection is not null)
+            {
+                try { await _connection.DisposeAsync(); }
+                catch { /* kết nối cũ đã hỏng */ }
+                _connection = null;
+            }
+
+            var connection = new HubConnectionBuilder()
             .WithUrl(ApiConfig.HubUrl, options =>
             {
                 var token = SessionContext.Token;
@@ -41,31 +74,31 @@ public class NotificationHubClient
             .WithAutomaticReconnect()
             .Build();
 
-        _connection.On<JsonElement>("NewNotification", raw =>
+        connection.On<JsonElement>("NewNotification", raw =>
         {
             var noti = JsonSerializer.Deserialize<NotificationDto>(raw.GetRawText(), JsonOpts);
             if (noti is not null) OnNewNotification?.Invoke(noti);
         });
 
-        _connection.On<JsonElement>("TableStatusUpdated", raw =>
+        connection.On<JsonElement>("TableStatusUpdated", raw =>
         {
             var payload = JsonSerializer.Deserialize<TableStatusUpdatedPayload>(raw.GetRawText(), JsonOpts);
             if (payload is not null) TableStatusUpdated?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("ItemStatusUpdated", raw =>
+        connection.On<JsonElement>("ItemStatusUpdated", raw =>
         {
             var payload = JsonSerializer.Deserialize<ItemStatusUpdatedPayload>(raw.GetRawText(), JsonOpts);
             if (payload is not null) ItemStatusUpdated?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("OrderItemCancelled", raw =>
+        connection.On<JsonElement>("OrderItemCancelled", raw =>
         {
             var payload = JsonSerializer.Deserialize<OrderItemCancelledPayload>(raw.GetRawText(), JsonOpts);
             if (payload is not null) OrderItemCancelled?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("PaymentRequested", raw =>
+        connection.On<JsonElement>("PaymentRequested", raw =>
         {
             var payload = JsonSerializer.Deserialize<PaymentRequestedPayload>(
                 raw.GetRawText(),
@@ -73,7 +106,7 @@ public class NotificationHubClient
             if (payload is not null) PaymentRequested?.Invoke(payload);
         });
 
-        _connection.On<JsonElement>("PaymentCompleted", raw =>
+        connection.On<JsonElement>("PaymentCompleted", raw =>
         {
             var payload = JsonSerializer.Deserialize<PaymentCompletedPayload>(
                 raw.GetRawText(),
@@ -81,24 +114,83 @@ public class NotificationHubClient
             if (payload is not null) PaymentCompleted?.Invoke(payload);
         });
 
-        // WithAutomaticReconnect() chi tu dong noi lai DUONG TRUYEN, KHONG tu
-        // dong join lai group cu -> phai tu join lai thu cong sau moi lan Reconnected.
-        _connection.Reconnected += async _ => await JoinGroupsAsync(userId, roleName);
+        connection.On<JsonElement>("OrderUpdated", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<OrderUpdatedPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null) OrderUpdated?.Invoke(payload);
+        });
 
-        await _connection.StartAsync();
-        await JoinGroupsAsync(userId, roleName);
+        // AutomaticReconnect chỉ chạy sau khi đã kết nối thành công.
+        // Sau reconnect phải join lại group và yêu cầu các màn tải bù dữ liệu
+        // có thể đã bị bỏ lỡ trong khoảng mất mạng.
+        connection.Reconnected += async _ =>
+        {
+            try
+            {
+                await JoinGroupsAsync(connection, _userId, _roleName);
+                ConnectionRestored?.Invoke();
+            }
+            catch
+            {
+                // Health-check ở MainForm sẽ thử lại.
+            }
+        };
+
+        _connection = connection;
+
+        try
+        {
+            await connection.StartAsync();
+            await JoinGroupsAsync(connection, _userId, _roleName);
+            ConnectionRestored?.Invoke();
+        }
+        catch
+        {
+            if (ReferenceEquals(_connection, connection))
+                _connection = null;
+
+            try { await connection.DisposeAsync(); } catch { }
+            throw;
+        }
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
     }
 
-    private async Task JoinGroupsAsync(int userId, string roleName)
+    private static async Task JoinGroupsAsync(
+        HubConnection connection,
+        int userId,
+        string roleName)
     {
-        if (_connection is null) return;
-        await _connection.InvokeAsync("JoinUserGroup", userId);
-        await _connection.InvokeAsync("JoinRoleGroup", roleName);
+        if (connection.State != HubConnectionState.Connected)
+            return;
+
+        await connection.InvokeAsync("JoinUserGroup", userId);
+        await connection.InvokeAsync("JoinRoleGroup", roleName);
     }
 
     public async Task DisconnectAsync()
     {
-        if (_connection is not null) await _connection.DisposeAsync();
+        _disconnecting = true;
+        _userId = 0;
+        _roleName = "";
+
+        await _connectGate.WaitAsync();
+        try
+        {
+            var connection = _connection;
+            _connection = null;
+            if (connection is not null)
+                await connection.DisposeAsync();
+        }
+        finally
+        {
+            _connectGate.Release();
+        }
     }
 }
 
@@ -151,4 +243,10 @@ public class PaymentCompletedPayload
     public int OrderId { get; set; }
     public int InvoiceId { get; set; }
     public decimal TotalAmount { get; set; }
+}
+
+
+public class OrderUpdatedPayload
+{
+    public int OrderId { get; set; }
 }
