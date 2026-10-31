@@ -33,8 +33,11 @@ namespace QuanAnWinForm.UserControls;
 //    tat ca, trinh bay dang timeline nhom theo ngay (ngay gan nhat len dau)
 //    kem khu vuc phu trach va trang thai - phong cach lich su giao dich/
 //    newsfeed cua cac app hien dai thay vi 1 bang DataGridView day dac.
-public partial class StaffControl : UserControl
+public partial class StaffControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadEverythingAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<EmployeeDto> _employees = new();
