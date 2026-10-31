@@ -450,6 +450,8 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
         NotificationHubClient.PaymentRequested += OnPaymentRequested;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
     private void UnsubscribeRealtime()
@@ -459,6 +461,8 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
         NotificationHubClient.PaymentRequested -= OnPaymentRequested;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
     // Các handler này chạy trên luồng nền của SignalR -> phải đẩy về luồng giao diện
@@ -466,16 +470,22 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         QueueRefresh(tables: true, items: false);
 
     private void OnItemStatusUpdated(ItemStatusUpdatedPayload p) =>
-        QueueRefresh(tables: false, items: true);
+        QueueRefresh(tables: true, items: true);
 
     private void OnOrderItemCancelled(OrderItemCancelledPayload p) =>
-        QueueRefresh(tables: false, items: true);
+        QueueRefresh(tables: true, items: true);
 
     private void OnPaymentRequested(PaymentRequestedPayload p) =>
         QueueRefresh(tables: true, items: false);
 
     private void OnPaymentCompleted(PaymentCompletedPayload p) =>
-        QueueRefresh(tables: true, items: false);
+        QueueRefresh(tables: true, items: true);
+
+    private void OnOrderUpdated(OrderUpdatedPayload p) =>
+        QueueRefresh(tables: true, items: true);
+
+    private void OnConnectionRestored() =>
+        QueueRefresh(tables: true, items: true);
 
     private void QueueRefresh(bool tables, bool items)
     {
