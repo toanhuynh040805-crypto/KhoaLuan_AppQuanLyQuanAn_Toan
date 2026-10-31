@@ -5,8 +5,11 @@ using QuanAnWinForm.Utils;
 
 namespace QuanAnWinForm.UserControls;
 
-public partial class TableManagementControl : UserControl
+public partial class TableManagementControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => RefreshRealtimeAsync(reloadTables: true, reloadItems: true);
+
+
     private readonly ApiService _api = new();
     private readonly int _userId;
     private List<TableDto> _tables = new();
