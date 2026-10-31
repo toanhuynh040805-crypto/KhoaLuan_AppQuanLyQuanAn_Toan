@@ -14,7 +14,7 @@ using System.Text;
 namespace QuanAnBackend.Controllers;
 
 // DurationMinutes de null (khach cu/WinForm cu chua gui len) -> Controller se tu
-// dung Reservation.DefaultDurationMinutes (120 phut) thay vi bat buoc sua Client ngay.
+// dung Reservation.DefaultDurationMinutes (30 phut) thay vi bat buoc sua Client ngay.
 public record CreateReservationRequest(int TableId, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note);
 public record UpdateReservationRequest(string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note);
 public record ReservationTableSlot(int TableId, int NumberOfGuests);
@@ -28,17 +28,20 @@ public class ReservationsController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly ReservationAudienceService _reservationAudience;
+    private readonly TableStateService _tableState;
 
     public ReservationsController(
         AppDbContext db,
         IHubContext<OrderHub> hub,
         NotificationService notifications,
-        ReservationAudienceService reservationAudience)
+        ReservationAudienceService reservationAudience,
+        TableStateService tableState)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
         _reservationAudience = reservationAudience;
+        _tableState = tableState;
     }
 
     private async Task<int?> ResolveCustomerIdAsync(string? phone)
@@ -791,11 +794,26 @@ public class ReservationsController : ControllerBase
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
 
+        var physicalTableIds = table is null
+            ? new HashSet<int> { reservation.TableId }
+            : await GetPhysicalTableIdsAsync(table);
+        if (physicalTableIds.Count == 0)
+            physicalTableIds.Add(reservation.TableId);
+
         var others = await _db.Reservations
-            .Where(r => r.ReservationId != id && r.TableId == reservation.TableId &&
-                        (r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan))
+            .Where(r =>
+                r.ReservationId != id &&
+                physicalTableIds.Contains(r.TableId) &&
+                (r.Status == ReservationStatus.ChoXacNhan ||
+                 r.Status == ReservationStatus.DaXacNhan ||
+                 r.Status == ReservationStatus.DaNhanBan))
             .ToListAsync();
-        var overlapped = others.FirstOrDefault(r => IsOverlapping(request.ReservationTime, durationMinutes, r.ReservationTime, r.DurationMinutes));
+        var overlapped = others.FirstOrDefault(r =>
+            IsOverlapping(
+                request.ReservationTime,
+                durationMinutes,
+                r.ReservationTime,
+                r.DurationMinutes));
         if (overlapped is not null)
             return BadRequest(new
             {
@@ -820,6 +838,39 @@ public class ReservationsController : ControllerBase
         reservation.DepositAmount = request.DepositAmount;
         reservation.Note = request.Note;
         await _db.SaveChangesAsync();
+
+        if (table is not null)
+        {
+            var resolvedStatus = await _tableState.ResolveIdleStatusAsync(table.TableId);
+            if (table.Status != resolvedStatus)
+            {
+                table.Status = resolvedStatus;
+                await _db.SaveChangesAsync();
+
+                await _hub.Clients.All.SendAsync(
+                    "TableStatusUpdated",
+                    new
+                    {
+                        TableId = table.TableId,
+                        table.TableName,
+                        Status = table.Status
+                    });
+            }
+        }
+
+        if (detailsChanged)
+        {
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = reservation.ReservationId,
+                    Status = reservation.Status.ToString(),
+                    Stage = "Updated",
+                    reservation.ReservationTime,
+                    HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+                });
+        }
 
         if (detailsChanged && reservation.CustomerId.HasValue)
         {
