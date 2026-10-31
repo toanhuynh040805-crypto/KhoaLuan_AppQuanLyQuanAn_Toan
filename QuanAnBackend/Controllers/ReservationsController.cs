@@ -756,18 +756,38 @@ public class ReservationsController : ControllerBase
                 message = "Bạn không thuộc nhóm được thông báo/phụ trách khu vực của lượt đặt bàn này."
             });
 
+        var releasedIds = activeRows
+            .Select(row => row.ReservationId)
+            .ToHashSet();
         var changedTables = new List<DiningTable>();
+
         foreach (var row in activeRows)
         {
             row.Status = ReservationStatus.KhongDen;
             row.CancelledByUserId = userId.Value;
             row.CancelledAt = now;
+        }
 
-            if (row.Table is not null && row.Table.Status == TableStatus.DaDat)
-            {
-                row.Table.Status = TableStatus.Trong;
-                changedTables.Add(row.Table);
-            }
+        foreach (var table in activeRows
+            .Select(row => row.Table)
+            .Where(table => table is not null)
+            .Cast<DiningTable>()
+            .DistinctBy(table => table.TableId))
+        {
+            if (table.Status != TableStatus.DaDat)
+                continue;
+
+            var stillHeld = await _db.Reservations.AnyAsync(reservation =>
+                reservation.TableId == table.TableId &&
+                !releasedIds.Contains(reservation.ReservationId) &&
+                (reservation.Status == ReservationStatus.DaXacNhan ||
+                 reservation.Status == ReservationStatus.ChoXacNhan) &&
+                reservation.ReservationTime <= now.Add(UpcomingThreshold));
+
+            table.Status = stillHeld
+                ? TableStatus.DaDat
+                : TableStatus.Trong;
+            changedTables.Add(table);
         }
 
         await _db.SaveChangesAsync();
