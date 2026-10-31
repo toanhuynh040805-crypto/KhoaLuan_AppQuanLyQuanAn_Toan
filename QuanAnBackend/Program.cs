@@ -63,6 +63,7 @@ builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<MobilePermissionService>();
 builder.Services.AddScoped<MobilePermissionSchemaService>();
 builder.Services.AddScoped<AreaAccessService>();
+builder.Services.AddScoped<ReservationAudienceService>();
 builder.Services.AddScoped<AreaAssignmentSchemaService>();
 builder.Services.AddScoped<AttendanceSettingsService>();
 builder.Services.AddScoped<CustomerAccountSchemaService>();
@@ -73,6 +74,7 @@ builder.Services.AddScoped<BundledMenuImageService>();
 builder.Services.AddScoped<WebProfileSchemaService>();
 builder.Services.AddSingleton<IWebReviewContentClassifier, WebReviewModerationService>();
 builder.Services.AddHostedService<TimeoutMonitorService>();
+builder.Services.AddHostedService<ReservationReminderService>();
 
 // JWT & Google Authentication for Web, Mobile and WinForms.
 var jwtSection = builder.Configuration.GetSection("Jwt");
