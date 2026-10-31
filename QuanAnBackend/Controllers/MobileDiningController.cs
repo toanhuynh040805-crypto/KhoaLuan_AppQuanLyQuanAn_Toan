@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
+using QuanAnBackend.Models;
 using QuanAnBackend.Authorization;
 
 namespace QuanAnBackend.Controllers;
