@@ -15,10 +15,14 @@ class TableService {
     try {
       response =
           await _apiClient.get('/mobile/dining/tables');
-    } on ApiException {
-      // Endpoint mobile có thêm dữ liệu thời gian/khách/số tiền. Nếu một
-      // bảng phụ tương thích ở Backend đang lỗi, vẫn phải cho nhân viên xem
-      // được sơ đồ bàn bằng endpoint cơ bản thay vì trắng toàn màn hình.
+    } on ApiException catch (error) {
+      // Nếu Backend/mạng không tới được thì gọi endpoint thứ hai cũng chỉ làm
+      // người dùng chờ thêm một timeout nữa. Chỉ fallback khi Backend thực sự
+      // đã phản hồi nhưng endpoint mobile trả lỗi HTTP.
+      if (error.isNetworkError) {
+        rethrow;
+      }
+
       response =
           await _apiClient.get('/tables');
     }
