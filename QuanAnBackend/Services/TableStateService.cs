@@ -60,6 +60,19 @@ public sealed class TableStateService
         if (hasActiveOpenOrder)
             return TableStatus.DangPhucVu;
 
+        // Sau khi khách đã nhận bàn có thể chưa kịp tạo Order đầu tiên.
+        // Trong khoảng này bàn vẫn là Đang phục vụ, không được kéo về Trống.
+        var hasReceivedReservation = await _db.Reservations
+            .AsNoTracking()
+            .AnyAsync(reservation =>
+                physicalTableIds.Contains(reservation.TableId) &&
+                reservation.ReservationTime >= current.AddDays(-1) &&
+                reservation.Status == ReservationStatus.DaNhanBan,
+                cancellationToken);
+
+        if (hasReceivedReservation)
+            return TableStatus.DangPhucVu;
+
         var hasRelevantReservation = await _db.Reservations
             .AsNoTracking()
             .AnyAsync(reservation =>
