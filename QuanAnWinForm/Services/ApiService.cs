@@ -675,6 +675,14 @@ public class ApiService
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
+    public async Task ReleaseOverdueReservationAsync(int id)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/reservations/{id}/release-overdue",
+            new { });
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
     public async Task DeleteReservationAsync(int id)
     {
         var res = await _http.DeleteAsync($"/api/reservations/{id}");
