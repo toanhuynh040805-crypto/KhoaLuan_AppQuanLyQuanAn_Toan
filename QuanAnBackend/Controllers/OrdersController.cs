@@ -29,7 +29,8 @@ public record AddedOrderItemDto(
     decimal UnitPrice,
     string Status,
     string? Note,
-    bool IsTakeaway = false
+    bool IsTakeaway = false,
+    DateTime? CreatedAt = null
 );
 public record CheckInRequest(int TableId, int UserId, int? ReservationId, string? Note);
 public record CancelOrderDto(int UserId, string? Reason);
@@ -346,7 +347,8 @@ public class OrdersController : ControllerBase
                         price,
                         "Chờ chế biến",
                         dto.Note,
-                        dto.IsTakeaway
+                        dto.IsTakeaway,
+                        batchCreatedAt
                     )
                 );
 
@@ -384,6 +386,10 @@ public class OrdersController : ControllerBase
                 TableName = tableName,
                 Status = TableStatus.DangPhucVu
             });
+
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId = orderId.Value });
 
             foreach (var stationGroup in realtimeTickets.GroupBy(x => x.StationName))
             {
@@ -530,7 +536,8 @@ public class OrdersController : ControllerBase
                     menuItem.Price,
                     "Chờ chế biến",
                     dto.Note,
-                    true));
+                    true,
+                    batchCreatedAt));
             }
 
             await _db.SaveChangesAsync();
@@ -1421,7 +1428,8 @@ public class OrdersController : ControllerBase
                 oi.IsTakeaway,
                 KitchenStatus = oi.Status,
                 oi.CancelReason,
-                oi.RowVer
+                oi.RowVer,
+                oi.CreatedAt
             })
         });
     }

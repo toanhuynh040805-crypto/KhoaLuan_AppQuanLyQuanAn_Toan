@@ -1,4 +1,4 @@
-import { bookingApi } from '../api/bookingApi.js?auth-session-2';
+import { bookingApi } from '../api/bookingApi.js?table-sync-3';
 import {
     renderBookingTables,
     renderBookingTableCards,
@@ -6,7 +6,7 @@ import {
     renderBookingTableAlert
 } from '../components/bookingView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
-import { realtimeClient } from '../realtime/realtimeClient.js';
+import { realtimeClient } from '../realtime/realtimeClient.js?table-sync-3';
 
 const form = document.querySelector('[data-booking-form]');
 if (form) {
@@ -188,6 +188,7 @@ if (form) {
                 capacity,
                 areaId,
                 areaName,
+                currentStatus: t.currentStatus ?? t.CurrentStatus ?? 0,
                 isVip,
                 isCombined: false,
                 tableCount: 1
@@ -514,7 +515,9 @@ if (form) {
                     time: timeInput.value,
                     numberOfGuests: guestsInput.value,
                     customerName: nameInput.value,
-                    customerPhone: phoneInput.value
+                    customerPhone: phoneInput.value,
+                    durationMinutes: Number(batchResult?.durationMinutes ?? batchResult?.DurationMinutes ?? 30),
+                    holdUntil: batchResult?.holdUntil ?? batchResult?.HoldUntil ?? null
                 }));
                 location.assign(`./success.html?code=${encodeURIComponent(String(groupCode))}`);
                 return;
@@ -548,7 +551,9 @@ if (form) {
                 time: timeInput.value,
                 numberOfGuests: guestsInput.value,
                 customerName: nameInput.value,
-                customerPhone: phoneInput.value
+                customerPhone: phoneInput.value,
+                durationMinutes: Number(reservation?.durationMinutes ?? reservation?.DurationMinutes ?? 30),
+                holdUntil: reservation?.holdUntil ?? reservation?.HoldUntil ?? null
             }));
 
             location.assign(`./success.html?code=${encodeURIComponent(String(reservationCode))}`);
@@ -560,43 +565,61 @@ if (form) {
         }
     });
 
-    // Lắng nghe sự kiện SignalR Realtime từ Backend
+    // Realtime dùng chung cho Web/Mobile/WinForms. Không tự sửa một card
+    // bằng dữ liệu event vì một bàn có thể có TableId trùng cũ; luôn tải lại
+    // nguồn chuẩn /tables/available để giữ đúng cùng trạng thái với hai nền tảng kia.
+    let realtimeReloadTimer = null;
+
+    function scheduleAvailabilitySync(delay = 180) {
+        if (!dateInput.value || !timeInput.value || pending || completed) return;
+
+        if (realtimeReloadTimer) {
+            clearTimeout(realtimeReloadTimer);
+        }
+
+        realtimeReloadTimer = setTimeout(() => {
+            realtimeReloadTimer = null;
+            loadAvailability(false);
+        }, delay);
+    }
+
     realtimeClient.on('TableStatusUpdated', (data) => {
         const changedId = data?.TableId ?? data?.tableId ?? data?.id;
         const changedName = data?.TableName ?? data?.tableName ?? (changedId ? `Bàn ${changedId}` : '');
-        const status = Number(data?.Status ?? data?.status ?? 0);
+        const rawStatus = data?.Status ?? data?.status;
+        const numericStatus = typeof rawStatus === 'number'
+            ? rawStatus
+            : Number(rawStatus);
 
-        // 0: Trong, 1: DangPhucVu, 2: DaDat, 3: DangDonDep
-        if (status !== 0 && changedId) {
+        if (Number.isFinite(numericStatus) && numericStatus !== 0 && changedId) {
             const idStr = String(changedId);
-            const isCurrentlySelected = selectedTableId && (
-                selectedTableId === idStr ||
-                selectedTableId.split(',').map((s) => s.trim()).includes(idStr)
-            );
+            const selectedIds = selectedTableId
+                ? selectedTableId.split(',').map((value) => value.trim())
+                : [];
 
-            if (isCurrentlySelected) {
+            if (selectedIds.includes(idStr)) {
                 selectedTableId = '';
                 selectedTableDetails = null;
                 tableInput.value = '';
                 updateSubmitState();
                 renderBookingTableAlert(
                     tableAlertContainer,
-                    `Bàn ${changedName} vừa chuyển sang trạng thái bận hoặc đã có người đặt trước. Vui lòng chọn bàn khác.`,
-                    'error'
+                    `Bàn ${changedName} vừa chuyển sang trạng thái bận/đã đặt. Danh sách đang được đồng bộ lại.`,
+                    'warning'
                 );
             }
         }
 
-        if (dateInput.value && timeInput.value && !pending && !completed) {
-            loadAvailability(false);
-        }
+        scheduleAvailabilitySync();
     });
 
-    realtimeClient.on('sync', () => {
-        if (dateInput.value && timeInput.value && !pending && !completed) {
-            loadAvailability(false);
-        }
-    });
+    // ReservationUpdated rất quan trọng với đặt bàn xa giờ: Table.Status có thể
+    // chưa chuyển DaDat ngay nhưng khung giờ tương lai đã không còn khả dụng.
+    realtimeClient.on('ReservationUpdated', () => scheduleAvailabilitySync());
+    realtimeClient.on('PaymentCompleted', () => scheduleAvailabilitySync());
+    realtimeClient.on('OrderUpdated', () => scheduleAvailabilitySync());
+    realtimeClient.on('reconnected', () => scheduleAvailabilitySync(0));
+    realtimeClient.on('sync', () => scheduleAvailabilitySync(0));
 
     realtimeClient.start().catch(() => {});
 }

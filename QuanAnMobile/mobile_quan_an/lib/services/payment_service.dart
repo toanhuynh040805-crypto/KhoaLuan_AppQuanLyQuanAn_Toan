@@ -1,6 +1,7 @@
 import '../models/payment_method_option.dart';
 import '../models/payment_preview.dart';
 import 'api_client.dart';
+import 'api_config.dart';
 
 class PaymentRequestLockState {
   final bool hasRequest;
@@ -145,9 +146,18 @@ class PaymentService {
       );
     }
 
-    return PaymentPreview.fromJson(
-      Map<String, dynamic>.from(response),
-    );
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(response);
+
+    final String rawQrUrl =
+        data['qrImageUrl']?.toString().trim() ?? '';
+
+    if (rawQrUrl.isNotEmpty) {
+      data['qrImageUrl'] =
+          ApiConfig.resolveAssetUrl(rawQrUrl);
+    }
+
+    return PaymentPreview.fromJson(data);
   }
 
   Future<int> _resolvePaymentMethod(Object paymentMethod) async {

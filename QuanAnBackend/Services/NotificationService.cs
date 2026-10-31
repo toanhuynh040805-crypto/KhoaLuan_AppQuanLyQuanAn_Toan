@@ -33,8 +33,18 @@ public class NotificationService
         string? targetRole = null,
         int? targetUserId = null,
         string? relatedEntityType = null,
-        int? relatedEntityId = null)
+        int? relatedEntityId = null,
+        string? eventKey = null)
     {
+        if (!string.IsNullOrWhiteSpace(eventKey))
+        {
+            if (eventKey.Length > 200)
+                throw new ArgumentException("Event key must contain at most 200 characters.", nameof(eventKey));
+
+            if (await _db.Notifications.AnyAsync(n => n.EventKey == eventKey))
+                return;
+        }
+
         var noti = new Notification
         {
             Title = title,
@@ -44,11 +54,22 @@ public class NotificationService
             TargetUserId = targetUserId,
             RelatedEntityType = relatedEntityType,
             RelatedEntityId = relatedEntityId,
+            EventKey = string.IsNullOrWhiteSpace(eventKey) ? null : eventKey,
             IsRead = false,
             CreatedAt = DateTime.Now
         };
         _db.Notifications.Add(noti);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException exception) when (
+            !string.IsNullOrWhiteSpace(eventKey) &&
+            exception.GetBaseException() is SqlException { Number: 2601 or 2627 })
+        {
+            _db.Entry(noti).State = EntityState.Detached;
+            return;
+        }
 
         var payload = new
         {
@@ -60,6 +81,7 @@ public class NotificationService
             noti.TargetUserId,
             noti.RelatedEntityType,
             noti.RelatedEntityId,
+            noti.EventKey,
             noti.IsRead,
             noti.CreatedAt
         };
@@ -73,7 +95,8 @@ public class NotificationService
             isRead = noti.IsRead,
             time = "Vừa xong",
             relatedEntityType = noti.RelatedEntityType,
-            relatedEntityId = noti.RelatedEntityId
+            relatedEntityId = noti.RelatedEntityId,
+            eventKey = noti.EventKey
         };
 
         if (targetUserId.HasValue)
@@ -101,6 +124,11 @@ public class NotificationService
                 .Group($"role-{targetRole}")
                 .SendAsync("NewNotification", payload);
 
+            await _hub.Clients
+                .Group($"role-{targetRole}")
+                .SendAsync("NotificationReceived", mobilePayload);
+
+            // Giữ tương thích client cũ từng join role dưới dạng dept-*.
             await _hub.Clients
                 .Group($"dept-{targetRole}")
                 .SendAsync("NotificationReceived", mobilePayload);

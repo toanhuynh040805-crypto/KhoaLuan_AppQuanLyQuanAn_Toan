@@ -14,6 +14,7 @@ import '../../services/api_client.dart';
 import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
@@ -69,6 +70,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
+  Timer? _relativeTimeTimer;
   bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
@@ -138,12 +140,20 @@ class _TableDetailV2State extends State<TableDetailV2> {
         (_) => unawaited(_heartbeatTableLock()),
       );
     }
+
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
     _paymentRequestLockTimer?.cancel();
+    _relativeTimeTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
@@ -387,6 +397,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: oldItem.unitPrice,
           status: event.status,
           note: oldItem.note,
+          createdAt: oldItem.createdAt,
           isTakeaway: oldItem.isTakeaway,
         );
       }
@@ -826,6 +837,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: current.unitPrice,
           status: status,
           note: current.note,
+          createdAt: current.createdAt,
           isTakeaway: current.isTakeaway,
         );
       });
@@ -874,6 +886,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
             unitPrice: item.unitPrice,
             status: 'Đã phục vụ',
             note: item.note,
+            createdAt: item.createdAt,
             isTakeaway: item.isTakeaway,
           );
         }).toList();
@@ -941,6 +954,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
         unitPrice: current.unitPrice,
         status: current.status,
         note: current.note,
+        createdAt: current.createdAt,
         isTakeaway:
             current.isTakeaway,
       );
@@ -1165,6 +1179,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 preview.transferContent,
             qrImageUrl:
                 preview.qrImageUrl,
+            qrPayload:
+                preview.qrPayload,
           ),
         ),
       );
@@ -1658,20 +1674,63 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
+            if (_canCompletePayment && orderItems.isNotEmpty)
+              IconButton(
+                tooltip: 'Xem / in bill',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('receipt'),
+                icon: const Icon(Icons.print_outlined),
+              ),
+            if (_canOrder && _isTableActive)
+              IconButton(
+                tooltip: 'Khách hàng / Thành viên',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('member'),
+                icon: Icon(
+                  _memberCustomer == null
+                      ? Icons.person_add_alt_1_outlined
+                      : Icons.person_outline,
+                  color: _memberCustomer == null ? null : Colors.green,
+                ),
+              ),
+            if (_canManageTables && _isTableActive)
+              IconButton(
+                tooltip: currentTable.isTakeaway
+                    ? 'Xóa món và hủy đơn'
+                    : 'Xóa món và trả bàn',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('clear'),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.redAccent,
+                ),
+              ),
             PopupMenuButton<String>(
-              tooltip: 'Thao tác',
+              tooltip: 'Thao tác khác',
               enabled: !_closingAfterPayment,
               onSelected: _handleTopMenuAction,
               itemBuilder: (context) => [
-                if (_canCompletePayment && orderItems.isNotEmpty)
-                  const PopupMenuItem(
-                    value: 'receipt',
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.print_outlined),
-                      title: Text('Xem / in bill'),
-                    ),
-                  ),
                 if (_canOrder && orderItems.isNotEmpty)
                   const PopupMenuItem(
                     value: 'kitchen',
@@ -1679,20 +1738,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       dense: true,
                       leading: Icon(Icons.restaurant_outlined),
                       title: Text('Yêu cầu xuống bếp'),
-                    ),
-                  ),
-                if (_canOrder && _isTableActive)
-                  PopupMenuItem(
-                    value: 'member',
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(
-                        _memberCustomer == null
-                            ? Icons.person_add_alt_1_outlined
-                            : Icons.person_outline,
-                        color: _memberCustomer == null ? null : Colors.green,
-                      ),
-                      title: const Text('Khách hàng / Thành viên'),
                     ),
                   ),
                 if (_canManageTables && !currentTable.isTakeaway)
@@ -1738,25 +1783,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       dense: true,
                       leading: Icon(Icons.call_split),
                       title: Text('Tách bàn'),
-                    ),
-                  ),
-                ],
-                if (_canManageTables && _isTableActive) ...[
-                  const PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'clear',
-                    child: ListTile(
-                      dense: true,
-                      leading: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.redAccent,
-                      ),
-                      title: Text(
-                        currentTable.isTakeaway
-                            ? 'Xóa món và hủy đơn'
-                            : 'Xóa món và trả bàn',
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
                     ),
                   ),
                 ],
@@ -2069,6 +2095,31 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       fontSize: 13,
                     ),
                   ),
+                  if (item.createdAt != null) ...[
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_outlined,
+                          size: 13,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            formatClockTime(item.createdAt),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (item.note != null &&
                       item.note!
                           .trim()

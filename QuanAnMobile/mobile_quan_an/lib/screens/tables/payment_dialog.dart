@@ -7,6 +7,7 @@ import '../../app/theme.dart';
 import '../../models/payment_method_option.dart';
 import '../../models/payment_preview.dart';
 import '../../services/app_services.dart';
+import '../../widgets/payment_qr_code.dart';
 
 class PaymentDialogResult {
   final int method;
@@ -308,42 +309,21 @@ class _PaymentDialogState
             ),
           ),
           const SizedBox(height: 10),
-          if (preview
-              .qrImageUrl
-              .isNotEmpty)
-            Container(
+          if (preview.qrPayload.isNotEmpty ||
+              preview.qrImageUrl.isNotEmpty)
+            SizedBox(
               width: 230,
               height: 230,
-              color: Colors.white,
-              padding:
-                  const EdgeInsets.all(
-                6,
-              ),
-              child: Image.network(
-                preview.qrImageUrl,
-                fit: BoxFit.contain,
-                errorBuilder:
-                    (
-                      context,
-                      error,
-                      stackTrace,
-                    ) =>
-                        const Center(
-                  child: Text(
-                    'Không tải được QR',
-                    textAlign:
-                        TextAlign.center,
-                  ),
-                ),
+              child: PaymentQrCode(
+                payload: preview.qrPayload,
+                fallbackImageUrl: preview.qrImageUrl,
+                size: 218,
               ),
             )
           else
             const Padding(
-              padding:
-                  EdgeInsets.all(24),
-              child: Text(
-                'Chưa có mã QR.',
-              ),
+              padding: EdgeInsets.all(24),
+              child: Text('Chưa có mã QR.'),
             ),
           const SizedBox(height: 10),
           Text(

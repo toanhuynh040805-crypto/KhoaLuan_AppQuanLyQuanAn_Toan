@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
@@ -20,12 +21,28 @@ public record TableOrderItemDto(
     decimal UnitPrice,
     string Status,
     string? Note,
-    bool IsTakeaway = false
+    bool IsTakeaway = false,
+    DateTime? CreatedAt = null
 );
 
 public record TableOrderGroupDto(
     int TableId,
     List<TableOrderItemDto> Items
+);
+
+internal sealed record TableListItem(
+    int id,
+    string tableName,
+    int capacity,
+    int status,
+    int areaId,
+    string areaName,
+    string tableType,
+    decimal? amount,
+    string? customerName,
+    int? linkedOrderId,
+    bool isLinkPrimary,
+    string? linkedWith
 );
 
 [ApiController]
@@ -35,12 +52,18 @@ public class TablesController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
+    private readonly TableStateService _tableState;
 
-    public TablesController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications)
+    public TablesController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        TableStateService tableState)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _tableState = tableState;
     }
 
     // GET api/tables?areaId=1 -> vẽ sơ đồ bàn, kèm tên khu vực, lọc theo khu vực (tùy chọn)
@@ -136,7 +159,6 @@ public class TablesController : ControllerBase
                     ORDER BY ot.OrderTableId DESC
                 ) lk
                 WHERE (@AreaId IS NULL OR t.AreaId = @AreaId)
-                  AND (@Status IS NULL OR t.Status = @Status)
                 ORDER BY t.TableId;
                 """;
 
@@ -145,12 +167,7 @@ public class TablesController : ControllerBase
             areaParameter.Value = areaId.HasValue ? areaId.Value : DBNull.Value;
             command.Parameters.Add(areaParameter);
 
-            var statusParameter = command.CreateParameter();
-            statusParameter.ParameterName = "@Status";
-            statusParameter.Value = !string.IsNullOrWhiteSpace(statusFilter) ? statusFilter.Trim() : DBNull.Value;
-            command.Parameters.Add(statusParameter);
-
-            var result = new List<object>();
+            var result = new List<TableListItem>();
             var canViewOrderDetails =
                 User.IsInRole("QuanLy") ||
                 User.IsInRole("ThuNgan") ||
@@ -182,30 +199,127 @@ public class TablesController : ControllerBase
                     customerName = $"{numberOfGuests.Value} khách";
                 }
 
-                result.Add(new
-                {
-                    id = reader.GetInt32(0),
-                    tableName = reader.GetString(1),
-                    capacity = reader.GetInt32(2),
-                    status = StatusToNumber(status),
-                    areaId = reader.GetInt32(4),
-                    areaName = reader.GetString(5),
-                    tableType = reader.GetString(6),
-                    amount = canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
-                    customerName = canViewOrderDetails ? customerName : null,
-                    linkedOrderId = canViewOrderDetails ? linkedOrderId : null,
-                    isLinkPrimary = canViewOrderDetails ? isLinkPrimary : false,
-                    linkedWith = canViewOrderDetails ? linkedWith : null
-                });
+                result.Add(new TableListItem(
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    reader.GetInt32(2),
+                    StatusToNumber(status),
+                    reader.GetInt32(4),
+                    reader.GetString(5),
+                    reader.GetString(6),
+                    canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
+                    canViewOrderDetails ? customerName : null,
+                    canViewOrderDetails ? linkedOrderId : null,
+                    canViewOrderDetails && isLinkPrimary,
+                    canViewOrderDetails ? linkedWith : null
+                ));
             }
 
-            return Ok(result);
+            var normalized = result
+                .GroupBy(table => new
+                {
+                    table.areaId,
+                    Name = NormalizeTableName(table.tableName)
+                })
+                .Select(group => group
+                    .OrderByDescending(table => TableDisplayPriority((TableStatus)table.status))
+                    .ThenByDescending(table => table.id)
+                    .First())
+                .OrderBy(table => table.areaName)
+                .ThenBy(table => table.tableName)
+                .ToList();
+
+            if (TryParseStatusFilter(statusFilter, out var requestedStatus))
+            {
+                normalized = normalized
+                    .Where(table => table.status == (int)requestedStatus)
+                    .ToList();
+            }
+
+            return Ok(normalized);
+        }
+        catch (DbException)
+        {
+            // Các bảng phụ tương thích như OrderTables/WaitingQueue/Combos có thể
+            // chưa đồng nhất trên DB cũ. Sơ đồ bàn là chức năng lõi nên fallback
+            // về EF Core thay vì trả 500 cho Web/Mobile/WinForms.
+            var fallbackTables = await _db.Tables
+                .AsNoTracking()
+                .Include(table => table.Area)
+                .OrderBy(table => table.Area != null ? table.Area.AreaName : "")
+                .ThenBy(table => table.TableName)
+                .ToListAsync();
+
+            var normalized = fallbackTables
+                .GroupBy(table => new
+                {
+                    table.AreaId,
+                    Name = NormalizeTableName(table.TableName)
+                })
+                .Select(group => group
+                    .OrderByDescending(table => TableDisplayPriority(table.Status))
+                    .ThenByDescending(table => table.TableId)
+                    .First())
+                .Select(table => new TableListItem(
+                    table.TableId,
+                    table.TableName,
+                    table.Capacity,
+                    (int)table.Status,
+                    table.AreaId,
+                    table.Area?.AreaName ?? "",
+                    table.TableType.ToString(),
+                    null,
+                    null,
+                    null,
+                    false,
+                    null))
+                .ToList();
+
+            if (TryParseStatusFilter(statusFilter, out var requestedStatus))
+            {
+                normalized = normalized
+                    .Where(table => table.status == (int)requestedStatus)
+                    .ToList();
+            }
+
+            return Ok(normalized);
         }
         finally
         {
             if (shouldClose)
                 await connection.CloseAsync();
         }
+    }
+
+    private static string NormalizeTableName(string? value)
+        => (value ?? "")
+            .Trim()
+            .ToUpperInvariant();
+
+    private static int TableDisplayPriority(TableStatus status) => status switch
+    {
+        TableStatus.DangPhucVu => 400,
+        TableStatus.DaDat => 300,
+        TableStatus.DangDonDep => 200,
+        _ => 100
+    };
+
+    private static bool TryParseStatusFilter(
+        string? value,
+        out TableStatus status)
+    {
+        status = TableStatus.Trong;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        if (int.TryParse(value, out var numeric) &&
+            Enum.IsDefined(typeof(TableStatus), numeric))
+        {
+            status = (TableStatus)numeric;
+            return true;
+        }
+
+        return Enum.TryParse(value.Trim(), ignoreCase: true, out status);
     }
 
     // WinForm đọc Status là số (khớp enum TableStatus: 0=Trong, 1=DangPhucVu,
@@ -249,7 +363,8 @@ public class TablesController : ControllerBase
                     ) AS EffectiveUnitPrice,
                     oi.Status,
                     oi.Note,
-                    oi.IsTakeaway
+                    oi.IsTakeaway,
+                    oi.CreatedAt
                 FROM Orders o
                 INNER JOIN OrderItems oi ON oi.OrderId = o.OrderId
                 LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
@@ -291,7 +406,8 @@ public class TablesController : ControllerBase
                         reader.GetDecimal(4),
                         status,
                         reader.IsDBNull(6) ? null : reader.GetString(6),
-                        !reader.IsDBNull(7) && reader.GetBoolean(7)
+                        !reader.IsDBNull(7) && reader.GetBoolean(7),
+                        reader.IsDBNull(8) ? null : reader.GetDateTime(8)
                     )
                 );
             }
@@ -420,7 +536,12 @@ public class TablesController : ControllerBase
             .ToListAsync();
         foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
 
-        table.Status = TableStatus.Trong;
+        // Lưu Order/Reservation đã đóng trước. Nếu resolve trạng thái khi Order
+        // vẫn còn DangMo trong DB, TableStateService sẽ đọc lại và giữ bàn ở
+        // DangPhucVu dù người dùng vừa trả bàn.
+        await _db.SaveChangesAsync();
+
+        table.Status = await _tableState.ResolveIdleStatusAsync(id);
         await _db.SaveChangesAsync();
 
         foreach (var order in openOrders.Where(order => order.CustomerId.HasValue))
@@ -468,7 +589,11 @@ public class TablesController : ControllerBase
     //   dang con hieu luc tren cung ban do, theo dung khung [time, time+duration).
     [HttpGet("available")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAvailable([FromQuery] DateTime time, [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes)
+    [EnableRateLimiting("web-read")]
+    public async Task<IActionResult> GetAvailable(
+        [FromQuery] DateTime time,
+        [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes,
+        [FromQuery] int? areaId = null)
     {
         if (durationMinutes < Reservation.MinDurationMinutes || durationMinutes > Reservation.MaxDurationMinutes)
             return BadRequest(new { message = $"Thời lượng giữ bàn phải từ {Reservation.MinDurationMinutes} đến {Reservation.MaxDurationMinutes} phút" });
@@ -476,12 +601,47 @@ public class TablesController : ControllerBase
         var requestedEnd = time.AddMinutes(durationMinutes);
         var isUpcoming = time <= DateTime.Now.AddHours(3);
 
-        var tables = await _db.Tables.Include(t => t.Area).AsNoTracking().ToListAsync();
+        var tableQuery = _db.Tables
+            .Include(t => t.Area)
+            .AsNoTracking()
+            .AsQueryable();
 
-        // Chi lay dat ban con hieu luc (chua Huy/Khong den) - du xa ngay hom nay
-        // bao nhieu cung phai xet, vi khach co the dat truoc hang tuan.
+        if (areaId.HasValue && areaId.Value > 0)
+            tableQuery = tableQuery.Where(table => table.AreaId == areaId.Value);
+
+        var tables = await tableQuery.ToListAsync();
+
+        // DB cũ có thể có nhiều TableId cùng tên trong một khu. Xử lý chúng
+        // như cùng một bàn vật lý: chọn một TableId đại diện để thao tác nhưng
+        // kiểm tra lịch đặt trên TẤT CẢ TableId trùng cũ.
+        var physicalGroups = tables
+            .GroupBy(t => new
+            {
+                t.AreaId,
+                Name = NormalizeTableName(t.TableName)
+            })
+            .Select(group => new
+            {
+                Canonical = group
+                    .OrderByDescending(t => TableDisplayPriority(t.Status))
+                    .ThenByDescending(t => t.TableId)
+                    .First(),
+                AllIds = group.Select(t => t.TableId).ToHashSet(),
+                EffectiveStatus = group
+                    .OrderByDescending(t => TableDisplayPriority(t.Status))
+                    .ThenByDescending(t => t.TableId)
+                    .First()
+                    .Status
+            })
+            .ToList();
+
+        // Chỉ lấy đặt bàn còn hiệu lực, kể cả reservation đang gắn với một
+        // TableId trùng cũ của cùng bàn vật lý.
         var activeReservations = await _db.Reservations
-            .Where(r => r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan)
+            .Where(r =>
+                r.Status == ReservationStatus.ChoXacNhan ||
+                r.Status == ReservationStatus.DaXacNhan ||
+                r.Status == ReservationStatus.DaNhanBan)
             .Select(r => new
             {
                 r.TableId,
@@ -490,39 +650,50 @@ public class TablesController : ControllerBase
             })
             .ToListAsync();
 
-        var result = tables.Select(t =>
+        var result = physicalGroups.Select(group =>
         {
+            var table = group.Canonical;
             string? reason = null;
 
-            // Luon kiem tra trung voi dat ban truoc khac tren cung ban, bat ke gan
-            // hay xa (truoc day 2 dieu kien nay bi viet if/else nen bo sot truong
-            // hop "sap toi + trung dat ban khac" - da sua lai thanh kiem tra doc lap).
             var overlapped = activeReservations
-                .Where(r => r.TableId == t.TableId)
-                .FirstOrDefault(r => time < r.ReservationTime.AddMinutes(r.DurationMinutes) && r.ReservationTime < requestedEnd);
-            if (overlapped is not null)
-                reason = $"Đã có khách đặt {overlapped.ReservationTime:HH:mm dd/MM} - {overlapped.ReservationTime.AddMinutes(overlapped.DurationMinutes):HH:mm dd/MM}";
+                .Where(r => group.AllIds.Contains(r.TableId))
+                .FirstOrDefault(r =>
+                    time < r.ReservationTime.AddMinutes(r.DurationMinutes) &&
+                    r.ReservationTime < requestedEnd);
 
-            if (reason is null && isUpcoming && (t.Status == TableStatus.DangPhucVu || t.Status == TableStatus.DangDonDep))
+            if (overlapped is not null)
             {
-                reason = t.Status == TableStatus.DangPhucVu
+                reason =
+                    $"Đã có khách đặt {overlapped.ReservationTime:HH:mm dd/MM} - " +
+                    $"{overlapped.ReservationTime.AddMinutes(overlapped.DurationMinutes):HH:mm dd/MM}";
+            }
+
+            if (reason is null &&
+                isUpcoming &&
+                (group.EffectiveStatus == TableStatus.DangPhucVu ||
+                 group.EffectiveStatus == TableStatus.DangDonDep))
+            {
+                reason = group.EffectiveStatus == TableStatus.DangPhucVu
                     ? "Bàn đang có khách, chưa rõ giờ trống"
                     : "Bàn đang dọn dẹp";
             }
 
             return new
             {
-                Id = t.TableId,
-                t.TableName,
-                t.Capacity,
-                t.AreaId,
-                AreaName = t.Area != null ? t.Area.AreaName : "",
-                CurrentStatus = t.Status,
+                Id = table.TableId,
+                TableId = table.TableId,
+                table.TableName,
+                table.Capacity,
+                table.AreaId,
+                AreaName = table.Area != null ? table.Area.AreaName : "",
+                TableType = table.TableType,
+                CurrentStatus = group.EffectiveStatus,
                 IsAvailable = reason is null,
                 Reason = reason
             };
         })
-        .OrderBy(t => t.AreaName).ThenBy(t => t.TableName)
+        .OrderBy(t => t.AreaName)
+        .ThenBy(t => t.TableName)
         .ToList();
 
         return Ok(result);
@@ -532,12 +703,31 @@ public class TablesController : ControllerBase
     [Authorize(Roles = "QuanLy")]
     public async Task<IActionResult> Create([FromBody] TableRequest request)
     {
+        var tableName = request.TableName?.Trim() ?? "";
+        if (tableName.Length == 0)
+            return BadRequest(new { message = "Tên bàn không được để trống" });
+
+        if (request.Capacity <= 0)
+            return BadRequest(new { message = "Sức chứa bàn phải lớn hơn 0" });
+
         if (!await _db.Areas.AnyAsync(a => a.AreaId == request.AreaId))
             return BadRequest(new { message = "Khu vực không tồn tại" });
 
+        var duplicate = await _db.Tables
+            .AsNoTracking()
+            .AnyAsync(t =>
+                t.AreaId == request.AreaId &&
+                t.TableName.Trim() == tableName);
+
+        if (duplicate)
+            return Conflict(new
+            {
+                message = $"Khu vực này đã có bàn \"{tableName}\"."
+            });
+
         var table = new DiningTable
         {
-            TableName = request.TableName,
+            TableName = tableName,
             Capacity = request.Capacity,
             AreaId = request.AreaId,
             Status = TableStatus.Trong
@@ -554,7 +744,30 @@ public class TablesController : ControllerBase
         var table = await _db.Tables.FindAsync(id);
         if (table is null) return NotFound();
 
-        table.TableName = request.TableName;
+        var tableName = request.TableName?.Trim() ?? "";
+        if (tableName.Length == 0)
+            return BadRequest(new { message = "Tên bàn không được để trống" });
+
+        if (request.Capacity <= 0)
+            return BadRequest(new { message = "Sức chứa bàn phải lớn hơn 0" });
+
+        if (!await _db.Areas.AnyAsync(a => a.AreaId == request.AreaId))
+            return BadRequest(new { message = "Khu vực không tồn tại" });
+
+        var duplicate = await _db.Tables
+            .AsNoTracking()
+            .AnyAsync(t =>
+                t.TableId != id &&
+                t.AreaId == request.AreaId &&
+                t.TableName.Trim() == tableName);
+
+        if (duplicate)
+            return Conflict(new
+            {
+                message = $"Khu vực này đã có bàn \"{tableName}\"."
+            });
+
+        table.TableName = tableName;
         table.Capacity = request.Capacity;
         table.AreaId = request.AreaId;
         await _db.SaveChangesAsync();

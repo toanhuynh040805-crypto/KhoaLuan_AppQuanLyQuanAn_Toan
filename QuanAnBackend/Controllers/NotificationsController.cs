@@ -75,7 +75,8 @@ public class NotificationsController : ControllerBase
                     IsRead,
                     CreatedAt,
                     TargetRole,
-                    TargetUserId
+                    TargetUserId,
+                    EventKey
                 FROM Notifications
                 WHERE (
                     TargetUserId = @UserId
@@ -128,6 +129,7 @@ public class NotificationsController : ControllerBase
                     notificationType = isMobileClient ? (object)typeText : typeNumber,
                     targetRole = reader.IsDBNull(8) ? null : reader.GetString(8),
                     targetUserId = reader.IsDBNull(9) ? (int?)null : reader.GetInt32(9),
+                    eventKey = reader.IsDBNull(10) ? null : reader.GetString(10),
                     relatedEntityType = reader.IsDBNull(4) ? null : reader.GetString(4),
                     relatedEntityId = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5),
                     isRead = !reader.IsDBNull(6) && reader.GetBoolean(6),

@@ -9,6 +9,7 @@ public static class SessionContext
     public static string? Token { get; set; }
     public static int UserId { get; set; }
     public static string FullName { get; set; } = "";
+    public static string EmployeeCode { get; set; } = "";
     public static string RoleName { get; set; } = "";
     public static int? StationId { get; set; }
     public static string StationName { get; set; } = "";
@@ -18,6 +19,7 @@ public static class SessionContext
         Token = null;
         UserId = 0;
         FullName = "";
+        EmployeeCode = "";
         RoleName = "";
         StationId = null;
         StationName = "";

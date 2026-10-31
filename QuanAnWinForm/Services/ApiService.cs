@@ -14,10 +14,79 @@ public class ApiService
         _http = new HttpClient(new AuthHeaderHandler()) { BaseAddress = new Uri(ApiConfig.BaseUrl) };
     }
 
-    public async Task<List<TableDto>> GetTablesAsync()
+    public async Task<TableLockLeaseDto?> AcquireTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken)
     {
-        var res = await _http.GetFromJsonAsync<List<TableDto>>("/api/tables", JsonOpts);
-        return res ?? new List<TableDto>();
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/acquire",
+            new
+            {
+                employeeCode,
+                clientToken
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(response);
+        return await response.Content.ReadFromJsonAsync<TableLockLeaseDto>(JsonOpts);
+    }
+
+    public async Task<(bool IsOwner, string? Message)> HeartbeatTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/heartbeat",
+            new
+            {
+                employeeCode,
+                clientToken
+            });
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            string? message = null;
+            try
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("message", out var messageElement))
+                {
+                    message = messageElement.GetString();
+                }
+            }
+            catch
+            {
+                // Giữ message mặc định bên dưới.
+            }
+
+            return (false, message);
+        }
+
+        await EnsureSuccessOrThrowMessageAsync(response);
+        return (true, null);
+    }
+
+    public async Task ReleaseTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/release",
+            new
+            {
+                employeeCode,
+                clientToken
+            });
+
+        // Nếu phiên đã bị thiết bị khác tiếp quản thì release sẽ 409.
+        // Không coi đây là lỗi vì lease cũ đã không còn thuộc client này.
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            return;
+
+        await EnsureSuccessOrThrowMessageAsync(response);
     }
 
     public async Task<List<MenuItemDto>> GetMenuAsync()
@@ -672,6 +741,14 @@ public class ApiService
     public async Task UpdateReservationStatusAsync(int id, int status)
     {
         var res = await _http.PutAsJsonAsync($"/api/reservations/{id}/status", (ReservationStatusEnum)status);
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    public async Task ReleaseOverdueReservationAsync(int id)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/reservations/{id}/release-overdue",
+            new { });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 

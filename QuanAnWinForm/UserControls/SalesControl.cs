@@ -37,6 +37,20 @@ public partial class SalesControl : UserControl
     // Đơn ĐANG MỞ của bàn đang chọn (các món khách đã gọi trước đó, kể cả từ Mobile).
     // Hiển thị chỉ-đọc ở giỏ hàng; _cart chỉ chứa các món THÊM MỚI tại quầy.
     private OpenTableOrderDto? _existingOrder;
+    private readonly System.Windows.Forms.Timer _realtimeRefreshTimer =
+        new() { Interval = 300 };
+    private bool _realtimeRefreshRunning;
+    private bool _realtimeDirty;
+
+    private readonly System.Windows.Forms.Timer _tableLockHeartbeatTimer =
+        new() { Interval = 15000 };
+    private int? _lockedTableId;
+    private string? _tableLockToken;
+    private bool _tableLockSwitching;
+    private bool _tableLockLostDialogShowing;
+    private bool _suppressTableSelectionChanged;
+
+    public event Action? ReturnToTablesRequested;
 
     // Món THÊM MỚI mà khách ăn tại chỗ yêu cầu MANG VỀ (cùng 1 đơn / 1 hóa đơn với đơn tại bàn).
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
@@ -89,9 +103,61 @@ public partial class SalesControl : UserControl
         panelLeft.Resize += (s, e) => FitLayout();
         panelRight.Resize += (s, e) => FitLayout();
         Load += (s, e) => FitLayout();
-        Disposed += (s, e) => _tip.Dispose();
 
-        Load += async (s, e) => await LoadDataAsync();
+        _tableLockHeartbeatTimer.Tick += async (s, e) =>
+        {
+            await HeartbeatCurrentTableLockAsync();
+        };
+
+        _realtimeRefreshTimer.Tick += async (s, e) =>
+        {
+            _realtimeRefreshTimer.Stop();
+            if (_realtimeRefreshRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRefreshRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await RefreshCurrentOrderRealtimeAsync();
+            }
+            finally
+            {
+                _realtimeRefreshRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeRefreshTimer.Start();
+            }
+        };
+
+        Load += async (s, e) =>
+        {
+            SubscribeRealtime();
+            await LoadDataAsync();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeRefreshTimer.Stop();
+            _realtimeRefreshTimer.Dispose();
+            _tableLockHeartbeatTimer.Stop();
+            _tableLockHeartbeatTimer.Dispose();
+
+            var tableId = _lockedTableId;
+            var token = _tableLockToken;
+            _lockedTableId = null;
+            _tableLockToken = null;
+
+            if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            {
+                _ = SafeReleaseTableLockAsync(tableId.Value, token!);
+            }
+
+            _tip.Dispose();
+        };
         btnVietQr.Click += async (s, e) => await ProcessPaymentAsync(method: 1);
         btnThanhToan.Click += async (s, e) => await ProcessPaymentAsync(method: 0);
         btnConfirmOrder.Click += async (s, e) => await ConfirmOrderAsync();
@@ -115,6 +181,368 @@ public partial class SalesControl : UserControl
         };
 
         UpdateCustomerInfoLabel();
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver += OnTableLockTakenOver;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver -= OnTableLockTakenOver;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnTableLockTakenOver(TableLockTakenOverPayload payload)
+    {
+        if (IsDisposed ||
+            !_lockedTableId.HasValue ||
+            payload.TableId != _lockedTableId.Value)
+        {
+            return;
+        }
+
+        var currentToken = _tableLockToken?.Trim() ?? "";
+        if (currentToken.Length == 0)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(payload.PreviousClientToken) &&
+            !string.Equals(
+                payload.PreviousClientToken.Trim(),
+                currentToken,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(async () =>
+            {
+                await HandleTableLockLostAsync(
+                    payload.TakenOverByEmployeeName,
+                    payload.TakenOverByEmployeeCode);
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng.
+        }
+    }
+
+    private async Task<bool> AcquireTableLockAsync(int tableId)
+    {
+        if (_lockedTableId == tableId &&
+            !string.IsNullOrWhiteSpace(_tableLockToken))
+        {
+            return true;
+        }
+
+        if (_tableLockSwitching)
+            return false;
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+        {
+            MessageBox.Show(
+                "Không xác định được mã nhân viên của phiên đăng nhập.",
+                "Không thể vào bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+
+        _tableLockSwitching = true;
+        cbTable.Enabled = false;
+
+        try
+        {
+            var newToken = $"winform-{Guid.NewGuid():N}";
+            var lease = await _api.AcquireTableLockAsync(
+                tableId,
+                employeeCode,
+                newToken);
+
+            if (lease is null || string.IsNullOrWhiteSpace(lease.ClientToken))
+                throw new InvalidOperationException("Máy chủ không trả về phiên khóa bàn hợp lệ.");
+
+            var previousTableId = _lockedTableId;
+            var previousToken = _tableLockToken;
+
+            _lockedTableId = tableId;
+            _tableLockToken = lease.ClientToken;
+            _tableLockHeartbeatTimer.Start();
+
+            if (previousTableId.HasValue &&
+                previousTableId.Value != tableId &&
+                !string.IsNullOrWhiteSpace(previousToken))
+            {
+                await SafeReleaseTableLockAsync(
+                    previousTableId.Value,
+                    previousToken!);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không thể vào bàn: {ex.Message}",
+                "Khóa bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+        finally
+        {
+            _tableLockSwitching = false;
+            if (!cbTable.IsDisposed)
+                cbTable.Enabled = true;
+        }
+    }
+
+    private async Task HeartbeatCurrentTableLockAsync()
+    {
+        if (!_lockedTableId.HasValue ||
+            string.IsNullOrWhiteSpace(_tableLockToken) ||
+            _tableLockLostDialogShowing ||
+            IsDisposed)
+        {
+            return;
+        }
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+            return;
+
+        try
+        {
+            var result = await _api.HeartbeatTableLockAsync(
+                _lockedTableId.Value,
+                employeeCode,
+                _tableLockToken!);
+
+            if (!result.IsOwner)
+            {
+                await HandleTableLockLostAsync(
+                    result.Message ?? "",
+                    "");
+            }
+        }
+        catch
+        {
+            // Mất mạng tạm thời không đẩy người dùng ra ngay. Lease phía server
+            // tự hết hạn sau 45 giây; khi kết nối lại heartbeat/event sẽ xác nhận.
+        }
+    }
+
+    private async Task HandleTableLockLostAsync(
+        string takenOverByName,
+        string takenOverByCode)
+    {
+        if (IsDisposed || _tableLockLostDialogShowing)
+            return;
+
+        _tableLockLostDialogShowing = true;
+        _tableLockHeartbeatTimer.Stop();
+
+        _lockedTableId = null;
+        _tableLockToken = null;
+        _selectedTableId = null;
+        _existingOrder = null;
+        ClearCart();
+        RenderCart();
+
+        var name = takenOverByName?.Trim() ?? "";
+        var code = takenOverByCode?.Trim() ?? "";
+        string account;
+
+        // Heartbeat conflict truyền message qua tham số đầu tiên.
+        if (name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("thiết bị khác", StringComparison.OrdinalIgnoreCase))
+        {
+            account = name;
+        }
+        else if (name.Length > 0 && code.Length > 0 &&
+                 !string.Equals(name, code, StringComparison.OrdinalIgnoreCase))
+        {
+            account = $"Tài khoản {name} ({code}) đã tiếp quản bàn này.";
+        }
+        else if (name.Length > 0 || code.Length > 0)
+        {
+            account = $"Tài khoản {(name.Length > 0 ? name : code)} đã tiếp quản bàn này.";
+        }
+        else
+        {
+            account = "Bàn đã được tài khoản khác tiếp quản.";
+        }
+
+        MessageBox.Show(
+            account + Environment.NewLine +
+            "Bạn không thể tiếp tục thao tác trên bàn này.",
+            "Bàn đã được tiếp quản",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+
+        _tableLockLostDialogShowing = false;
+
+        if (!IsDisposed)
+            ReturnToTablesRequested?.Invoke();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ReleaseCurrentTableLockAsync()
+    {
+        var tableId = _lockedTableId;
+        var token = _tableLockToken;
+
+        _tableLockHeartbeatTimer.Stop();
+        _lockedTableId = null;
+        _tableLockToken = null;
+
+        if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            await SafeReleaseTableLockAsync(tableId.Value, token!);
+    }
+
+    private async Task SafeReleaseTableLockAsync(
+        int tableId,
+        string clientToken)
+    {
+        try
+        {
+            var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+            if (employeeCode.Length == 0)
+                return;
+
+            await _api.ReleaseTableLockAsync(
+                tableId,
+                employeeCode,
+                clientToken);
+        }
+        catch
+        {
+            // Lease tự hết hạn sau 45 giây nếu Backend/mạng vừa mất.
+        }
+    }
+
+    private bool IsCurrentOrder(int orderId) =>
+        orderId > 0 && _existingOrder?.OrderId == orderId;
+
+    private bool IsCurrentTable(int? tableId) =>
+        !_isTakeaway &&
+        tableId.HasValue &&
+        tableId.Value > 0 &&
+        _selectedTableId == tableId.Value;
+
+    private void OnOrderUpdated(OrderUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnOrderItemCancelled(OrderItemCancelledPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload payload)
+    {
+        if (IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload payload)
+    {
+        if (!IsCurrentOrder(payload.OrderId) && !IsCurrentTable(payload.TableId))
+            return;
+
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke(async () =>
+            {
+                if (IsDisposed) return;
+
+                // Đơn đã được thiết bị khác thanh toán: không giữ món/giỏ cục bộ
+                // của lượt cũ để tránh thao tác tiếp trên hóa đơn đã đóng.
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+
+                ClearCart();
+                _existingOrder = null;
+                _selectedCustomer = null;
+                txtCustomerPhone.Clear();
+                UpdateCustomerInfoLabel();
+                RenderCart();
+
+                try { await RefreshTablesAsync(); } catch { }
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeRefreshTimer.Stop();
+                _realtimeRefreshTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task RefreshCurrentOrderRealtimeAsync()
+    {
+        try
+        {
+            if (_isTakeaway)
+            {
+                if (_existingOrder?.OrderId is int orderId && orderId > 0)
+                    await LoadTakeawayOrderAsync(orderId, silent: true);
+                return;
+            }
+
+            if (_selectedTableId is int tableId && tableId > 0)
+                await LoadOpenOrderAsync(tableId, silent: true);
+        }
+        catch
+        {
+            // Realtime refresh không được làm gián đoạn thao tác bán hàng.
+        }
     }
 
     private async Task LoadDataAsync()
@@ -186,41 +614,112 @@ public partial class SalesControl : UserControl
             .ToList();
         var keepTableId = _selectedTableId ?? _preselectedTableId;
 
-        cbTable.Items.Clear();
-        foreach (var t in tables) cbTable.Items.Add(t);
-        cbTable.DisplayMember = "TableName";
-
-        if (tables.Count == 0) return;
-
-        var indexToSelect = keepTableId is null ? 0 : tables.FindIndex(t => t.Id == keepTableId.Value);
-        cbTable.SelectedIndex = indexToSelect >= 0 ? indexToSelect : 0;
-    }
-
-    private void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
-    {
-        if (_isTakeaway) return; // dang ban mang ve: bo qua thay doi combobox ban (vd sau khi nap lai danh sach ban)
-
-        if (cbTable.SelectedItem is TableDto t)
+        _suppressTableSelectionChanged = true;
+        try
         {
-            _selectedTableId = t.Id;
-            lblTableName.Text = t.TableName;
-            ClearCart();
-            _existingOrder = null;
-            if (cbCampaign.Items.Count > 0) cbCampaign.SelectedIndex = 0;
+            cbTable.Items.Clear();
+            foreach (var t in tables) cbTable.Items.Add(t);
+            cbTable.DisplayMember = "TableName";
 
-            // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
-            _selectedCustomer = null;
-            txtCustomerPhone.Clear();
-            UpdateCustomerInfoLabel();
+            if (tables.Count == 0)
+            {
+                cbTable.SelectedIndex = -1;
+                return;
+            }
 
-            RenderCart();
+            // Không tự chọn bàn đầu tiên: mở màn Bán hàng không được vô tình
+            // chiếm lease và đẩy Mobile/WinForms khác ra khỏi một bàn.
+            var indexToSelect = keepTableId is null
+                ? -1
+                : tables.FindIndex(t => t.Id == keepTableId.Value);
+            cbTable.SelectedIndex = indexToSelect;
+        }
+        finally
+        {
+            _suppressTableSelectionChanged = false;
+        }
 
-            // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
-            _ = LoadOpenOrderAsync(t.Id);
+        if (!_isTakeaway &&
+            cbTable.SelectedItem is TableDto selected &&
+            (_lockedTableId != selected.Id ||
+             string.IsNullOrWhiteSpace(_tableLockToken)))
+        {
+            await SelectDineInTableAsync(selected);
         }
     }
 
-    private async Task LoadOpenOrderAsync(int tableId)
+    private async void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_suppressTableSelectionChanged || _isTakeaway)
+            return;
+
+        if (cbTable.SelectedItem is not TableDto table)
+        {
+            _selectedTableId = null;
+            lblTableName.Text = "Chưa chọn bàn";
+            return;
+        }
+
+        await SelectDineInTableAsync(table);
+    }
+
+    private async Task SelectDineInTableAsync(TableDto table)
+    {
+        if (_isTakeaway || IsDisposed)
+            return;
+
+        var previousTableId = _selectedTableId;
+
+        if (!await AcquireTableLockAsync(table.Id))
+        {
+            _suppressTableSelectionChanged = true;
+            try
+            {
+                if (previousTableId.HasValue)
+                {
+                    var previousIndex = Enumerable.Range(0, cbTable.Items.Count)
+                        .FirstOrDefault(index =>
+                            cbTable.Items[index] is TableDto item &&
+                            item.Id == previousTableId.Value);
+                    cbTable.SelectedIndex =
+                        previousIndex >= 0 &&
+                        previousIndex < cbTable.Items.Count &&
+                        cbTable.Items[previousIndex] is TableDto previous &&
+                        previous.Id == previousTableId.Value
+                            ? previousIndex
+                            : -1;
+                }
+                else
+                {
+                    cbTable.SelectedIndex = -1;
+                }
+            }
+            finally
+            {
+                _suppressTableSelectionChanged = false;
+            }
+            return;
+        }
+
+        _selectedTableId = table.Id;
+        lblTableName.Text = table.TableName;
+        ClearCart();
+        _existingOrder = null;
+        if (cbCampaign.Items.Count > 0)
+            cbCampaign.SelectedIndex = 0;
+
+        // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
+        _selectedCustomer = null;
+        txtCustomerPhone.Clear();
+        UpdateCustomerInfoLabel();
+
+        RenderCart();
+
+        // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
+        await LoadOpenOrderAsync(table.Id);
+    }
+
+    private async Task LoadOpenOrderAsync(int tableId, bool silent = false)
     {
         try
         {
@@ -238,7 +737,8 @@ public partial class SalesControl : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
+            if (!silent && !IsDisposed && Visible)
+                MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
         }
     }
 
@@ -437,6 +937,8 @@ public partial class SalesControl : UserControl
 
         if (takeaway)
         {
+            _ = ReleaseCurrentTableLockAsync();
+            _selectedTableId = null;
             lblTableName.Text = "Mang về";
             RenderCart();
         }
@@ -466,14 +968,17 @@ public partial class SalesControl : UserControl
     }
 
     // Mo 1 don MANG VE dang mo (da gui bep truoc do) de thanh toan.
-    private async Task LoadTakeawayOrderAsync(int orderId)
+    private async Task LoadTakeawayOrderAsync(int orderId, bool silent = false)
     {
         SetMode(takeaway: true);
 
         var order = await _api.GetOrderByIdAsync(orderId);
         if (order is null)
         {
-            MessageBox.Show("Không tìm thấy đơn mang về.");
+            _existingOrder = null;
+            RenderCart();
+            if (!silent)
+                MessageBox.Show("Không tìm thấy đơn mang về.");
             return;
         }
 
@@ -1429,8 +1934,19 @@ public partial class SalesControl : UserControl
             ClearCart();
             _existingOrder = null;
 
-            if (_isTakeaway)
+            if (!_isTakeaway)
+            {
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+                lblTableName.Text = "Chưa chọn bàn";
+            }
+            else
+            {
                 lblTableName.Text = "Mang về";
+            }
 
             RenderCart();
             UpdateSendKitchenButton();
