@@ -906,6 +906,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         finally
         {
             NotificationHubClient.TableStatusUpdated -= OnReservationRealtime;
+            NotificationHubClient.ReservationUpdated -= OnReservationUpdated;
         }
         _ = LoadAllAsync();
     }
@@ -935,7 +936,15 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         // Hien ca gio den VA gio tra ban du kien (truoc day chi co gio den, khong
         // biet giu ban toi may gio) tren 1 dong rieng de khong dam vao cot trang thai.
-        var lblTime = new Label { Text = $"{r.ReservationTime:HH:mm dd/MM} → {r.ReservationEndTime:HH:mm dd/MM}", Font = AppFonts.LabelLg, Location = new Point(10, 6), AutoSize = true };
+        var holdUntil = r.HoldUntil == default ? r.ReservationEndTime : r.HoldUntil;
+        var holdExpired = r.IsHoldExpired || DateTime.Now >= holdUntil;
+        var lblTime = new Label
+        {
+            Text = $"{r.ReservationTime:HH:mm dd/MM} · Giữ đến {holdUntil:HH:mm}",
+            Font = AppFonts.LabelLg,
+            Location = new Point(10, 6),
+            AutoSize = true
+        };
         var lblTable = new Label { Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(10, 30), AutoSize = true };
         var customerText = string.IsNullOrWhiteSpace(r.CustomerName) && string.IsNullOrWhiteSpace(r.CustomerPhone)
             ? "(Chưa có thông tin khách)"
@@ -997,15 +1006,31 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             };
             row.Controls.Add(btnCheckIn);
 
-            var btnCancel = new Button { Text = "Hủy", Location = new Point(430, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Error, ForeColor = Color.White, Font = AppFonts.LabelMd };
+            var btnCancel = new Button
+            {
+                Text = holdExpired ? "Không đến" : "Hủy",
+                Location = new Point(430, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Error,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
             btnCancel.FlatAppearance.BorderSize = 0;
             btnCancel.Click += async (s, e) =>
             {
-                if (MessageBox.Show($"Hủy đặt bàn của \"{r.CustomerName}\"?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                var confirmText = holdExpired
+                    ? $"Đã quá thời gian giữ đến {holdUntil:HH:mm}. Đánh dấu \"{r.CustomerName}\" không đến và nhả bàn?"
+                    : $"Hủy đặt bàn của \"{r.CustomerName}\"?";
+
+                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
                 btnCancel.Enabled = false;
                 try
                 {
-                    await _api.UpdateReservationStatusAsync(r.Id, 2);
+                    if (holdExpired)
+                        await _api.ReleaseOverdueReservationAsync(r.Id);
+                    else
+                        await _api.UpdateReservationStatusAsync(r.Id, 2);
                     await onChanged();
                 }
                 catch (Exception ex)
