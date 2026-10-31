@@ -377,6 +377,17 @@ public class ReservationsController : ControllerBase
             relatedEntityType: "Reservation",
             relatedEntityId: reservation.ReservationId);
 
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = reservation.ReservationId,
+                Status = reservation.Status.ToString(),
+                Stage = "Created",
+                reservation.ReservationTime,
+                HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+            });
+
         if (reservation.CustomerId.HasValue)
         {
             await _notifications.CreateForCustomerAsync(
@@ -500,6 +511,17 @@ public class ReservationsController : ControllerBase
             relatedEntityType: "Reservation",
             relatedEntityId: created[0].ReservationId);
 
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = created[0].ReservationId,
+                Status = created[0].Status.ToString(),
+                Stage = "Created",
+                ReservationTime = request.ReservationTime,
+                HoldUntil = request.ReservationTime.AddMinutes(durationMinutes)
+            });
+
         if (created[0].CustomerId is int customerId)
         {
             await _notifications.CreateForCustomerAsync(
@@ -558,7 +580,16 @@ public class ReservationsController : ControllerBase
                 new { TableId = reservation.Table.TableId, reservation.Table.TableName, Status = reservation.Table.Status });
         }
 
-        await _hub.Clients.All.SendAsync("ReservationUpdated", new { ReservationId = reservation.ReservationId, Status = reservation.Status.ToString() });
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = reservation.ReservationId,
+                Status = reservation.Status.ToString(),
+                Stage = "Cancelled",
+                reservation.ReservationTime,
+                HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+            });
         await _notifications.CreateForCustomerAsync(
             customerId.Value,
             "Đặt bàn đã bị hủy",
@@ -918,6 +949,20 @@ public class ReservationsController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
+
+        if (previousStatus != status)
+        {
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = reservation.ReservationId,
+                    Status = status.ToString(),
+                    Stage = "StatusChanged",
+                    reservation.ReservationTime,
+                    HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+                });
+        }
 
         if (previousStatus != status && reservation.CustomerId.HasValue)
         {
