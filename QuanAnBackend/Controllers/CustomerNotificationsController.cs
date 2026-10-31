@@ -3,12 +3,15 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
+using QuanAnBackend.Services;
 
 namespace QuanAnBackend.Controllers;
 
 [ApiController]
 [Route("api/customers/me/notifications")]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public sealed class CustomerNotificationsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -114,8 +117,8 @@ public sealed class CustomerNotificationsController : ControllerBase
 
     private bool TryGetCustomerId(out int customerId)
     {
-        var value = User.FindFirst("UserId")?.Value
-            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return int.TryParse(value, out customerId) && customerId > 0;
+        var resolved = CustomerTokens.GetCustomerId(User);
+        customerId = resolved ?? 0;
+        return customerId > 0;
     }
 }

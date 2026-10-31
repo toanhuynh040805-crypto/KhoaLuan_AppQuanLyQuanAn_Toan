@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
+using QuanAnBackend.Models;
 using QuanAnBackend.Authorization;
 
 namespace QuanAnBackend.Controllers;
@@ -26,141 +27,138 @@ public class MobileDiningController : ControllerBase
         _hub = hub;
     }
 
-    // Mobile dashboard: tra them khu vuc + so khach, nhung KHONG doi schema DB.
+    // Mobile dashboard: dữ liệu lõi chỉ dùng các bảng EF chắc chắn tồn tại.
+    // Không phụ thuộc OrderTables/WaitingQueue/Combos để tránh một bảng phụ lệch
+    // schema làm trắng toàn bộ màn hình bàn.
     [HttpGet("tables")]
     public async Task<IActionResult> GetTables()
     {
-        var connection = _db.Database.GetDbConnection();
-        var shouldClose = connection.State != ConnectionState.Open;
+        var tables = await _db.Tables
+            .AsNoTracking()
+            .Include(table => table.Area)
+            .OrderBy(table => table.Area != null ? table.Area.AreaName : "")
+            .ThenBy(table => table.TableName)
+            .ToListAsync();
 
-        if (shouldClose)
-            await connection.OpenAsync();
+        if (tables.Count == 0)
+            return Ok(Array.Empty<object>());
 
-        try
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT
-                    t.TableId,
-                    t.TableName,
-                    t.Capacity,
-                    t.Status,
-                    t.AreaId,
-                    ISNULL(a.AreaName, N'') AS AreaName,
-                    t.TableType,
-                    COALESCE((
-                        SELECT SUM(
-                            oi.Quantity * COALESCE(
-                                NULLIF(oi.UnitPrice, 0),
-                                mi.Price,
-                                cb.Price,
-                                0
-                            )
-                        )
-                        FROM Orders o
-                        INNER JOIN OrderItems oi ON oi.OrderId = o.OrderId
-                        LEFT JOIN MenuItems mi ON mi.MenuItemId = oi.MenuItemId
-                        LEFT JOIN Combos cb ON cb.ComboId = oi.ComboId
-                        WHERE o.Status = N'DangMo'
-                          AND (
-                              o.TableId = t.TableId
-                              OR EXISTS (
-                                  SELECT 1 FROM OrderTables ot
-                                  WHERE ot.OrderId = o.OrderId
-                                    AND ot.TableId = t.TableId
-                              )
-                          )
-                          AND oi.Status <> N'DaHuy'
-                    ), 0) AS Amount,
-                    COALESCE(res.CustomerName, walkin.CustomerName) AS CustomerName,
-                    CASE
-                        WHEN t.Status IN (N'DangPhucVu', N'DaDat') THEN
-                            NULLIF(COALESCE(res.NumberOfGuests, walkin.NumberOfGuests, 0), 0)
-                        ELSE NULL
-                    END AS GuestCount,
-                    COALESCE(openOrder.OrderTime, walkin.SeatedTime, res.ReservationTime) AS StartedAt
-                FROM DiningTables t
-                LEFT JOIN Areas a ON a.AreaId = t.AreaId
-                OUTER APPLY (
-                    SELECT TOP 1
-                        r.CustomerName,
-                        r.NumberOfGuests,
-                        r.ReservationTime
-                    FROM Reservations r
-                    WHERE r.TableId = t.TableId
-                      AND (
-                            (t.Status = N'DaDat' AND r.Status = N'DaXacNhan')
-                            OR
-                            (t.Status = N'DangPhucVu' AND r.Status = N'DaNhanBan')
-                          )
-                    ORDER BY r.ReservationTime DESC, r.ReservationId DESC
-                ) res
-                OUTER APPLY (
-                    SELECT TOP 1
-                        w.CustomerName,
-                        w.NumberOfGuests,
-                        w.SeatedTime
-                    FROM WaitingQueue w
-                    WHERE w.AssignedTableId = t.TableId
-                      AND w.Status = N'DaNhanBan'
-                    ORDER BY COALESCE(w.SeatedTime, w.CheckInTime) DESC, w.QueueId DESC
-                ) walkin
-                OUTER APPLY (
-                    SELECT TOP 1 o.OrderTime
-                    FROM Orders o
-                    WHERE o.Status = N'DangMo'
-                      AND (
-                          o.TableId = t.TableId
-                          OR EXISTS (
-                              SELECT 1 FROM OrderTables ot
-                              WHERE ot.OrderId = o.OrderId
-                                AND ot.TableId = t.TableId
-                          )
-                      )
-                    ORDER BY o.OrderTime DESC, o.OrderId DESC
-                ) openOrder
-                ORDER BY a.AreaName, t.TableName;
-                """;
+        var tableIds = tables
+            .Select(table => table.TableId)
+            .ToArray();
 
-            var result = new List<object>();
-
-            await using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+        var openOrders = await _db.Orders
+            .AsNoTracking()
+            .Where(order =>
+                order.Status == OrderStatus.DangMo &&
+                order.TableId.HasValue &&
+                tableIds.Contains(order.TableId.Value))
+            .Select(order => new
             {
-                var status = reader.GetString(3);
-                var startedAt = reader.IsDBNull(10)
-                    ? (DateTime?)null
-                    : reader.GetDateTime(10);
+                order.OrderId,
+                TableId = order.TableId!.Value,
+                order.OrderTime
+            })
+            .ToListAsync();
 
-                result.Add(new
+        var openOrderIds = openOrders
+            .Select(order => order.OrderId)
+            .ToArray();
+
+        var amountsByOrder = openOrderIds.Length == 0
+            ? new Dictionary<int, decimal>()
+            : await _db.OrderItems
+                .AsNoTracking()
+                .Where(item =>
+                    openOrderIds.Contains(item.OrderId) &&
+                    item.Status != KitchenStatus.DaHuy)
+                .GroupBy(item => item.OrderId)
+                .Select(group => new
                 {
-                    id = reader.GetInt32(0),
-                    tableName = reader.GetString(1),
-                    capacity = reader.GetInt32(2),
-                    status,
-                    areaId = reader.GetInt32(4),
-                    areaName = reader.GetString(5),
-                    tableType = reader.GetString(6),
-                    amount = status == "DangPhucVu"
-                        ? reader.GetDecimal(7)
-                        : (decimal?)null,
-                    customerName = reader.IsDBNull(8)
-                        ? null
-                        : reader.GetString(8),
-                    guestCount = reader.IsDBNull(9)
-                        ? (int?)null
-                        : reader.GetInt32(9),
-                    time = startedAt?.ToString("HH:mm")
-                });
-            }
+                    OrderId = group.Key,
+                    Amount = group.Sum(item =>
+                        item.Quantity * item.UnitPrice)
+                })
+                .ToDictionaryAsync(
+                    item => item.OrderId,
+                    item => item.Amount);
 
-            return Ok(result);
-        }
-        finally
-        {
-            if (shouldClose)
-                await connection.CloseAsync();
-        }
+        var reservations = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                tableIds.Contains(reservation.TableId) &&
+                (reservation.Status == ReservationStatus.DaXacNhan ||
+                 reservation.Status == ReservationStatus.DaNhanBan))
+            .OrderByDescending(reservation => reservation.ReservationTime)
+            .ToListAsync();
+
+        var physicalGroups = tables
+            .GroupBy(table => new
+            {
+                table.AreaId,
+                Name = (table.TableName ?? "")
+                    .Trim()
+                    .ToUpper()
+            })
+            .Select(group => group
+                .OrderByDescending(table => table.Status switch
+                {
+                    TableStatus.DangPhucVu => 400,
+                    TableStatus.DaDat => 300,
+                    TableStatus.DangDonDep => 200,
+                    _ => 100
+                })
+                .ThenByDescending(table => table.TableId)
+                .First())
+            .ToList();
+
+        var result = physicalGroups
+            .Select(table =>
+            {
+                var order = openOrders
+                    .Where(item => item.TableId == table.TableId)
+                    .OrderByDescending(item => item.OrderTime)
+                    .FirstOrDefault();
+
+                var reservation = reservations
+                    .Where(item => item.TableId == table.TableId)
+                    .OrderByDescending(item => item.ReservationTime)
+                    .FirstOrDefault();
+
+                var amount = order is not null &&
+                             amountsByOrder.TryGetValue(
+                                 order.OrderId,
+                                 out var orderAmount)
+                    ? orderAmount
+                    : 0m;
+
+                var startedAt = order?.OrderTime ??
+                                reservation?.ReservationTime;
+
+                return new
+                {
+                    id = table.TableId,
+                    tableName = table.TableName,
+                    capacity = table.Capacity,
+                    status = table.Status.ToString(),
+                    areaId = table.AreaId,
+                    areaName = table.Area?.AreaName ?? "",
+                    tableType = table.TableType.ToString(),
+                    amount = table.Status == TableStatus.DangPhucVu
+                        ? amount
+                        : (decimal?)null,
+                    customerName = reservation?.CustomerName,
+                    guestCount = reservation is not null &&
+                                 (table.Status == TableStatus.DangPhucVu ||
+                                  table.Status == TableStatus.DaDat)
+                        ? reservation.NumberOfGuests
+                        : (int?)null,
+                    time = startedAt?.ToString("HH:mm")
+                };
+            })
+            .ToList();
+
+        return Ok(result);
     }
 
     // So khach la thong tin tuy chon: 0 = chua nhap.

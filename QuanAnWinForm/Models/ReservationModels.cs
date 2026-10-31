@@ -27,6 +27,8 @@ public class ReservationDto
     // Reservation.DefaultDurationMinutes ben Backend (sua ca 2 neu doi).
     public int DurationMinutes { get; set; } = 30;
     public DateTime ReservationEndTime { get; set; }
+    public DateTime HoldUntil { get; set; }
+    public bool IsHoldExpired { get; set; }
 
     public int NumberOfGuests { get; set; }
     public int Status { get; set; } // khop ReservationStatusEnum o tren

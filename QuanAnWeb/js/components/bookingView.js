@@ -322,6 +322,22 @@ export function renderReservationDetails(container, reservation) {
     }
 
     const status = getReservationValue(reservation, 'status', 'Status');
+    const durationMinutes = Number(
+        getReservationValue(reservation, 'durationMinutes', 'DurationMinutes') ?? 30
+    );
+    const rawHoldUntil = getReservationValue(reservation, 'holdUntil', 'HoldUntil');
+    let holdLabel = `${durationMinutes} phút sau giờ hẹn`;
+
+    if (rawHoldUntil) {
+        const holdTime = new Date(rawHoldUntil);
+        if (!Number.isNaN(holdTime.getTime())) {
+            holdLabel = `đến ${holdTime.toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            })} (${durationMinutes} phút)`;
+        }
+    }
 
     const details = document.createElement('dl');
     details.className = 'grid w-full grid-cols-1 gap-4 text-left sm:grid-cols-2';
@@ -332,6 +348,7 @@ export function renderReservationDetails(container, reservation) {
         ['Tên khách', getReservationValue(reservation, 'customerName', 'CustomerName') ?? '—'],
         ['Số điện thoại', getReservationValue(reservation, 'customerPhone', 'CustomerPhone') ?? '—'],
         ['Thời gian', formattedTime],
+        ['Giữ chỗ', holdLabel],
         ['Số khách', getReservationValue(reservation, 'numberOfGuests', 'NumberOfGuests') ?? '—'],
         ['Ghi chú', getReservationValue(reservation, 'note', 'Note') ?? '—']
     ];

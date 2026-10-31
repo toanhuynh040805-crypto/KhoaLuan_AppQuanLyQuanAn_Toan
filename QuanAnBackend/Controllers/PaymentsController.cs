@@ -1,9 +1,11 @@
 using System.Data.Common;
+using System.Data;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
@@ -65,6 +67,7 @@ public class PaymentsController : ControllerBase
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
     private readonly IPaymentProvider _paymentProvider;
+    private readonly TableStateService _tableState;
     private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
@@ -73,11 +76,13 @@ public class PaymentsController : ControllerBase
         NotificationService notifications,
         IEmailService email,
         IPaymentProvider paymentProvider,
+        TableStateService tableState,
         ILogger<PaymentsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _tableState = tableState;
         _email = email;
         _paymentProvider = paymentProvider;
         _logger = logger;
@@ -132,7 +137,7 @@ public class PaymentsController : ControllerBase
             0,
             0,
             total,
-            ReceiptProfile.BuildVietQrImageUrl(total, order.OrderId),
+            BuildMobileQrImagePath(total, order.OrderId),
             ReceiptProfile.BuildVietQrPayload(total, order.OrderId),
             ReceiptProfile.BankCode,
             ReceiptProfile.BankAccountNo,
@@ -142,6 +147,20 @@ public class PaymentsController : ControllerBase
             ReceiptProfile.ShopName,
             ReceiptProfile.ShopAddress
         ));
+    }
+
+    private static string BuildMobileQrImagePath(
+        decimal amount,
+        int orderId)
+    {
+        var amountText = decimal.Round(
+                amount,
+                0,
+                MidpointRounding.AwayFromZero)
+            .ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+
+        return $"/api/payments/qr-image?amount={Uri.EscapeDataString(amountText)}&orderId={orderId}";
     }
 
     // Dùng cho bill tạm tính WinForms khi giỏ hàng có món chưa lưu.
@@ -461,7 +480,7 @@ public class PaymentsController : ControllerBase
             relatedEntityId: order.OrderId
         );
 
-        await _hub.Clients.All.SendAsync("PaymentRequested", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentRequested", new
         {
             TableId = order.TableId,
             TableName = tableName,
@@ -501,6 +520,20 @@ public class PaymentsController : ControllerBase
         {
             return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
         }
+
+        // Serialize phần ghi thanh toán để hai thiết bị không thể cùng hoàn tất
+        // một Order và để Invoice/Payment/điểm/Order/trạng thái bàn commit đồng bộ.
+        await using var paymentTransaction =
+            await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        var currentOrderStatus = await _db.Orders
+            .AsNoTracking()
+            .Where(item => item.OrderId == order.OrderId)
+            .Select(item => item.Status)
+            .FirstAsync();
+
+        if (currentOrderStatus == OrderStatus.DaThanhToan)
+            return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
 
         // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
         // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
@@ -601,6 +634,7 @@ public class PaymentsController : ControllerBase
         // cứu lại sau này, và cập nhật hạng thành viên theo số dư điểm mới.
         int earnedPoints = 0;
         MemberLevel? previousLevel = null;
+        var memberLevelChanged = false;
         if (customer is not null)
         {
             previousLevel = customer.MemberLevel;
@@ -634,16 +668,8 @@ public class PaymentsController : ControllerBase
 
                         customer.MemberLevel = CustomerLoyaltyHelper.CalculateMemberLevel(customer.LoyaltyPoint);
 
-            if (customer.MemberLevel != previousLevel)
-            {
-                await _notifications.CreateForRolesAsync(
-                    "Khách hàng thăng hạng thành viên",
-                    $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
-                    NotificationType.KhuyenMai,
-                    new[] { "QuanLy", "ThuNgan" },
-                    relatedEntityType: "Customer",
-                    relatedEntityId: customer.CustomerId);
-            }
+            memberLevelChanged =
+                customer.MemberLevel != previousLevel;
         }
 
         var qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(
@@ -710,11 +736,11 @@ public class PaymentsController : ControllerBase
         foreach (var notification in paymentRequestNotifications)
             notification.IsRead = true;
 
-        // Trả bàn về trạng thái Trống sau khi thanh toán xong
+        // Đóng lượt đặt bàn gắn với lượt ngồi hiện tại. Trạng thái bàn sau
+        // thanh toán sẽ được TableStateService tính lại sau khi Order đã đóng.
         var finishedReservations = new List<Reservation>();
         if (order.Table is not null)
         {
-            order.Table.Status = TableStatus.Trong;
 
             // FIX: dong luot dat ban gan voi luot ngoi nay lai NGAY LUC NAY (neu co).
             // Truoc day khong co buoc nay -> Reservation.Status dung mai o DaNhanBan
@@ -729,57 +755,57 @@ public class PaymentsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        // Một order có thể ghép nhiều bàn vật lý. Thanh toán một lần phải trả
-        // toàn bộ bàn thuộc order về Trống.
+        // Một order có thể ghép nhiều bàn vật lý. Sau khi order đã đóng,
+        // mỗi bàn phải trở về trạng thái đúng theo lịch đặt tiếp theo:
+        // DaDat nếu còn reservation hiệu lực, ngược lại Trong.
         var linkedTableIds = await GetLinkedTableIdsAsync(order.OrderId, order.TableId);
-        if (linkedTableIds.Count > 0)
+        var affectedTableIds = linkedTableIds
+            .Append(order.TableId ?? 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        var resolvedStatuses = await _tableState.ResolveIdleStatusesAsync(
+            affectedTableIds);
+
+        var affectedTables = await _db.Tables
+            .Where(table => affectedTableIds.Contains(table.TableId))
+            .ToListAsync();
+
+        foreach (var table in affectedTables)
         {
-            var connection = _db.Database.GetDbConnection();
-            var shouldClose = connection.State != System.Data.ConnectionState.Open;
-            if (shouldClose) await connection.OpenAsync();
-            try
-            {
-                await using var command = connection.CreateCommand();
-                var parameterNames = new List<string>();
-                for (var i = 0; i < linkedTableIds.Count; i++)
-                {
-                    var p = command.CreateParameter();
-                    p.ParameterName = $"@p{i}";
-                    p.Value = linkedTableIds[i];
-                    command.Parameters.Add(p);
-                    parameterNames.Add(p.ParameterName);
-                }
-                command.CommandText = $"UPDATE DiningTables SET Status = N'Trong' WHERE TableId IN ({string.Join(",", parameterNames)});";
-                await command.ExecuteNonQueryAsync();
-            }
-            finally
-            {
-                if (shouldClose) await connection.CloseAsync();
-            }
+            if (resolvedStatuses.TryGetValue(table.TableId, out var status))
+                table.Status = status;
         }
 
-        if (order.Table is not null)
+        await _db.SaveChangesAsync();
+        await paymentTransaction.CommitAsync();
+
+        // Từ đây trở đi chỉ còn side-effects ngoài giao dịch DB lõi.
+        if (memberLevelChanged && customer is not null)
+        {
+            await _notifications.CreateForRolesAsync(
+                "Khách hàng thăng hạng thành viên",
+                $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
+                NotificationType.KhuyenMai,
+                new[] { "QuanLy", "ThuNgan" },
+                relatedEntityType: "Customer",
+                relatedEntityId: customer.CustomerId);
+        }
+
+        foreach (var table in affectedTables)
         {
             await _hub.Clients.All.SendAsync("TableStatusUpdated", new
             {
-                TableId = order.Table.TableId,
-                order.Table.TableName,
-                Status = order.Table.Status
-            });
-        }
-
-        foreach (var linkedTableId in linkedTableIds.Where(id => id != order.TableId))
-        {
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new
-            {
-                TableId = linkedTableId,
-                Status = TableStatus.Trong
+                TableId = table.TableId,
+                table.TableName,
+                Status = table.Status
             });
         }
 
         // Phát cho tất cả client để cả WinForms và Mobile đều đóng trạng thái
         // chờ thanh toán/bàn ngay sau khi giao dịch hoàn tất.
-        await _hub.Clients.All.SendAsync("PaymentCompleted", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentCompleted", new
         {
             tableId = order.TableId,
             orderId = order.OrderId,
@@ -896,6 +922,7 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
             command.CommandText = """
                 SELECT TOP 1 o.OrderId
                 FROM Orders o
@@ -927,7 +954,19 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT TableId FROM OrderTables WHERE OrderId = @OrderId;";
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = """
+                IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
+                BEGIN
+                    SELECT CAST(NULL AS int) AS TableId WHERE 1 = 0;
+                END
+                ELSE
+                BEGIN
+                    SELECT TableId
+                    FROM dbo.OrderTables
+                    WHERE OrderId = @OrderId;
+                END;
+                """;
             var p = command.CreateParameter();
             p.ParameterName = "@OrderId";
             p.Value = orderId;

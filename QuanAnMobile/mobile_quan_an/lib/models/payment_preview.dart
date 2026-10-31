@@ -14,6 +14,7 @@ class PaymentPreview {
   final int totalAmount;
 
   final String qrImageUrl;
+  final String qrPayload;
   final String bankName;
   final String bankAccountNo;
   final String bankAccountName;
@@ -37,6 +38,7 @@ class PaymentPreview {
     required this.vipMinimumGap,
     required this.totalAmount,
     required this.qrImageUrl,
+    required this.qrPayload,
     required this.bankName,
     required this.bankAccountNo,
     required this.bankAccountName,
@@ -77,6 +79,10 @@ class PaymentPreview {
       totalAmount: _parseInt(json['totalAmount']),
       qrImageUrl:
           json['qrImageUrl']?.toString() ?? '',
+      qrPayload:
+          json['qrPayload']?.toString() ??
+          json['qrCodeContent']?.toString() ??
+          '',
       bankName:
           json['bankName']?.toString() ?? '',
       bankAccountNo:

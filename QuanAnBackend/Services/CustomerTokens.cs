@@ -63,7 +63,34 @@ public static class CustomerTokens
     public static string Hash(string token)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
-    /// <summary>Lấy CustomerId từ token khách đang đăng nhập; null nếu không phải khách.</summary>
+    /// <summary>
+    /// Lấy CustomerId từ token khách.
+    /// Hỗ trợ token chuẩn mới (CustomerId), token Web cũ (UserId / NameIdentifier số)
+    /// và NameIdentifier dạng "c-{id}". Các controller gọi helper này sau khi đã
+    /// giới hạn role Customer nên không nhầm với UserId của nhân viên.
+    /// </summary>
     public static int? GetCustomerId(ClaimsPrincipal user)
-        => int.TryParse(user.FindFirstValue(CustomerIdClaim), out var id) ? id : null;
+    {
+        var customerIdValue = user.FindFirstValue(CustomerIdClaim);
+        if (int.TryParse(customerIdValue, out var customerId) && customerId > 0)
+            return customerId;
+
+        var legacyUserId = user.FindFirstValue("UserId");
+        if (int.TryParse(legacyUserId, out customerId) && customerId > 0)
+            return customerId;
+
+        var nameIdentifier = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (int.TryParse(nameIdentifier, out customerId) && customerId > 0)
+            return customerId;
+
+        if (!string.IsNullOrWhiteSpace(nameIdentifier) &&
+            nameIdentifier.StartsWith("c-", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(nameIdentifier[2..], out customerId) &&
+            customerId > 0)
+        {
+            return customerId;
+        }
+
+        return null;
+    }
 }

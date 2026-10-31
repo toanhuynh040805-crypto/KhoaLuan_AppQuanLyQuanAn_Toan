@@ -158,6 +158,7 @@ public class OrderItemCancelledPayload
 {
     public int Id { get; set; }
     public int OrderId { get; set; }
+    public int TableId { get; set; }
     public string TableName { get; set; } = "";
     public string MenuItemName { get; set; } = "";
     public string? Reason { get; set; }

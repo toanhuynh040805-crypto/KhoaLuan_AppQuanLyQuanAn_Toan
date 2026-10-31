@@ -8,8 +8,11 @@ namespace QuanAnWinForm.UserControls;
 // ThuNgan (xem SidebarControl). Gom: danh sach/tim kiem, Them/Sua/Xoa, va
 // dialog chi tiet xem lich su tich/doi diem + don hang gan day + cong/tru diem
 // thu cong (vd tang diem sinh nhat).
-public partial class CustomerManagementControl : UserControl
+public partial class CustomerManagementControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadCustomersAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<CustomerDto> _customers = new();
@@ -182,13 +185,25 @@ public partial class CustomerManagementControl : UserControl
     {
         try
         {
-            _customers = await _api.GetCustomersAsync();
+            var customers = await _api.GetCustomersAsync();
+
+            // Người dùng có thể đã chuyển màn hình trong lúc request đang chạy.
+            // Không chạm vào DataGridView sau khi control đã bị Dispose.
+            if (IsDisposed || Disposing)
+                return;
+
+            _customers = customers;
             ApplyFilter();
             RenderStatCards();
         }
+        catch (OperationCanceledException)
+        {
+            // Hủy request khi rời màn hình là bình thường, không hiện popup.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được danh sách khách hàng: {ex.Message}");
+            if (!IsDisposed && !Disposing && Visible)
+                MessageBox.Show($"Không tải được danh sách khách hàng: {ex.Message}");
         }
     }
 

@@ -14,12 +14,14 @@ import '../../services/api_client.dart';
 import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
 import '../order_log/order_log_screen.dart';
 import 'payment_dialog.dart';
 import 'kitchen_requests_screen.dart';
+import 'member_customer_sheet.dart';
 import 'order_item_edit_screen.dart';
 
 class TableDetailV2 extends StatefulWidget {
@@ -68,6 +70,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
+  Timer? _relativeTimeTimer;
   bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
@@ -137,12 +140,20 @@ class _TableDetailV2State extends State<TableDetailV2> {
         (_) => unawaited(_heartbeatTableLock()),
       );
     }
+
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
     _paymentRequestLockTimer?.cancel();
+    _relativeTimeTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
@@ -386,6 +397,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: oldItem.unitPrice,
           status: event.status,
           note: oldItem.note,
+          createdAt: oldItem.createdAt,
           isTakeaway: oldItem.isTakeaway,
         );
       }
@@ -825,6 +837,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: current.unitPrice,
           status: status,
           note: current.note,
+          createdAt: current.createdAt,
           isTakeaway: current.isTakeaway,
         );
       });
@@ -873,6 +886,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
             unitPrice: item.unitPrice,
             status: 'Đã phục vụ',
             note: item.note,
+            createdAt: item.createdAt,
             isTakeaway: item.isTakeaway,
           );
         }).toList();
@@ -940,6 +954,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
         unitPrice: current.unitPrice,
         status: current.status,
         note: current.note,
+        createdAt: current.createdAt,
         isTakeaway:
             current.isTakeaway,
       );
@@ -1164,6 +1179,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 preview.transferContent,
             qrImageUrl:
                 preview.qrImageUrl,
+            qrPayload:
+                preview.qrPayload,
           ),
         ),
       );
@@ -1342,164 +1359,27 @@ class _TableDetailV2State extends State<TableDetailV2> {
       return;
     }
 
-    final TextEditingController phoneController = TextEditingController();
-    List<MemberCustomer> results = <MemberCustomer>[];
-    bool loading = false;
-
-    final MemberCustomer? selected = await showModalBottomSheet<MemberCustomer>(
+    final MemberCustomer? selected =
+        await showModalBottomSheet<MemberCustomer>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       showDragHandle: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> search() async {
-              final String phone = phoneController.text.trim();
-              if (phone.isEmpty) return;
-              setSheetState(() => loading = true);
-              try {
-                final List<MemberCustomer> found = await AppServices
-                    .customerService
-                    .searchByPhone(phone);
-                if (!sheetContext.mounted) return;
-                setSheetState(() {
-                  results = found;
-                  loading = false;
-                });
-              } on ApiException catch (error) {
-                if (!sheetContext.mounted) return;
-                setSheetState(() => loading = false);
-                TopMessage.show(
-                  sheetContext,
-                  message: error.message,
-                  type: TopMessageType.error,
-                );
-              }
-            }
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                4,
-                20,
-                20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Khách hàng / Thành viên',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(sheetContext),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  if (_memberCustomer != null) ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        'Đang gắn: ${_memberCustomer!.fullName} • ${_memberCustomer!.phone} • ${_memberCustomer!.memberLevel}',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: phoneController,
-                          keyboardType: TextInputType.phone,
-                          decoration: const InputDecoration(
-                            labelText: 'Số điện thoại khách',
-                            hintText: 'Nhập SĐT để tìm thành viên',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.phone_outlined),
-                          ),
-                          onSubmitted: (_) => search(),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      FilledButton(
-                        onPressed: loading ? null : search,
-                        child: loading
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Tìm'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (results.isNotEmpty)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 230),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: results.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, index) {
-                          final MemberCustomer member = results[index];
-                          return ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.person_outline),
-                            ),
-                            title: Text(member.fullName),
-                            subtitle: Text(
-                              '${member.phone} • ${member.memberLevel} • ${member.loyaltyPoint} điểm',
-                            ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => Navigator.pop(sheetContext, member),
-                          );
-                        },
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final String phone = phoneController.text.trim();
-                        final MemberCustomer? created =
-                            await _createMemberDialog(phone);
-                        if (created != null && sheetContext.mounted) {
-                          Navigator.pop(sheetContext, created);
-                        }
-                      },
-                      icon: const Icon(Icons.person_add_alt_1_outlined),
-                      label: const Text('Tạo thành viên mới'),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (_) => MemberCustomerSheet(
+        currentMember: _memberCustomer,
+      ),
     );
 
-    phoneController.dispose();
     if (!mounted || selected == null) return;
+
+    if (selected.id <= 0) {
+      TopMessage.show(
+        context,
+        message: 'Thông tin thành viên không hợp lệ. Vui lòng tìm lại.',
+        type: TopMessageType.error,
+      );
+      return;
+    }
 
     try {
       final MemberCustomer attached = await AppServices.customerService
@@ -1508,8 +1388,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
             customerId: selected.id,
             employeeCode: appEmployee.employeeCode,
           );
+
       if (!mounted) return;
+
       setState(() => _memberCustomer = attached);
+
       TopMessage.show(
         context,
         message: 'Đã gắn ${attached.fullName} vào đơn',
@@ -1522,82 +1405,14 @@ class _TableDetailV2State extends State<TableDetailV2> {
         message: error.message,
         type: TopMessageType.error,
       );
+    } catch (_) {
+      if (!mounted) return;
+      TopMessage.show(
+        context,
+        message: 'Không thể gắn thành viên vào đơn. Vui lòng thử lại.',
+        type: TopMessageType.error,
+      );
     }
-  }
-
-  Future<MemberCustomer?> _createMemberDialog(String initialPhone) async {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController phoneController = TextEditingController(
-      text: initialPhone,
-    );
-
-    final MemberCustomer? result = await showDialog<MemberCustomer>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Tạo thành viên mới'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Tên khách hàng',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Số điện thoại',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Hủy'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final String name = nameController.text.trim();
-              final String phone = phoneController.text.trim();
-              if (name.isEmpty || phone.isEmpty) {
-                TopMessage.show(
-                  dialogContext,
-                  message: 'Vui lòng nhập tên và số điện thoại',
-                  type: TopMessageType.warning,
-                );
-                return;
-              }
-              try {
-                final MemberCustomer created = await AppServices.customerService
-                    .create(fullName: name, phone: phone);
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext, created);
-                }
-              } on ApiException catch (error) {
-                if (!dialogContext.mounted) return;
-                TopMessage.show(
-                  dialogContext,
-                  message: error.message,
-                  type: TopMessageType.error,
-                );
-              }
-            },
-            child: const Text('Tạo thành viên'),
-          ),
-        ],
-      ),
-    );
-
-    nameController.dispose();
-    phoneController.dispose();
-    return result;
   }
 
   Future<void> _clearTableAndRelease() async {
@@ -1779,6 +1594,42 @@ class _TableDetailV2State extends State<TableDetailV2> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _handleTopMenuAction(String value) async {
+    if (_closingAfterPayment) return;
+
+    switch (value) {
+      case 'receipt':
+        await _openReceiptPreview();
+        return;
+      case 'kitchen':
+        await _openKitchenRequests();
+        return;
+      case 'member':
+        await _openCustomerMembership();
+        return;
+      case 'history':
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OrderLogScreen(
+              tableId: currentTable.id,
+              tableName: _displayTableName(),
+            ),
+          ),
+        );
+        return;
+      case 'clear':
+        await _clearTableAndRelease();
+        return;
+      case 'transfer':
+      case 'merge':
+      case 'link':
+      case 'split':
+        await _handleTableMenuAction(value);
+        return;
+    }
+  }
+
   Color _statusColor(String status) {
     switch (status) {
       case 'Đang chế biến':
@@ -1811,8 +1662,11 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 : () => Navigator.pop(context, _result()),
             icon: const Icon(Icons.arrow_back),
           ),
+          titleSpacing: 0,
           title: Text(
             _displayTableName(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               color: AppTheme.textColor,
               fontWeight: FontWeight.bold,
@@ -1820,27 +1674,32 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
-            if (_canCompletePayment &&
-                orderItems.isNotEmpty &&
-                !_closingAfterPayment)
+            if (_canCompletePayment && orderItems.isNotEmpty)
               IconButton(
-                tooltip: 'Xem / in bill tạm tính',
-                onPressed:
-                    _openReceiptPreview,
-                icon: const Icon(
-                  Icons.print_outlined,
+                tooltip: 'Xem / in bill',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
                 ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('receipt'),
+                icon: const Icon(Icons.print_outlined),
               ),
-            if (_canOrder && orderItems.isNotEmpty && !_closingAfterPayment)
-              IconButton(
-                tooltip: 'Yêu cầu xuống bếp',
-                onPressed: _openKitchenRequests,
-                icon: const Icon(Icons.restaurant),
-              ),
-            if (_canOrder && _isTableActive && !_closingAfterPayment)
+            if (_canOrder && _isTableActive)
               IconButton(
                 tooltip: 'Khách hàng / Thành viên',
-                onPressed: _openCustomerMembership,
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('member'),
                 icon: Icon(
                   _memberCustomer == null
                       ? Icons.person_add_alt_1_outlined
@@ -1848,42 +1707,87 @@ class _TableDetailV2State extends State<TableDetailV2> {
                   color: _memberCustomer == null ? null : Colors.green,
                 ),
               ),
-            if (_canManageTables && !currentTable.isTakeaway)
-              IconButton(
-                tooltip: 'Nhật ký Order',
-                onPressed: _closingAfterPayment
-                    ? null
-                    : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => OrderLogScreen(
-                            tableId: currentTable.id,
-                            tableName: _displayTableName(),
-                          ),
-                        ),
-                      ),
-                icon: const Icon(Icons.history_outlined),
-              ),
             if (_canManageTables && _isTableActive)
               IconButton(
                 tooltip: currentTable.isTakeaway
-                    ? 'Xóa toàn bộ món và hủy đơn'
-                    : 'Xóa toàn bộ món và trả bàn',
-                onPressed: _closingAfterPayment ? null : _clearTableAndRelease,
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                    ? 'Xóa món và hủy đơn'
+                    : 'Xóa món và trả bàn',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('clear'),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.redAccent,
+                ),
               ),
-            if (_canManageTables && !currentTable.isTakeaway)
-              PopupMenuButton<String>(
-                tooltip: 'Thao tác bàn',
-                enabled: _isTableActive && !_tableActionRunning,
-                onSelected: _handleTableMenuAction,
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'transfer', child: Text('Chuyển bàn')),
-                  PopupMenuItem(value: 'merge', child: Text('Gộp đơn')),
-                  PopupMenuItem(value: 'link', child: Text('Ghép bàn')),
-                  PopupMenuItem(value: 'split', child: Text('Tách bàn')),
+            PopupMenuButton<String>(
+              tooltip: 'Thao tác khác',
+              enabled: !_closingAfterPayment,
+              onSelected: _handleTopMenuAction,
+              itemBuilder: (context) => [
+                if (_canOrder && orderItems.isNotEmpty)
+                  const PopupMenuItem(
+                    value: 'kitchen',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.restaurant_outlined),
+                      title: Text('Yêu cầu xuống bếp'),
+                    ),
+                  ),
+                if (_canManageTables && !currentTable.isTakeaway)
+                  const PopupMenuItem(
+                    value: 'history',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.history_outlined),
+                      title: Text('Nhật ký Order'),
+                    ),
+                  ),
+                if (_canManageTables &&
+                    _isTableActive &&
+                    !currentTable.isTakeaway) ...[
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'transfer',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.swap_horiz),
+                      title: Text('Chuyển bàn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'merge',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.call_merge),
+                      title: Text('Gộp đơn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'link',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.link),
+                      title: Text('Ghép bàn'),
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'split',
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(Icons.call_split),
+                      title: Text('Tách bàn'),
+                    ),
+                  ),
                 ],
-              ),
+              ],
+            ),
           ],
         ),
         body: Column(
@@ -1896,6 +1800,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     _buildTableInfo(),
+                    const SizedBox(height: 10),
+                    _buildSummary(),
                     if (_guestCountEditorOpen) ...[
                       const SizedBox(height: 10),
                       _buildGuestCountEditor(),
@@ -1910,8 +1816,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                           child: _buildOrderItem(entry.key, entry.value),
                         ),
                       ),
-                    const SizedBox(height: 4),
-                    _buildSummary(),
                   ],
                 ),
               ),
@@ -2191,19 +2095,29 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       fontSize: 13,
                     ),
                   ),
-                  if (canEdit) ...[
-                    const SizedBox(
-                      height: 5,
-                    ),
-                    const Text(
-                      'Chạm vào món để sửa số lượng',
-                      style: TextStyle(
-                        color: AppTheme
-                            .orangeColor,
-                        fontSize: 11,
-                        fontWeight:
-                            FontWeight.w600,
-                      ),
+                  if (item.createdAt != null) ...[
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_outlined,
+                          size: 13,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            formatClockTime(item.createdAt),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                   if (item.note != null &&
@@ -2307,7 +2221,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
 
   Widget _buildSummary() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),

@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const datetimeEl = document.getElementById('res-datetime');
     const guestsEl = document.getElementById('res-guests');
     const noteEl = document.getElementById('res-note');
+    const holdPolicyEl = document.getElementById('res-hold-policy');
 
     // 3. Đổ dữ liệu thật vào giao diện nếu có
     if (reservation && typeof reservation === 'object') {
@@ -47,6 +48,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const guests = reservation.numberOfGuests || reservation.NumberOfGuests || reservation.guests;
         const note = reservation.note || reservation.Note;
+        const durationMinutes = Number(
+            reservation.durationMinutes ??
+            reservation.DurationMinutes ??
+            30
+        );
+        const rawHoldUntil = reservation.holdUntil || reservation.HoldUntil;
+        let holdUntil = rawHoldUntil ? new Date(rawHoldUntil) : null;
+
+        if ((!holdUntil || Number.isNaN(holdUntil.getTime())) && dateVal && timeVal) {
+            const start = new Date(`${dateVal}T${timeVal}:00`);
+            if (!Number.isNaN(start.getTime())) {
+                holdUntil = new Date(start.getTime() + durationMinutes * 60_000);
+            }
+        }
 
         if (codeEl) codeEl.textContent = code;
         if (nameEl) nameEl.textContent = name || 'Chưa cập nhật';
@@ -63,6 +78,21 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (noteEl) {
             noteEl.textContent = note ? `"${note}"` : 'Không có yêu cầu đặc biệt.';
+        }
+
+        if (holdPolicyEl) {
+            const holdTimeText =
+                holdUntil && !Number.isNaN(holdUntil.getTime())
+                    ? holdUntil.toLocaleTimeString('vi-VN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    })
+                    : null;
+
+            holdPolicyEl.textContent = holdTimeText
+                ? `Vui lòng đến đúng giờ. Bàn được giữ tối đa ${durationMinutes} phút, đến ${holdTimeText}. Sau thời gian này nhà hàng có thể hủy lượt đặt nếu bạn chưa nhận bàn.`
+                : `Vui lòng đến đúng giờ. Bàn được giữ tối đa ${durationMinutes} phút sau giờ hẹn.`;
         }
     } else {
         // Xử lý hoàn toàn không có dữ liệu mẫu (Fallback sạch sẽ)

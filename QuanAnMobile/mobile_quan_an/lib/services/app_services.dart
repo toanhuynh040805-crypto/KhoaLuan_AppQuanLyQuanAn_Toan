@@ -92,7 +92,9 @@ class AppServices {
 
   static final RealtimeService
       realtimeService =
-      RealtimeService();
+      RealtimeService(
+    apiClient: apiClient,
+  );
 
   static final AttendanceService
       attendanceService =

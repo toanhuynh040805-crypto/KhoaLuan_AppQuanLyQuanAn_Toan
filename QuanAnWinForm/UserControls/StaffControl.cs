@@ -33,8 +33,11 @@ namespace QuanAnWinForm.UserControls;
 //    tat ca, trinh bay dang timeline nhom theo ngay (ngay gan nhat len dau)
 //    kem khu vuc phu trach va trang thai - phong cach lich su giao dich/
 //    newsfeed cua cac app hien dai thay vi 1 bang DataGridView day dac.
-public partial class StaffControl : UserControl
+public partial class StaffControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadEverythingAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<EmployeeDto> _employees = new();
@@ -251,19 +254,30 @@ public partial class StaffControl : UserControl
 
     private async Task LoadEverythingAsync()
     {
-        // Nhan vien can duoc load truoc vi Ca lam/Nhiem vu deu can danh sach nay
-        // de lam ComboBox chon nguoi (dung Users.UserId, xem EmployeeDto.UserId).
+        // Nhân viên phải có trước vì các màn Ca làm/Nhiệm vụ dùng danh sách này.
         await LoadStaffAsync();
+        if (IsDisposed || Disposing) return;
+
         RenderTaskFilterOptions();
-        await LoadAreasAsync();
-        await LoadShiftsAsync();
-        await LoadAssignmentsAsync();
-        await LoadTasksAsync();
+
+        // Khu vực và định nghĩa ca độc lập nhau -> tải song song để giảm thời gian mở màn.
+        await Task.WhenAll(
+            LoadAreasAsync(),
+            LoadShiftsAsync());
+
+        if (IsDisposed || Disposing) return;
+
+        // Sau khi đã có nhân viên + ca + khu vực, hai danh sách này cũng có thể tải song song.
+        await Task.WhenAll(
+            LoadAssignmentsAsync(),
+            LoadTasksAsync());
+
+        if (IsDisposed || Disposing) return;
 
         _suppressHistoryReload = true;
         RenderHistoryFilterOptions();
         _suppressHistoryReload = false;
-        await SetHistoryRangeAsync(6); // mac dinh mo tab Lich su la xem 7 ngay gan nhat
+        await SetHistoryRangeAsync(6); // mặc định xem 7 ngày gần nhất
     }
 
     // Chi 4 Role thuc su ton tai trong bang Roles: QuanLy, ThuNgan, PhucVu, Bep.

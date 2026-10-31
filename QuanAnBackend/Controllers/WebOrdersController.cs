@@ -7,16 +7,17 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 
 [Route("api/orders")]
 [ApiController]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public class WebOrdersController : ControllerBase
 {
-    private const int WebOrderEmployeeId = 3;
     private readonly AppDbContext _context;
     private readonly ILogger<WebOrdersController> _logger;
     private readonly OrderRoutingService _orderRoutingService;
@@ -38,11 +39,7 @@ public class WebOrdersController : ControllerBase
     }
 
     private int GetCurrentCustomerId()
-    {
-        var userIdStr = User.FindFirst("UserId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        int.TryParse(userIdStr, out int customerId);
-        return customerId;
-    }
+        => CustomerTokens.GetCustomerId(User) ?? 0;
 
     [HttpPost("customer-order")]
     public async Task<IActionResult> CreateCustomerOrder([FromBody] WebOrderRequestDto request)
@@ -108,8 +105,13 @@ public class WebOrdersController : ControllerBase
             if (table.Status != TableStatus.Trong)
                 return Conflict(new { message = "Bàn vừa được sử dụng hoặc không còn khả dụng. Vui lòng chọn bàn khác." });
 
-            if (!await _context.Employees.AnyAsync(employee => employee.EmployeeId == WebOrderEmployeeId))
-                return Conflict(new { message = "Nhà hàng chưa cấu hình nhân viên nhận đơn web. Vui lòng liên hệ nhân viên." });
+            var webEmployeeId = await _context.Employees
+                .Where(employee => employee.EmployeeCode == OrderSources.WebEmployeeCode)
+                .Select(employee => employee.EmployeeId)
+                .SingleOrDefaultAsync();
+
+            if (webEmployeeId <= 0)
+                return Conflict(new { message = "Nhà hàng chưa cấu hình nhân viên hệ thống nhận đơn web. Vui lòng liên hệ nhân viên." });
 
             var menuItemIds = request.Items.Select(item => item.MenuItemId!.Value).Distinct().ToArray();
             var menuItems = await _context.MenuItems
@@ -133,10 +135,11 @@ public class WebOrdersController : ControllerBase
             {
                 TableId = table.TableId,
                 OrderType = OrderTypes.TaiBan,
-                EmployeeId = WebOrderEmployeeId,
+                EmployeeId = webEmployeeId,
                 CustomerId = customerId,
                 ClientRequestId = request.ClientRequestId,
                 ClientRequestHash = payloadHash,
+                Source = OrderSources.Web,
                 OrderTime = DateTime.Now,
                 Status = OrderStatus.DangMo,
                 TotalAmount = totalAmount

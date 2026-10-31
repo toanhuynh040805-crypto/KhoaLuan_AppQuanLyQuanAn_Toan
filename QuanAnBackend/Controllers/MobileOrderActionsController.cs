@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
+using QuanAnBackend.Services;
 using QuanAnBackend.Authorization;
 
 namespace QuanAnBackend.Controllers;
@@ -32,13 +33,16 @@ public class MobileOrderActionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
+    private readonly TableStateService _tableState;
 
     public MobileOrderActionsController(
         AppDbContext db,
-        IHubContext<OrderHub> hub)
+        IHubContext<OrderHub> hub,
+        TableStateService tableState)
     {
         _db = db;
         _hub = hub;
+        _tableState = tableState;
     }
 
     [HttpPost("served")]
@@ -377,6 +381,10 @@ public class MobileOrderActionsController : ControllerBase
                         Status = KitchenStatus.MoiGoi,
                         Quantity = request.Quantity
                     });
+
+                await _hub.Clients
+                    .Group("order-management")
+                    .SendAsync("OrderUpdated", new { orderId });
             }
             catch
             {
@@ -515,6 +523,10 @@ public class MobileOrderActionsController : ControllerBase
                     Quantity = item.Quantity
                 });
 
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId = item.OrderId });
+
             return Ok(new
             {
                 id = item.OrderItemId,
@@ -624,26 +636,33 @@ public class MobileOrderActionsController : ControllerBase
 
             if (orderIds.Count == 0)
             {
-                await using var emptyTableCommand = connection.CreateCommand();
-                emptyTableCommand.Transaction = transaction;
-                emptyTableCommand.CommandText = "UPDATE DiningTables SET Status = N'Trong' WHERE TableId = @TableId";
-                var p = emptyTableCommand.CreateParameter();
-                p.ParameterName = "@TableId";
-                p.Value = request.TableId;
-                emptyTableCommand.Parameters.Add(p);
-                await emptyTableCommand.ExecuteNonQueryAsync();
-
                 await transaction.CommitAsync();
-                await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+
+                // Không có order mở nhưng bàn có thể đang được giữ cho một
+                // reservation sắp tới. Tính lại trạng thái chuẩn thay vì ép Trong.
+                var resolvedStatus = await _tableState.ResolveIdleStatusAsync(
+                    request.TableId);
+
+                var emptyTable = await _db.Tables
+                    .FirstOrDefaultAsync(table => table.TableId == request.TableId);
+
+                if (emptyTable is not null)
                 {
-                    TableId = request.TableId,
-                    Status = TableStatus.Trong
-                });
+                    emptyTable.Status = resolvedStatus;
+                    await _db.SaveChangesAsync();
+
+                    await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+                    {
+                        TableId = emptyTable.TableId,
+                        emptyTable.TableName,
+                        Status = emptyTable.Status
+                    });
+                }
 
                 return Ok(new
                 {
                     tableId = request.TableId,
-                    status = "Trống",
+                    status = resolvedStatus.ToString(),
                     cancelledCount = 0
                 });
             }
@@ -796,20 +815,28 @@ public class MobileOrderActionsController : ControllerBase
             }
 
             var tableIdList = tableIds.ToList();
-            var tableIn = IdList(tableIdList, "TableId");
-            await using (var releaseCommand = connection.CreateCommand())
-            {
-                releaseCommand.Transaction = transaction;
-                releaseCommand.CommandText = $"UPDATE DiningTables SET Status = N'Trong' WHERE TableId IN ({tableIn});";
-                AddIds(releaseCommand, tableIdList, "TableId");
-                await releaseCommand.ExecuteNonQueryAsync();
-            }
 
             await transaction.CommitAsync();
 
+            // Order đã đóng. Tính lại trạng thái từng bàn theo lịch đặt kế tiếp
+            // thay vì ép toàn bộ về Trống.
+            var resolvedStatuses = await _tableState.ResolveIdleStatusesAsync(
+                tableIdList);
+            var affectedTables = await _db.Tables
+                .Where(table => tableIdList.Contains(table.TableId))
+                .ToListAsync();
+
+            foreach (var table in affectedTables)
+            {
+                if (resolvedStatuses.TryGetValue(table.TableId, out var status))
+                    table.Status = status;
+            }
+
+            await _db.SaveChangesAsync();
+
             foreach (var itemId in itemIds)
             {
-                await _hub.Clients.All.SendAsync("DishStatusChanged", new
+                await _hub.Clients.Group("internal-users").SendAsync("DishStatusChanged", new
                 {
                     orderItemId = itemId,
                     tableId = request.TableId,
@@ -819,19 +846,29 @@ public class MobileOrderActionsController : ControllerBase
                 });
             }
 
-            foreach (var releasedTableId in tableIds)
+            foreach (var table in affectedTables)
             {
                 await _hub.Clients.All.SendAsync("TableStatusUpdated", new
                 {
-                    TableId = releasedTableId,
-                    Status = TableStatus.Trong
+                    TableId = table.TableId,
+                    table.TableName,
+                    Status = table.Status
                 });
+            }
+
+            foreach (var affectedOrderId in orderIds.Distinct())
+            {
+                await _hub.Clients
+                    .Group("order-management")
+                    .SendAsync("OrderUpdated", new { orderId = affectedOrderId });
             }
 
             return Ok(new
             {
                 tableId = request.TableId,
-                status = "Trống",
+                status = affectedTables
+                    .FirstOrDefault(table => table.TableId == request.TableId)?
+                    .Status.ToString() ?? TableStatus.Trong.ToString(),
                 cancelledCount = itemIds.Count
             });
         }
@@ -878,14 +915,17 @@ public class MobileOrderActionsController : ControllerBase
         IEnumerable<OrderItem> items,
         string status)
     {
+        var affectedOrderIds = new HashSet<int>();
+
         foreach (var item in items)
         {
+            affectedOrderIds.Add(item.OrderId);
             var tableId = item.Order?.TableId ?? 0;
             var tableName = item.Order?.Table?.TableName ?? $"Bàn #{tableId}";
             var itemName = item.MenuItem?.ItemName ?? "Món";
 
             // Cho mobile (giữ nguyên)
-            await _hub.Clients.All.SendAsync("DishStatusChanged", new
+            await _hub.Clients.Group("internal-users").SendAsync("DishStatusChanged", new
             {
                 orderItemId = item.OrderItemId,
                 tableId,
@@ -895,7 +935,7 @@ public class MobileOrderActionsController : ControllerBase
             });
 
             // Cho WinForm (Sơ đồ bàn, Bếp, Đơn mang về) - cùng contract với OrderItemsController
-            await _hub.Clients.All.SendAsync("ItemStatusUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("ItemStatusUpdated", new
             {
                 Id = item.OrderItemId,
                 item.OrderId,
@@ -904,6 +944,13 @@ public class MobileOrderActionsController : ControllerBase
                 MenuItemName = itemName,
                 Status = item.Status
             });
+        }
+
+        foreach (var orderId in affectedOrderIds)
+        {
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId });
         }
     }
 

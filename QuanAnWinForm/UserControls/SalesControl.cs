@@ -37,12 +37,27 @@ public partial class SalesControl : UserControl
     // Đơn ĐANG MỞ của bàn đang chọn (các món khách đã gọi trước đó, kể cả từ Mobile).
     // Hiển thị chỉ-đọc ở giỏ hàng; _cart chỉ chứa các món THÊM MỚI tại quầy.
     private OpenTableOrderDto? _existingOrder;
+    private readonly System.Windows.Forms.Timer _realtimeRefreshTimer =
+        new() { Interval = 300 };
+    private bool _realtimeRefreshRunning;
+    private bool _realtimeDirty;
+
+    private readonly System.Windows.Forms.Timer _tableLockHeartbeatTimer =
+        new() { Interval = 15000 };
+    private int? _lockedTableId;
+    private string? _tableLockToken;
+    private bool _tableLockSwitching;
+    private bool _tableLockLostDialogShowing;
+    private bool _suppressTableSelectionChanged;
+
+    public event Action? ReturnToTablesRequested;
 
     // Món THÊM MỚI mà khách ăn tại chỗ yêu cầu MANG VỀ (cùng 1 đơn / 1 hóa đơn với đơn tại bàn).
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
     private readonly int? _preselectedTakeawayOrderId;
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
+    private readonly Button btnConfirmOrder = new() { Text = "Xác nhận" };
 
     private bool CanViewPaymentReceiptQr
     {
@@ -88,11 +103,64 @@ public partial class SalesControl : UserControl
         panelLeft.Resize += (s, e) => FitLayout();
         panelRight.Resize += (s, e) => FitLayout();
         Load += (s, e) => FitLayout();
-        Disposed += (s, e) => _tip.Dispose();
 
-        Load += async (s, e) => await LoadDataAsync();
+        _tableLockHeartbeatTimer.Tick += async (s, e) =>
+        {
+            await HeartbeatCurrentTableLockAsync();
+        };
+
+        _realtimeRefreshTimer.Tick += async (s, e) =>
+        {
+            _realtimeRefreshTimer.Stop();
+            if (_realtimeRefreshRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRefreshRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await RefreshCurrentOrderRealtimeAsync();
+            }
+            finally
+            {
+                _realtimeRefreshRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeRefreshTimer.Start();
+            }
+        };
+
+        Load += async (s, e) =>
+        {
+            SubscribeRealtime();
+            await LoadDataAsync();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeRefreshTimer.Stop();
+            _realtimeRefreshTimer.Dispose();
+            _tableLockHeartbeatTimer.Stop();
+            _tableLockHeartbeatTimer.Dispose();
+
+            var tableId = _lockedTableId;
+            var token = _tableLockToken;
+            _lockedTableId = null;
+            _tableLockToken = null;
+
+            if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            {
+                _ = SafeReleaseTableLockAsync(tableId.Value, token!);
+            }
+
+            _tip.Dispose();
+        };
         btnVietQr.Click += async (s, e) => await ProcessPaymentAsync(method: 1);
         btnThanhToan.Click += async (s, e) => await ProcessPaymentAsync(method: 0);
+        btnConfirmOrder.Click += async (s, e) => await ConfirmOrderAsync();
         lblInvoiceHistory.Click += async (s, e) => await OpenInvoiceHistoryDialogAsync();
         cbCampaign.SelectedIndexChanged += (s, e) => RenderCart();
 
@@ -115,14 +183,387 @@ public partial class SalesControl : UserControl
         UpdateCustomerInfoLabel();
     }
 
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver += OnTableLockTakenOver;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver -= OnTableLockTakenOver;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnTableLockTakenOver(TableLockTakenOverPayload payload)
+    {
+        if (IsDisposed ||
+            !_lockedTableId.HasValue ||
+            payload.TableId != _lockedTableId.Value)
+        {
+            return;
+        }
+
+        var currentToken = _tableLockToken?.Trim() ?? "";
+        if (currentToken.Length == 0)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(payload.PreviousClientToken) &&
+            !string.Equals(
+                payload.PreviousClientToken.Trim(),
+                currentToken,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(async () =>
+            {
+                await HandleTableLockLostAsync(
+                    payload.TakenOverByEmployeeName,
+                    payload.TakenOverByEmployeeCode);
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng.
+        }
+    }
+
+    private async Task<bool> AcquireTableLockAsync(int tableId)
+    {
+        if (_lockedTableId == tableId &&
+            !string.IsNullOrWhiteSpace(_tableLockToken))
+        {
+            return true;
+        }
+
+        if (_tableLockSwitching)
+            return false;
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+        {
+            MessageBox.Show(
+                "Không xác định được mã nhân viên của phiên đăng nhập.",
+                "Không thể vào bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+
+        _tableLockSwitching = true;
+        cbTable.Enabled = false;
+
+        try
+        {
+            var newToken = $"winform-{Guid.NewGuid():N}";
+            var lease = await _api.AcquireTableLockAsync(
+                tableId,
+                employeeCode,
+                newToken);
+
+            if (lease is null || string.IsNullOrWhiteSpace(lease.ClientToken))
+                throw new InvalidOperationException("Máy chủ không trả về phiên khóa bàn hợp lệ.");
+
+            var previousTableId = _lockedTableId;
+            var previousToken = _tableLockToken;
+
+            _lockedTableId = tableId;
+            _tableLockToken = lease.ClientToken;
+            _tableLockHeartbeatTimer.Start();
+
+            if (previousTableId.HasValue &&
+                previousTableId.Value != tableId &&
+                !string.IsNullOrWhiteSpace(previousToken))
+            {
+                await SafeReleaseTableLockAsync(
+                    previousTableId.Value,
+                    previousToken!);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không thể vào bàn: {ex.Message}",
+                "Khóa bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+        finally
+        {
+            _tableLockSwitching = false;
+            if (!cbTable.IsDisposed)
+                cbTable.Enabled = true;
+        }
+    }
+
+    private async Task HeartbeatCurrentTableLockAsync()
+    {
+        if (!_lockedTableId.HasValue ||
+            string.IsNullOrWhiteSpace(_tableLockToken) ||
+            _tableLockLostDialogShowing ||
+            IsDisposed)
+        {
+            return;
+        }
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+            return;
+
+        try
+        {
+            var result = await _api.HeartbeatTableLockAsync(
+                _lockedTableId.Value,
+                employeeCode,
+                _tableLockToken!);
+
+            if (!result.IsOwner)
+            {
+                await HandleTableLockLostAsync(
+                    result.Message ?? "",
+                    "");
+            }
+        }
+        catch
+        {
+            // Mất mạng tạm thời không đẩy người dùng ra ngay. Lease phía server
+            // tự hết hạn sau 45 giây; khi kết nối lại heartbeat/event sẽ xác nhận.
+        }
+    }
+
+    private async Task HandleTableLockLostAsync(
+        string takenOverByName,
+        string takenOverByCode)
+    {
+        if (IsDisposed || _tableLockLostDialogShowing)
+            return;
+
+        _tableLockLostDialogShowing = true;
+        _tableLockHeartbeatTimer.Stop();
+
+        _lockedTableId = null;
+        _tableLockToken = null;
+        _selectedTableId = null;
+        _existingOrder = null;
+        ClearCart();
+        RenderCart();
+
+        var name = takenOverByName?.Trim() ?? "";
+        var code = takenOverByCode?.Trim() ?? "";
+        string account;
+
+        // Heartbeat conflict truyền message qua tham số đầu tiên.
+        if (name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("thiết bị khác", StringComparison.OrdinalIgnoreCase))
+        {
+            account = name;
+        }
+        else if (name.Length > 0 && code.Length > 0 &&
+                 !string.Equals(name, code, StringComparison.OrdinalIgnoreCase))
+        {
+            account = $"Tài khoản {name} ({code}) đã tiếp quản bàn này.";
+        }
+        else if (name.Length > 0 || code.Length > 0)
+        {
+            account = $"Tài khoản {(name.Length > 0 ? name : code)} đã tiếp quản bàn này.";
+        }
+        else
+        {
+            account = "Bàn đã được tài khoản khác tiếp quản.";
+        }
+
+        MessageBox.Show(
+            account + Environment.NewLine +
+            "Bạn không thể tiếp tục thao tác trên bàn này.",
+            "Bàn đã được tiếp quản",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+
+        _tableLockLostDialogShowing = false;
+
+        if (!IsDisposed)
+            ReturnToTablesRequested?.Invoke();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ReleaseCurrentTableLockAsync()
+    {
+        var tableId = _lockedTableId;
+        var token = _tableLockToken;
+
+        _tableLockHeartbeatTimer.Stop();
+        _lockedTableId = null;
+        _tableLockToken = null;
+
+        if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            await SafeReleaseTableLockAsync(tableId.Value, token!);
+    }
+
+    private async Task SafeReleaseTableLockAsync(
+        int tableId,
+        string clientToken)
+    {
+        try
+        {
+            var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+            if (employeeCode.Length == 0)
+                return;
+
+            await _api.ReleaseTableLockAsync(
+                tableId,
+                employeeCode,
+                clientToken);
+        }
+        catch
+        {
+            // Lease tự hết hạn sau 45 giây nếu Backend/mạng vừa mất.
+        }
+    }
+
+    private bool IsCurrentOrder(int orderId) =>
+        orderId > 0 && _existingOrder?.OrderId == orderId;
+
+    private bool IsCurrentTable(int? tableId) =>
+        !_isTakeaway &&
+        tableId.HasValue &&
+        tableId.Value > 0 &&
+        _selectedTableId == tableId.Value;
+
+    private void OnOrderUpdated(OrderUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnOrderItemCancelled(OrderItemCancelledPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload payload)
+    {
+        if (IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload payload)
+    {
+        if (!IsCurrentOrder(payload.OrderId) && !IsCurrentTable(payload.TableId))
+            return;
+
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke(async () =>
+            {
+                if (IsDisposed) return;
+
+                // Đơn đã được thiết bị khác thanh toán: không giữ món/giỏ cục bộ
+                // của lượt cũ để tránh thao tác tiếp trên hóa đơn đã đóng.
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+
+                ClearCart();
+                _existingOrder = null;
+                _selectedCustomer = null;
+                txtCustomerPhone.Clear();
+                UpdateCustomerInfoLabel();
+                RenderCart();
+
+                try { await RefreshTablesAsync(); } catch { }
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeRefreshTimer.Stop();
+                _realtimeRefreshTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task RefreshCurrentOrderRealtimeAsync()
+    {
+        try
+        {
+            if (_isTakeaway)
+            {
+                if (_existingOrder?.OrderId is int orderId && orderId > 0)
+                    await LoadTakeawayOrderAsync(orderId, silent: true);
+                return;
+            }
+
+            if (_selectedTableId is int tableId && tableId > 0)
+                await LoadOpenOrderAsync(tableId, silent: true);
+        }
+        catch
+        {
+            // Realtime refresh không được làm gián đoạn thao tác bán hàng.
+        }
+    }
+
     private async Task LoadDataAsync()
     {
         try
         {
-            _allMenuItems = (await _api.GetMenuAsync())
-                .OrderBy(m => m.CategoryId).ThenBy(m => m.Id).ToList();
-            await RefreshTablesAsync();
-            await RefreshCampaignsAsync();
+            // Ba nguồn dữ liệu độc lập: tải song song để màn POS mở nhanh hơn.
+            var menuTask = _api.GetMenuAsync();
+            var tablesTask = RefreshTablesAsync();
+            var campaignsTask = RefreshCampaignsAsync();
+
+            await Task.WhenAll(menuTask, tablesTask, campaignsTask);
+
+            if (IsDisposed || Disposing)
+                return;
+
+            _allMenuItems = (await menuTask)
+                .OrderBy(m => m.CategoryId)
+                .ThenBy(m => m.Id)
+                .ToList();
+
             RenderCategoryTabs();
             FilterCategory(_selectedCategoryId);
 
@@ -131,9 +572,14 @@ public partial class SalesControl : UserControl
             else if (_preselectedTakeawayOrderId == 0)
                 SetMode(takeaway: true); // 0 = mở sẵn chế độ Mang về để tạo đơn mới
         }
+        catch (OperationCanceledException)
+        {
+            // Chuyển màn hình trong lúc đang tải: không hiện popup lỗi.
+        }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được dữ liệu: {ex.Message}");
+            if (!IsDisposed && !Disposing && Visible)
+                MessageBox.Show($"Không tải được dữ liệu: {ex.Message}");
         }
     }
 
@@ -168,41 +614,112 @@ public partial class SalesControl : UserControl
             .ToList();
         var keepTableId = _selectedTableId ?? _preselectedTableId;
 
-        cbTable.Items.Clear();
-        foreach (var t in tables) cbTable.Items.Add(t);
-        cbTable.DisplayMember = "TableName";
-
-        if (tables.Count == 0) return;
-
-        var indexToSelect = keepTableId is null ? 0 : tables.FindIndex(t => t.Id == keepTableId.Value);
-        cbTable.SelectedIndex = indexToSelect >= 0 ? indexToSelect : 0;
-    }
-
-    private void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
-    {
-        if (_isTakeaway) return; // dang ban mang ve: bo qua thay doi combobox ban (vd sau khi nap lai danh sach ban)
-
-        if (cbTable.SelectedItem is TableDto t)
+        _suppressTableSelectionChanged = true;
+        try
         {
-            _selectedTableId = t.Id;
-            lblTableName.Text = t.TableName;
-            ClearCart();
-            _existingOrder = null;
-            if (cbCampaign.Items.Count > 0) cbCampaign.SelectedIndex = 0;
+            cbTable.Items.Clear();
+            foreach (var t in tables) cbTable.Items.Add(t);
+            cbTable.DisplayMember = "TableName";
 
-            // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
-            _selectedCustomer = null;
-            txtCustomerPhone.Clear();
-            UpdateCustomerInfoLabel();
+            if (tables.Count == 0)
+            {
+                cbTable.SelectedIndex = -1;
+                return;
+            }
 
-            RenderCart();
+            // Không tự chọn bàn đầu tiên: mở màn Bán hàng không được vô tình
+            // chiếm lease và đẩy Mobile/WinForms khác ra khỏi một bàn.
+            var indexToSelect = keepTableId is null
+                ? -1
+                : tables.FindIndex(t => t.Id == keepTableId.Value);
+            cbTable.SelectedIndex = indexToSelect;
+        }
+        finally
+        {
+            _suppressTableSelectionChanged = false;
+        }
 
-            // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
-            _ = LoadOpenOrderAsync(t.Id);
+        if (!_isTakeaway &&
+            cbTable.SelectedItem is TableDto selected &&
+            (_lockedTableId != selected.Id ||
+             string.IsNullOrWhiteSpace(_tableLockToken)))
+        {
+            await SelectDineInTableAsync(selected);
         }
     }
 
-    private async Task LoadOpenOrderAsync(int tableId)
+    private async void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_suppressTableSelectionChanged || _isTakeaway)
+            return;
+
+        if (cbTable.SelectedItem is not TableDto table)
+        {
+            _selectedTableId = null;
+            lblTableName.Text = "Chưa chọn bàn";
+            return;
+        }
+
+        await SelectDineInTableAsync(table);
+    }
+
+    private async Task SelectDineInTableAsync(TableDto table)
+    {
+        if (_isTakeaway || IsDisposed)
+            return;
+
+        var previousTableId = _selectedTableId;
+
+        if (!await AcquireTableLockAsync(table.Id))
+        {
+            _suppressTableSelectionChanged = true;
+            try
+            {
+                if (previousTableId.HasValue)
+                {
+                    var previousIndex = Enumerable.Range(0, cbTable.Items.Count)
+                        .FirstOrDefault(index =>
+                            cbTable.Items[index] is TableDto item &&
+                            item.Id == previousTableId.Value);
+                    cbTable.SelectedIndex =
+                        previousIndex >= 0 &&
+                        previousIndex < cbTable.Items.Count &&
+                        cbTable.Items[previousIndex] is TableDto previous &&
+                        previous.Id == previousTableId.Value
+                            ? previousIndex
+                            : -1;
+                }
+                else
+                {
+                    cbTable.SelectedIndex = -1;
+                }
+            }
+            finally
+            {
+                _suppressTableSelectionChanged = false;
+            }
+            return;
+        }
+
+        _selectedTableId = table.Id;
+        lblTableName.Text = table.TableName;
+        ClearCart();
+        _existingOrder = null;
+        if (cbCampaign.Items.Count > 0)
+            cbCampaign.SelectedIndex = 0;
+
+        // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
+        _selectedCustomer = null;
+        txtCustomerPhone.Clear();
+        UpdateCustomerInfoLabel();
+
+        RenderCart();
+
+        // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
+        await LoadOpenOrderAsync(table.Id);
+    }
+
+    private async Task LoadOpenOrderAsync(int tableId, bool silent = false)
     {
         try
         {
@@ -220,7 +737,8 @@ public partial class SalesControl : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
+            if (!silent && !IsDisposed && Visible)
+                MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
         }
     }
 
@@ -268,10 +786,26 @@ public partial class SalesControl : UserControl
         btnReceiptPreview.Cursor = Cursors.Hand;
         btnReceiptPreview.FlatAppearance.BorderColor = AppColors.OutlineVariant;
 
-        // Dời hai nút thanh toán xuống để dành chỗ cho nút máy in.
-        btnVietQr.Top = 196;
-        btnThanhToan.Top = 246;
+        // VietQR nằm một hàng riêng.
+        btnVietQr.SetBounds(0, 196, 370, 42);
+
+        // Hàng thao tác cuối:
+        // - Xác nhận gọi món: nhỏ hơn, màu xanh, chỉ gửi món xuống đơn/bếp.
+        // - Thanh toán: lớn hơn, chỉ hoàn tất sau bước xem bill + xác nhận.
+        // Hai nút cuối cân bằng nhau: 181px + khoảng cách 8px + 181px.
+        btnConfirmOrder.SetBounds(0, 246, 181, 46);
+        btnConfirmOrder.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+        btnConfirmOrder.FlatStyle = FlatStyle.Flat;
+        btnConfirmOrder.FlatAppearance.BorderSize = 0;
+        btnConfirmOrder.BackColor = Color.FromArgb(46, 125, 50);
+        btnConfirmOrder.ForeColor = Color.White;
+        btnConfirmOrder.Cursor = Cursors.Hand;
+        btnConfirmOrder.UseVisualStyleBackColor = false;
+
+        btnThanhToan.SetBounds(189, 246, 181, 46);
+
         panelTotals.Controls.Add(btnReceiptPreview);
+        panelTotals.Controls.Add(btnConfirmOrder);
         panelTotals.Height = 300;
 
         // Bill có QR thanh toán chỉ dành cho Quản lý / Thu ngân.
@@ -280,6 +814,102 @@ public partial class SalesControl : UserControl
 
         btnReceiptPreview.Click += async (s, e) =>
             await ShowTemporaryReceiptAsync();
+    }
+
+    // Lưu các món đang chọn vào Order và gửi xuống bếp/quầy nhưng KHÔNG thanh toán.
+    // Sau khi thành công, tải lại đơn từ Backend để phần "Món đã gọi" là nguồn sự thật.
+    private async Task ConfirmOrderAsync()
+    {
+        if (!_isTakeaway && _selectedTableId is null)
+        {
+            MessageBox.Show("Vui lòng chọn bàn trước.");
+            return;
+        }
+
+        if (CartIsEmpty)
+        {
+            MessageBox.Show(
+                "Chưa có món mới để xác nhận.",
+                "Xác nhận gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        if (_isTakeaway && _existingOrder is not null)
+        {
+            MessageBox.Show(
+                "Đơn mang về này đã được gửi bếp. Vui lòng tạo đơn mang về mới nếu cần gọi thêm.",
+                "Xác nhận gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        btnConfirmOrder.Enabled = false;
+        btnThanhToan.Enabled = false;
+        btnVietQr.Enabled = false;
+
+        try
+        {
+            var items = BuildOrderItems();
+            if (items.Count == 0) return;
+
+            if (_isTakeaway)
+            {
+                var orderId = await _api.AddTakeawayOrderItemsAsync(_userId, items);
+                if (orderId is null)
+                {
+                    MessageBox.Show("Không tạo được đơn mang về.");
+                    return;
+                }
+
+                ClearCart();
+                await LoadTakeawayOrderAsync(orderId.Value);
+            }
+            else
+            {
+                var orderId = await _api.AddOrderItemsAsync(
+                    _selectedTableId!.Value,
+                    _userId,
+                    items);
+
+                if (orderId is null)
+                {
+                    MessageBox.Show("Không ghi nhận được món vừa gọi.");
+                    return;
+                }
+
+                ClearCart();
+                await LoadOpenOrderAsync(_selectedTableId.Value);
+            }
+
+            RenderCart();
+            UpdateSendKitchenButton();
+
+            MessageBox.Show(
+                "Đã xác nhận gọi món và gửi xuống bộ phận chế biến.",
+                "Gọi món thành công",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không xác nhận được món: {ex.Message}",
+                "Lỗi gọi món",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnConfirmOrder.IsDisposed)
+                btnConfirmOrder.Enabled = true;
+            if (!btnThanhToan.IsDisposed)
+                btnThanhToan.Enabled = true;
+            if (!btnVietQr.IsDisposed)
+                btnVietQr.Enabled = true;
+        }
     }
 
     private void SetMode(bool takeaway)
@@ -307,6 +937,8 @@ public partial class SalesControl : UserControl
 
         if (takeaway)
         {
+            _ = ReleaseCurrentTableLockAsync();
+            _selectedTableId = null;
             lblTableName.Text = "Mang về";
             RenderCart();
         }
@@ -336,14 +968,17 @@ public partial class SalesControl : UserControl
     }
 
     // Mo 1 don MANG VE dang mo (da gui bep truoc do) de thanh toan.
-    private async Task LoadTakeawayOrderAsync(int orderId)
+    private async Task LoadTakeawayOrderAsync(int orderId, bool silent = false)
     {
         SetMode(takeaway: true);
 
         var order = await _api.GetOrderByIdAsync(orderId);
         if (order is null)
         {
-            MessageBox.Show("Không tìm thấy đơn mang về.");
+            _existingOrder = null;
+            RenderCart();
+            if (!silent)
+                MessageBox.Show("Không tìm thấy đơn mang về.");
             return;
         }
 
@@ -759,22 +1394,75 @@ public partial class SalesControl : UserControl
     private Panel BuildCartRow(MenuItemDto item, int qty, bool takeawayLine = false)
     {
         var dict = takeawayLine ? _cartTake : _cart;
-        var row = new Panel { Size = new Size(360, _isTakeaway ? 56 : 72), Margin = new Padding(0, 0, 0, 6) };
 
-        var lblName = new Label { Text = item.Name, Font = AppFonts.LabelLg, Location = new Point(0, 4), Size = new Size(170, 20), AutoEllipsis = true };
-        var lblUnitPrice = new Label { Text = $"{item.Price:N0}đ / phần", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 26), AutoSize = true };
-        var lblSum = new Label { Text = $"{item.Price * qty:N0}đ", Font = AppFonts.LabelLg, Location = new Point(280, 16), Size = new Size(80, 20), TextAlign = ContentAlignment.MiddleRight };
+        // Dành hẳn một dòng cho nút chuyển mang về/tại chỗ.
+        // Chiều cao cũ 72px dễ bị cắt ở Windows scale 125%/150%.
+        var rowHeight = _isTakeaway ? 62 : 92;
+        var row = new Panel
+        {
+            Size = new Size(360, rowHeight),
+            Margin = new Padding(0, 0, 0, 8)
+        };
 
-        var btnMinus = new Button { Text = "-", Size = new Size(24, 24), Location = new Point(178, 14), FlatStyle = FlatStyle.Flat };
-        var lblQty = new Label { Text = qty.ToString(), Font = AppFonts.LabelLg, Location = new Point(206, 14), Size = new Size(28, 24), TextAlign = ContentAlignment.MiddleCenter };
-        var btnPlus = new Button { Text = "+", Size = new Size(24, 24), Location = new Point(238, 14), FlatStyle = FlatStyle.Flat };
+        var lblName = new Label
+        {
+            Text = item.Name,
+            Font = AppFonts.LabelLg,
+            Location = new Point(0, 4),
+            Size = new Size(170, 22),
+            AutoEllipsis = true
+        };
+
+        var lblUnitPrice = new Label
+        {
+            Text = $"{item.Price:N0}đ / phần",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(0, 28),
+            Size = new Size(170, 24),
+            AutoEllipsis = true
+        };
+
+        var lblSum = new Label
+        {
+            Text = $"{item.Price * qty:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(280, 16),
+            Size = new Size(80, 22),
+            TextAlign = ContentAlignment.MiddleRight
+        };
+
+        var btnMinus = new Button
+        {
+            Text = "-",
+            Size = new Size(26, 26),
+            Location = new Point(178, 12),
+            FlatStyle = FlatStyle.Flat
+        };
+        var lblQty = new Label
+        {
+            Text = qty.ToString(),
+            Font = AppFonts.LabelLg,
+            Location = new Point(207, 13),
+            Size = new Size(30, 26),
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        var btnPlus = new Button
+        {
+            Text = "+",
+            Size = new Size(26, 26),
+            Location = new Point(240, 12),
+            FlatStyle = FlatStyle.Flat
+        };
 
         btnMinus.Click += (s, e) =>
         {
             var (i, q) = dict[item.Id];
-            if (q <= 1) dict.Remove(item.Id); else dict[item.Id] = (i, q - 1);
+            if (q <= 1) dict.Remove(item.Id);
+            else dict[item.Id] = (i, q - 1);
             RenderCart();
         };
+
         btnPlus.Click += (s, e) =>
         {
             var (i, q) = dict[item.Id];
@@ -782,19 +1470,35 @@ public partial class SalesControl : UserControl
             RenderCart();
         };
 
-        // Bán tại chỗ: cho chuyển từng phần của món sang "mang về" (và ngược lại).
+        // Bán tại chỗ: cho chuyển từng phần của món sang "mang về" và ngược lại.
         if (!_isTakeaway)
         {
             var btnMove = new Button
             {
                 Text = takeawayLine ? "← Chuyển tại chỗ" : "Chuyển mang về →",
-                Font = AppFonts.BodyMd,
-                Size = new Size(150, 22),
-                Location = new Point(0, 46),
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Regular),
+                Size = new Size(166, 30),
+                Location = new Point(0, 56),
                 FlatStyle = FlatStyle.Flat,
-                Cursor = Cursors.Hand
+                Cursor = Cursors.Hand,
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseVisualStyleBackColor = false
             };
-            StyleCategoryButton(btnMove, takeawayLine);
+
+            if (takeawayLine)
+            {
+                btnMove.BackColor = AppColors.Primary;
+                btnMove.ForeColor = Color.White;
+                btnMove.FlatAppearance.BorderSize = 0;
+            }
+            else
+            {
+                btnMove.BackColor = Color.White;
+                btnMove.ForeColor = AppColors.OnSurfaceVariant;
+                btnMove.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+                btnMove.FlatAppearance.BorderSize = 1;
+            }
+
             btnMove.Click += (s, e) => MoveOneUnit(item, takeawayLine);
             row.Controls.Add(btnMove);
         }
@@ -1046,6 +1750,68 @@ public partial class SalesControl : UserControl
         }
     }
 
+    private async Task<InvoiceDetailDto> BuildPaymentConfirmationInvoiceAsync(
+        int orderId,
+        PaymentPreviewOrderDto preview)
+    {
+        // Sau khi các món mới đã được lưu vào Order, đồng bộ lại đơn từ Backend
+        // để bill xác nhận phản ánh đúng dữ liệu thực tế và tránh gửi trùng món nếu
+        // người dùng đóng/hủy bước thanh toán rồi thử lại.
+        if (_isTakeaway)
+        {
+            await LoadTakeawayOrderAsync(orderId);
+        }
+        else if (_selectedTableId.HasValue)
+        {
+            await LoadOpenOrderAsync(_selectedTableId.Value);
+        }
+
+        var lines = (_existingOrder?.Items ?? new List<OpenTableOrderItemDto>())
+            .Where(i => i.Status != (int)KitchenStatus.DaHuy)
+            .Select(i => new InvoiceLineDto
+            {
+                Name = i.Name,
+                Quantity = i.Quantity,
+                UnitPrice = i.UnitPrice,
+                LineTotal = i.UnitPrice * i.Quantity,
+                IsTakeaway = i.IsTakeaway
+            })
+            .ToList();
+
+        return new InvoiceDetailDto
+        {
+            Id = orderId,
+            OrderId = orderId,
+            InvoiceDate = DateTime.Now,
+            OrderTime = preview.OrderTime,
+            TableName = _isTakeaway
+                ? (_existingOrder?.TableName ?? "Mang về")
+                : (cbTable.SelectedItem is TableDto t ? t.TableName : lblTableName.Text),
+            OrderType = _isTakeaway ? "MangVe" : "TaiBan",
+            WaiterName = !string.IsNullOrWhiteSpace(preview.WaiterName)
+                ? preview.WaiterName
+                : SessionContext.FullName,
+            // Đây là người đang chuẩn bị xác nhận. Backend vẫn là nguồn cuối cùng
+            // ghi ConfirmedByUserId khi CreatePaymentAsync chạy thành công.
+            CashierName = SessionContext.FullName,
+            Items = lines,
+            SubTotal = preview.SubTotal,
+            DiscountAmount = preview.DiscountAmount,
+            TaxAmount = 0,
+            TotalAmount = preview.TotalAmount,
+            Status = 0,
+            ShopName = preview.ShopName,
+            ShopAddress = preview.ShopAddress,
+            BankName = preview.BankName,
+            BankAccountNo = preview.BankAccountNo,
+            BankAccountName = preview.BankAccountName,
+            BankBranch = preview.BankBranch,
+            TransferContent = preview.TransferContent,
+            QrImageUrl = preview.QrImageUrl,
+            QrPayload = preview.QrPayload,
+        };
+    }
+
     private async Task ProcessPaymentAsync(int method)
     {
         if (!_isTakeaway && _selectedTableId is null)
@@ -1054,7 +1820,6 @@ public partial class SalesControl : UserControl
             return;
         }
 
-        // Mang ve khong co "don dang mo san" cua ban -> bat buoc phai co mon trong gio.
         if (CartIsEmpty && _existingOrder is null)
         {
             MessageBox.Show("Giỏ hàng đang trống");
@@ -1063,100 +1828,137 @@ public partial class SalesControl : UserControl
 
         btnThanhToan.Enabled = false;
         btnVietQr.Enabled = false;
+
         try
         {
             var items = BuildOrderItems();
+            var hadNewItems = items.Count > 0;
 
-            // Chỉ gửi các món THÊM MỚI trong giỏ; các món đã gọi trước đó (kể cả từ Mobile)
-            // đã nằm sẵn trong đơn đang mở nên KHÔNG gửi lại (tránh nhân đôi món).
-            // Mang ve: tao don moi khong gan ban (Backend danh so MV-xxx), thanh toan ngay ben duoi.
+            // Bước 1: bảo đảm các món mới đã nằm trong Order, nhưng CHƯA tạo Payment.
             int? orderId = _isTakeaway
-                ? (_existingOrder is not null && CartIsEmpty
+                ? (_existingOrder is not null && !hadNewItems
                     ? _existingOrder.OrderId
                     : await _api.AddTakeawayOrderItemsAsync(_userId, items))
-                : !CartIsEmpty
+                : hadNewItems
                     ? await _api.AddOrderItemsAsync(_selectedTableId!.Value, _userId, items)
                     : _existingOrder?.OrderId;
+
             if (orderId is null)
             {
                 MessageBox.Show("Không tạo được đơn hàng (Backend không trả về mã đơn).");
                 return;
             }
 
+            // Các món vừa gửi đã thuộc Order. Xóa giỏ local trước khi đồng bộ lại để
+            // nếu người dùng hủy bước xác nhận, lần bấm sau không gửi trùng món.
+            if (hadNewItems)
+                ClearCart();
+
             var campaignId = GetSelectedCampaignId();
-            PaymentPreviewOrderDto? qrPreview = null;
 
-            if (method == 1)
+            // Bước 2: chỉ PREVIEW số tiền/QR. Endpoint này không tạo Payment/Invoice.
+            var preview = await _api.GetPaymentPreviewAsync(
+                orderId.Value,
+                campaignId);
+
+            if (preview is null)
             {
-                qrPreview = await _api.GetPaymentPreviewAsync(
-                    orderId.Value,
-                    campaignId);
-
-                if (qrPreview is null)
-                {
-                    MessageBox.Show("Không tải được thông tin QR thanh toán.");
-                    return;
-                }
-
-                var confirmedTransfer = await ShowVietQrDialogAsync(qrPreview);
-                if (!confirmedTransfer)
-                    return;
+                MessageBox.Show("Không tải được thông tin xác nhận thanh toán.");
+                return;
             }
 
+            var confirmationInvoice = await BuildPaymentConfirmationInvoiceAsync(
+                orderId.Value,
+                preview);
+
+            var paymentLabel = method == 1 ? "VIETQR / CHUYỂN KHOẢN" : "TIỀN MẶT";
+
+            // Bước 3: hiện BILL trước. Chỉ nút xác nhận trên bill mới cho phép
+            // đi tiếp sang CreatePaymentAsync.
+            var confirmed = await ShowInvoiceReceiptDialogAsync(
+                confirmationInvoice,
+                $"XÁC NHẬN THANH TOÁN - {paymentLabel}",
+                showPaymentQr: method == 1,
+                requirePaymentConfirmation: true);
+
+            if (!confirmed)
+            {
+                RenderCart();
+                UpdateSendKitchenButton();
+                return;
+            }
+
+            // Bước 4: lúc này mới thật sự hoàn tất thanh toán.
             var payment = await _api.CreatePaymentAsync(
                 orderId.Value,
                 method,
                 campaignId,
                 _selectedCustomer?.Id,
-                transactionRef: method == 1 ? qrPreview?.TransferContent : null);
+                transactionRef: method == 1 ? preview.TransferContent : null);
 
             if (payment is null)
             {
-                MessageBox.Show("Thanh toán thất bại. Vui lòng thử lại.");
+                MessageBox.Show(
+                    "Thanh toán chưa được ghi nhận. Đơn vẫn ở trạng thái chưa thanh toán.",
+                    "Thanh toán thất bại",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
                 return;
             }
 
-            // Hien hoa don chi tiet (itemized) cho CA HAI phuong thuc thanh toan -
-            // Backend da tao san Invoice + Payment trong CUNG 1 luot goi
-            // PaymentsController.Create nen luon co InvoiceId de tra ve ngay. Voi
-            // VietQR, hoa don hien SAU khi dong dialog QR (khong che mat ma QR).
-            try
-            {
-                var invoiceDetail = await _api.GetInvoiceAsync(payment.InvoiceId);
-                if (invoiceDetail is not null)
-                    await ShowInvoiceReceiptDialogAsync(invoiceDetail);
-                else
-                    MessageBox.Show($"Đã thanh toán thành công. Tổng tiền: {payment.TotalAmount:N0}đ");
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Đã thanh toán thành công (Tổng tiền: {payment.TotalAmount:N0}đ) nhưng không tải được hóa đơn chi tiết: {ex.Message}");
-            }
+            MessageBox.Show(
+                $"Thanh toán thành công.\nHóa đơn #{payment.InvoiceId}\nTổng tiền: {payment.TotalAmount:N0}đ",
+                "Hoàn tất thanh toán",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
 
-            // Báo riêng phần điểm tích lũy (nếu có gắn khách) - tách khỏi hóa đơn
-            // vì InvoiceDetailDto hiện không mang theo thông tin điểm.
+            // Báo riêng phần điểm tích lũy (nếu có gắn khách).
             if (payment.CustomerId.HasValue && payment.PointsEarned > 0)
             {
-                var emailNote = payment.EmailSent ? "\nĐã gửi hóa đơn qua email cho khách." : "";
+                var emailNote = payment.EmailSent
+                    ? "\nĐã gửi hóa đơn qua email cho khách."
+                    : "";
+
                 MessageBox.Show(
-                    $"Đã tích {payment.PointsEarned:N0} điểm cho khách hàng.\nSố điểm hiện có: {payment.LoyaltyPointBalance:N0} điểm.{emailNote}",
+                    $"Đã tích {payment.PointsEarned:N0} điểm cho khách hàng.\n" +
+                    $"Số điểm hiện có: {payment.LoyaltyPointBalance:N0} điểm.{emailNote}",
                     "Tích điểm thành công");
             }
             else if (payment.EmailSent)
             {
-                MessageBox.Show("Đã gửi hóa đơn qua email cho khách hàng.", "Gửi email thành công");
+                MessageBox.Show(
+                    "Đã gửi hóa đơn qua email cho khách hàng.",
+                    "Gửi email thành công");
             }
 
             ClearCart();
             _existingOrder = null;
-            if (_isTakeaway) lblTableName.Text = "Mang về";
+
+            if (!_isTakeaway)
+            {
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+                lblTableName.Text = "Chưa chọn bàn";
+            }
+            else
+            {
+                lblTableName.Text = "Mang về";
+            }
+
             RenderCart();
             UpdateSendKitchenButton();
-            cbCampaign.SelectedIndex = 0; // reset lua chon khuyen mai cho luot ban hang tiep theo
+
+            if (cbCampaign.Items.Count > 0)
+                cbCampaign.SelectedIndex = 0;
+
             _selectedCustomer = null;
             txtCustomerPhone.Clear();
             UpdateCustomerInfoLabel();
-            await RefreshTablesAsync(); // bàn vừa thanh toán sẽ được Backend trả về trạng thái Trống
+
+            await RefreshTablesAsync();
         }
         catch (Exception ex)
         {
@@ -1318,10 +2120,11 @@ public partial class SalesControl : UserControl
     // Hoa don day du kieu bien lai: liet ke tung mon (da loai bo mon bi huy o
     // Backend), tam tinh/giam gia/thue/tong cong, phuong thuc + thoi diem thanh
     // toan. Dung chung cho ca 2 luong: vua thanh toan xong VA tra cuu lai tu lich su.
-    private async Task ShowInvoiceReceiptDialogAsync(
+    private async Task<bool> ShowInvoiceReceiptDialogAsync(
         InvoiceDetailDto invoice,
         string receiptTitle = "HÓA ĐƠN THANH TOÁN",
-        bool showPaymentQr = false)
+        bool showPaymentQr = false,
+        bool requirePaymentConfirmation = false)
     {
         using var dialog = new Form
         {
@@ -1529,6 +2332,40 @@ public partial class SalesControl : UserControl
             }
         }
 
+        if (requirePaymentConfirmation)
+        {
+            var btnCancel = new Button
+            {
+                Text = "Hủy",
+                Location = new Point(54, 744),
+                Size = new Size(150, 36),
+                DialogResult = DialogResult.Cancel,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = AppColors.OnSurface,
+            };
+            btnCancel.FlatAppearance.BorderColor = AppColors.OutlineVariant;
+
+            var btnConfirm = new Button
+            {
+                Text = "Xác nhận thanh toán",
+                Location = new Point(218, 744),
+                Size = new Size(190, 36),
+                DialogResult = DialogResult.OK,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Primary,
+                ForeColor = Color.White,
+            };
+            btnConfirm.FlatAppearance.BorderSize = 0;
+
+            dialog.Controls.Add(btnCancel);
+            dialog.Controls.Add(btnConfirm);
+            dialog.AcceptButton = btnConfirm;
+            dialog.CancelButton = btnCancel;
+
+            return dialog.ShowDialog(FindForm()) == DialogResult.OK;
+        }
+
         var btnClose = new Button
         {
             Text = "Đóng",
@@ -1544,6 +2381,7 @@ public partial class SalesControl : UserControl
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
         dialog.ShowDialog(FindForm());
+        return false;
     }
 
     private Panel BuildInvoiceLineRow(InvoiceLineDto line, bool showTakeawayTag = false)

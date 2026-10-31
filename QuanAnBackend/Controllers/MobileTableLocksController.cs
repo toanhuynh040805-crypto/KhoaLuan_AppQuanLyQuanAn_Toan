@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +17,8 @@ public record MobileTableLockRequest(
 
 [ApiController]
 [Route("api/mobile/table-locks")]
-[RequireMobilePermission("table.manage")]
+[Route("api/table-locks")]
+[Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
 public class MobileTableLocksController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -37,11 +40,15 @@ public class MobileTableLocksController : ControllerBase
         int tableId,
         [FromBody] MobileTableLockRequest request)
     {
-        var employeeCode = request.EmployeeCode?.Trim() ?? string.Empty;
         var clientToken = request.ClientToken?.Trim() ?? string.Empty;
 
-        if (employeeCode.Length == 0 || clientToken.Length == 0)
+        if (clientToken.Length == 0)
             return BadRequest(new { message = "Thiếu thông tin để khóa bàn" });
+
+        var rawUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("UserId");
+        if (!int.TryParse(rawUserId, out var userId) || userId <= 0)
+            return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ" });
 
         // Chỉ đọc đúng các cột cần cho thao tác khóa bàn. Trước đây endpoint
         // materialize toàn bộ DiningTable/Employee/User; trên database WinForms
@@ -62,20 +69,26 @@ public class MobileTableLocksController : ControllerBase
         if (table is null)
             return NotFound(new { message = "Không tìm thấy bàn" });
 
-        var employee = await _db.Employees
+        var identity = await _db.Users
             .AsNoTracking()
-            .Where(x => x.EmployeeCode == employeeCode)
-            .Select(x => new
+            .Where(user => user.UserId == userId && user.IsActive)
+            .Select(user => new
             {
-                x.EmployeeCode,
-                EmployeeName = x.User != null ? x.User.FullName : null
+                EmployeeCode = user.Employee != null
+                    ? user.Employee.EmployeeCode
+                    : user.Username,
+                EmployeeName = user.FullName
             })
             .FirstOrDefaultAsync();
 
-        if (employee is null)
-            return BadRequest(new { message = "Không tìm thấy nhân viên đang đăng nhập" });
+        if (identity is null)
+            return Unauthorized(new { message = "Tài khoản không còn hoạt động" });
 
-        var employeeName = employee.EmployeeName?.Trim();
+        var employeeCode = identity.EmployeeCode?.Trim() ?? string.Empty;
+        if (employeeCode.Length == 0)
+            return BadRequest(new { message = "Không xác định được mã nhân viên" });
+
+        var employeeName = identity.EmployeeName?.Trim();
         if (string.IsNullOrWhiteSpace(employeeName))
             employeeName = employeeCode;
 

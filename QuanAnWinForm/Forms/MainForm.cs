@@ -16,8 +16,18 @@ public partial class MainForm : Form
     private readonly NotificationPopupForm _notificationPopup = new();
     private readonly SearchPopupForm _searchPopup = new();
     private System.Windows.Forms.Timer? _searchDebounceTimer;
+    private readonly System.Windows.Forms.Timer _realtimeHealthTimer =
+        new() { Interval = 5000 };
+    private bool _realtimeHealthRunning;
 
     private List<NotificationDto> _notifications = new();
+
+    // Cache các màn quản trị ít phụ thuộc tham số/realtime. Các màn này trước đây
+    // bị Dispose + tạo lại mỗi lần đổi menu, khiến API/ảnh/bảng phải tải lại từ đầu.
+    private readonly Dictionary<string, UserControl> _contentCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private UserControl? _currentContent;
+    private string? _currentContentKey;
 
     // true khi dong form do nguoi dung bam "Dang xuat" (LoginForm dua vao day de biet
     // nen hien lai man hinh dang nhap hay thoat han ung dung).
@@ -50,10 +60,32 @@ public partial class MainForm : Form
         headerBar.LogoutRequested += OnLogoutRequested;
         headerBar.ChangePasswordRequested += OnChangePasswordRequested;
 
+        _realtimeHealthTimer.Tick += async (s, e) =>
+        {
+            if (_realtimeHealthRunning || _notificationHub.IsConnected)
+                return;
+
+            _realtimeHealthRunning = true;
+            try
+            {
+                await _notificationHub.EnsureConnectedAsync();
+            }
+            catch
+            {
+                // Backend/Hub có thể đang restart. Timer sẽ thử lại sau 5 giây.
+            }
+            finally
+            {
+                _realtimeHealthRunning = false;
+            }
+        };
+
         FormClosed += async (s, e) =>
         {
             _searchDebounceTimer?.Stop();
             _searchDebounceTimer?.Dispose();
+            _realtimeHealthTimer.Stop();
+            _realtimeHealthTimer.Dispose();
             // 2 popup la Form rieng (khong phai con cua MainForm) nen khong tu dong dispose.
             _notificationPopup.Dispose();
             _searchPopup.Dispose();
@@ -62,7 +94,11 @@ public partial class MainForm : Form
 
         OnNavItemSelected(DefaultTabFor(roleName, _stationName));
 
-        Load += async (s, e) => await InitNotificationsAsync();
+        Load += async (s, e) =>
+        {
+            await InitNotificationsAsync();
+            _realtimeHealthTimer.Start();
+        };
     }
 
     // Nhân viên (mọi vai trò) tự đổi mật khẩu của mình
@@ -97,31 +133,41 @@ public partial class MainForm : Form
 
     private async Task InitNotificationsAsync()
     {
+        // Tải lịch sử thông báo và kết nối realtime là hai việc độc lập.
+        // Một request thông báo lỗi không được phép làm mất SignalR cả phiên.
         try
         {
             _notifications = await _api.GetNotificationsAsync(_userId, _roleName);
             UpdateBadge();
+        }
+        catch
+        {
+            _notifications = new List<NotificationDto>();
+            UpdateBadge();
+        }
 
-            _notificationHub.OnNewNotification += noti =>
+        _notificationHub.OnNewNotification += noti =>
+        {
+            // Callback SignalR chạy trên thread nền -> đẩy về UI thread.
+            if (IsHandleCreated)
             {
-                // Callback SignalR chay tren thread nen - phai Invoke ve UI thread
-                // truoc khi dong bo dong (cap nhat badge/list) hoac cham vao Control.
-                if (IsHandleCreated)
+                BeginInvoke(new Action(() =>
                 {
-                    BeginInvoke(new Action(() =>
-                    {
-                        _notifications.Insert(0, noti);
-                        UpdateBadge();
-                        if (_notificationPopup.Visible) _notificationPopup.Render(_notifications);
-                    }));
-                }
-            };
+                    _notifications.Insert(0, noti);
+                    UpdateBadge();
+                    if (_notificationPopup.Visible)
+                        _notificationPopup.Render(_notifications);
+                }));
+            }
+        };
 
+        try
+        {
             await _notificationHub.ConnectAsync(_userId, _roleName);
         }
         catch
         {
-            // Khong chan luong dang nhap/su dung app chi vi loi tai thong bao
+            // Không chặn ứng dụng. Health timer sẽ thử nối lại sau 5 giây.
         }
     }
 
@@ -276,12 +322,52 @@ public partial class MainForm : Form
 
     private void OnNavItemSelected(string key) => ShowContent(key, preselectedTableId: null);
 
+    // Các màn quản trị này không mang tham số điều hướng và không sở hữu kết nối
+    // realtime theo màn hình, nên giữ instance để quay lại gần như tức thì.
+    private static bool IsCacheableContent(string key) => key is
+        "dashboard" or
+        "tables" or
+        "orders" or
+        "menu" or
+        "customers" or
+        "staff" or
+        "revenue" or
+        "promotions" or
+        "settings";
+
+    private UserControl CreateContent(
+        string key,
+        int? preselectedTableId,
+        int? takeawayOrderId) => key switch
+    {
+        "dashboard" => new DashboardControl(),
+        "sales" => BuildSalesControl(preselectedTableId, takeawayOrderId),
+        "tables" => BuildDiningTabsControl(),
+        "orders" => new OrderManagementControl(_userId),
+        "menu" => new MenuManagementControl(),
+        "customers" => new CustomerManagementControl(),
+        "staff" => new StaffControl(),
+        "kitchen" => new KitchenBoardControl(
+            _userId,
+            "Bep",
+            "Màn hình Bếp",
+            string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
+        "bar" => new KitchenBoardControl(
+            _userId,
+            "QuayNuoc",
+            "Màn hình Quầy nước",
+            string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
+        "revenue" => new RevenueControl(),
+        "promotions" => new PromotionsControl(_userId),
+        "settings" => new SettingsControl(),
+        _ => new DashboardControl(),
+    };
+
     // takeawayOrderId (chỉ dùng cho "sales"): 0 = mở chế độ Mang về để tạo đơn mới,
     // > 0 = mở đơn mang về đang mở đó để thanh toán.
     private void ShowContent(string key, int? preselectedTableId, int? takeawayOrderId = null)
     {
         // Tài khoản chế biến chỉ được mở đúng Station đã phân công.
-        // Backend vẫn là lớp bảo vệ cuối cùng; đoạn này giúp UI không cho đi nhầm màn.
         if (string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase))
         {
             if (IsBarStation(_stationName) && key == "kitchen")
@@ -290,54 +376,106 @@ public partial class MainForm : Form
                 key = "kitchen";
         }
 
-        // Popup là các Form nổi độc lập. Nếu giữ chúng mở trong lúc đổi màn hình,
-        // người dùng có cảm giác cửa sổ/nội dung bị chồng lên nhau.
+        // Bấm lại đúng màn hiện tại không tải lại toàn bộ nếu không có tham số mới.
+        if (string.Equals(_currentContentKey, key, StringComparison.OrdinalIgnoreCase) &&
+            preselectedTableId is null &&
+            takeawayOrderId is null &&
+            _currentContent is { IsDisposed: false })
+        {
+            if (_currentContent is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
+            return;
+        }
+
         _notificationPopup.Hide();
         _searchPopup.Hide();
 
         panelContent.SuspendLayout();
         try
         {
-            foreach (var old in panelContent.Controls.Cast<Control>().ToList())
+            if (_currentContent is not null && !_currentContent.IsDisposed)
             {
-                panelContent.Controls.Remove(old);
-                if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
-                else old.Dispose();
+                if (_currentContentKey is not null &&
+                    IsCacheableContent(_currentContentKey))
+                {
+                    // Giữ control trong panel nhưng ẩn đi: trạng thái UI và dữ liệu đã tải
+                    // được giữ lại, tránh request lại khi quay về.
+                    _currentContent.Visible = false;
+                }
+                else
+                {
+                    panelContent.Controls.Remove(_currentContent);
+                    var old = _currentContent;
+                    if (IsHandleCreated) BeginInvoke(new Action(old.Dispose));
+                    else old.Dispose();
+                }
             }
 
-            UserControl content = key switch
+            UserControl content;
+            var reusedCachedContent = false;
+            if (IsCacheableContent(key) &&
+                _contentCache.TryGetValue(key, out var cached) &&
+                !cached.IsDisposed)
             {
-                "dashboard" => new DashboardControl(),
-                "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
-                "tables" => BuildDiningTabsControl(),
-                "orders" => new OrderManagementControl(_userId),
-                "menu" => new MenuManagementControl(),
-                "customers" => new CustomerManagementControl(),
-                "staff" => new StaffControl(),
-                "kitchen" => new KitchenBoardControl(
-                    _userId,
-                    "Bep",
-                    "Màn hình Bếp",
-                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
-                "bar" => new KitchenBoardControl(
-                    _userId,
-                    "QuayNuoc",
-                    "Màn hình Quầy nước",
-                    string.Equals(_roleName, "Bep", StringComparison.OrdinalIgnoreCase) ? _stationId : null),
-                "revenue" => new RevenueControl(),
-                "promotions" => new PromotionsControl(_userId),
-                "settings" => new SettingsControl(),
-                _ => new DashboardControl(),
-            };
+                content = cached;
+                reusedCachedContent = true;
+            }
+            else
+            {
+                content = CreateContent(key, preselectedTableId, takeawayOrderId);
+                content.Dock = DockStyle.Fill;
 
-            content.Dock = DockStyle.Fill;
-            panelContent.Controls.Add(content);
+                if (IsCacheableContent(key))
+                    _contentCache[key] = content;
+
+                panelContent.Controls.Add(content);
+            }
+
+            if (!panelContent.Controls.Contains(content))
+                panelContent.Controls.Add(content);
+
+            content.Visible = true;
             content.BringToFront();
+
+            _currentContent = content;
+            _currentContentKey = key;
+
+            if (reusedCachedContent && content is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
         }
         finally
         {
             panelContent.ResumeLayout(performLayout: true);
         }
+    }
+
+    private SalesControl BuildSalesControl(
+        int? preselectedTableId,
+        int? takeawayOrderId)
+    {
+        var control = new SalesControl(
+            _userId,
+            preselectedTableId,
+            takeawayOrderId);
+
+        control.ReturnToTablesRequested += () =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            void NavigateBack()
+            {
+                sidebar.SelectNavItem("tables");
+                ShowContent("tables", preselectedTableId: null);
+            }
+
+            if (InvokeRequired)
+                BeginInvoke(new Action(NavigateBack));
+            else
+                NavigateBack();
+        };
+
+        return control;
     }
 
     // Màn "Sơ đồ bàn" gồm 2 tab: Ăn tại chỗ (sơ đồ bàn) và Mang về (danh sách đơn mang về).

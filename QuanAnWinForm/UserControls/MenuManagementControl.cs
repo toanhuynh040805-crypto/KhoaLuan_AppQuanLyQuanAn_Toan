@@ -10,8 +10,11 @@ namespace QuanAnWinForm.UserControls;
 //  2) Quan ly mon an, thuc uong (MenuItems) - CRUD day du + loc theo loai mon.
 // Da noi that toan bo API: GET/POST/PUT/DELETE /api/menu va /api/categories
 // (truoc day chi co GET, Them/Sua/Xoa la demo bang MessageBox).
-public partial class MenuManagementControl : UserControl
+public partial class MenuManagementControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadAllAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<CategoryDto> _categories = new();
