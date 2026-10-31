@@ -16,6 +16,9 @@ public partial class MainForm : Form
     private readonly NotificationPopupForm _notificationPopup = new();
     private readonly SearchPopupForm _searchPopup = new();
     private System.Windows.Forms.Timer? _searchDebounceTimer;
+    private readonly System.Windows.Forms.Timer _realtimeHealthTimer =
+        new() { Interval = 5000 };
+    private bool _realtimeHealthRunning;
 
     private List<NotificationDto> _notifications = new();
 
@@ -57,10 +60,32 @@ public partial class MainForm : Form
         headerBar.LogoutRequested += OnLogoutRequested;
         headerBar.ChangePasswordRequested += OnChangePasswordRequested;
 
+        _realtimeHealthTimer.Tick += async (s, e) =>
+        {
+            if (_realtimeHealthRunning || _notificationHub.IsConnected)
+                return;
+
+            _realtimeHealthRunning = true;
+            try
+            {
+                await _notificationHub.EnsureConnectedAsync();
+            }
+            catch
+            {
+                // Backend/Hub có thể đang restart. Timer sẽ thử lại sau 5 giây.
+            }
+            finally
+            {
+                _realtimeHealthRunning = false;
+            }
+        };
+
         FormClosed += async (s, e) =>
         {
             _searchDebounceTimer?.Stop();
             _searchDebounceTimer?.Dispose();
+            _realtimeHealthTimer.Stop();
+            _realtimeHealthTimer.Dispose();
             // 2 popup la Form rieng (khong phai con cua MainForm) nen khong tu dong dispose.
             _notificationPopup.Dispose();
             _searchPopup.Dispose();
@@ -69,7 +94,11 @@ public partial class MainForm : Form
 
         OnNavItemSelected(DefaultTabFor(roleName, _stationName));
 
-        Load += async (s, e) => await InitNotificationsAsync();
+        Load += async (s, e) =>
+        {
+            await InitNotificationsAsync();
+            _realtimeHealthTimer.Start();
+        };
     }
 
     // Nhân viên (mọi vai trò) tự đổi mật khẩu của mình
@@ -343,6 +372,8 @@ public partial class MainForm : Form
             takeawayOrderId is null &&
             _currentContent is { IsDisposed: false })
         {
+            if (_currentContent is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
             return;
         }
 
@@ -371,11 +402,13 @@ public partial class MainForm : Form
             }
 
             UserControl content;
+            var reusedCachedContent = false;
             if (IsCacheableContent(key) &&
                 _contentCache.TryGetValue(key, out var cached) &&
                 !cached.IsDisposed)
             {
                 content = cached;
+                reusedCachedContent = true;
             }
             else
             {
@@ -396,6 +429,9 @@ public partial class MainForm : Form
 
             _currentContent = content;
             _currentContentKey = key;
+
+            if (reusedCachedContent && content is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
         }
         finally
         {
