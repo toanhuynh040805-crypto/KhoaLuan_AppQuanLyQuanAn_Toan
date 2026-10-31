@@ -836,7 +836,7 @@ public class MobileOrderActionsController : ControllerBase
 
             foreach (var itemId in itemIds)
             {
-                await _hub.Clients.All.SendAsync("DishStatusChanged", new
+                await _hub.Clients.Group("internal-users").SendAsync("DishStatusChanged", new
                 {
                     orderItemId = itemId,
                     tableId = request.TableId,
@@ -925,7 +925,7 @@ public class MobileOrderActionsController : ControllerBase
             var itemName = item.MenuItem?.ItemName ?? "Món";
 
             // Cho mobile (giữ nguyên)
-            await _hub.Clients.All.SendAsync("DishStatusChanged", new
+            await _hub.Clients.Group("internal-users").SendAsync("DishStatusChanged", new
             {
                 orderItemId = item.OrderItemId,
                 tableId,
@@ -935,7 +935,7 @@ public class MobileOrderActionsController : ControllerBase
             });
 
             // Cho WinForm (Sơ đồ bàn, Bếp, Đơn mang về) - cùng contract với OrderItemsController
-            await _hub.Clients.All.SendAsync("ItemStatusUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("ItemStatusUpdated", new
             {
                 Id = item.OrderItemId,
                 item.OrderId,
