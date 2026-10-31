@@ -85,7 +85,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         try
         {
             _areas = await _api.GetAreasAsync();
-            _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+            _tables = NormalizePhysicalTables(
+                (await _api.GetTablesAsync())
+                    .Where(t => !IsTakeawaySlot(t)));
 
             if (CanCompletePayment)
             {
@@ -116,6 +118,41 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     // ẩn khỏi sơ đồ bàn, được quản lý ở tab "Mang về".
     private static bool IsTakeawaySlot(TableDto t)
         => string.Equals(t.AreaName?.Trim(), "Mang về", StringComparison.OrdinalIgnoreCase);
+
+    // DB cũ có thể tồn tại nhiều DiningTable khác TableId nhưng trùng tên trong
+    // cùng khu. Chỉ hiển thị một bàn đại diện, ưu tiên bàn đang có nghiệp vụ:
+    // Có khách > Đã đặt > Đang dọn > Trống; nếu ngang nhau lấy TableId mới hơn.
+    // Không xóa record cũ ở đây để tránh ảnh hưởng lịch sử đơn/đặt bàn.
+    private static List<TableDto> NormalizePhysicalTables(
+        IEnumerable<TableDto> source)
+    {
+        return source
+            .GroupBy(table => new
+            {
+                table.AreaId,
+                Name = NormalizeTableName(table.TableName)
+            })
+            .Select(group => group
+                .OrderByDescending(table => TableDisplayPriority(table.Status))
+                .ThenByDescending(table => table.Id)
+                .First())
+            .OrderBy(table => table.AreaName)
+            .ThenBy(table => table.TableName)
+            .ToList();
+    }
+
+    private static string NormalizeTableName(string? value)
+        => (value ?? "")
+            .Trim()
+            .ToUpperInvariant();
+
+    private static int TableDisplayPriority(int status) => status switch
+    {
+        1 => 400, // Có khách
+        2 => 300, // Đã đặt
+        3 => 200, // Đang dọn
+        _ => 100  // Trống
+    };
 
     private IEnumerable<TableDto> FilterTables()
     {
