@@ -941,14 +941,38 @@ public class ReservationsController : ControllerBase
             reservation.CancelledAt = DateTime.Now;
         }
 
+        DiningTable? tableToBroadcast = null;
         if ((status == ReservationStatus.DaHuy || status == ReservationStatus.KhongDen)
-            && reservation.Table is not null && reservation.Table.Status == TableStatus.DaDat)
+            && reservation.Table is not null
+            && reservation.Table.Status == TableStatus.DaDat)
         {
-            reservation.Table.Status = TableStatus.Trong;
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = reservation.Table.TableId, reservation.Table.TableName, Status = reservation.Table.Status });
+            var now = DateTime.Now;
+            var stillHeld = await _db.Reservations.AnyAsync(other =>
+                other.ReservationId != reservation.ReservationId &&
+                other.TableId == reservation.TableId &&
+                (other.Status == ReservationStatus.DaXacNhan ||
+                 other.Status == ReservationStatus.ChoXacNhan) &&
+                other.ReservationTime <= now.Add(UpcomingThreshold));
+
+            reservation.Table.Status = stillHeld
+                ? TableStatus.DaDat
+                : TableStatus.Trong;
+            tableToBroadcast = reservation.Table;
         }
 
         await _db.SaveChangesAsync();
+
+        if (tableToBroadcast is not null)
+        {
+            await _hub.Clients.All.SendAsync(
+                "TableStatusUpdated",
+                new
+                {
+                    TableId = tableToBroadcast.TableId,
+                    tableToBroadcast.TableName,
+                    Status = tableToBroadcast.Status
+                });
+        }
 
         if (previousStatus != status)
         {
@@ -1000,14 +1024,56 @@ public class ReservationsController : ControllerBase
         if (accessError is not null)
             return accessError;
 
-        if (reservation.Status == ReservationStatus.DaXacNhan && reservation.Table is not null && reservation.Table.Status == TableStatus.DaDat)
+        DiningTable? deletedReservationTable = null;
+        if ((reservation.Status == ReservationStatus.DaXacNhan ||
+             reservation.Status == ReservationStatus.ChoXacNhan) &&
+            reservation.Table is not null &&
+            reservation.Table.Status == TableStatus.DaDat)
         {
-            reservation.Table.Status = TableStatus.Trong;
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = reservation.Table.TableId, reservation.Table.TableName, Status = reservation.Table.Status });
+            var now = DateTime.Now;
+            var stillHeld = await _db.Reservations.AnyAsync(other =>
+                other.ReservationId != reservation.ReservationId &&
+                other.TableId == reservation.TableId &&
+                (other.Status == ReservationStatus.DaXacNhan ||
+                 other.Status == ReservationStatus.ChoXacNhan) &&
+                other.ReservationTime <= now.Add(UpcomingThreshold));
+
+            reservation.Table.Status = stillHeld
+                ? TableStatus.DaDat
+                : TableStatus.Trong;
+            deletedReservationTable = reservation.Table;
         }
+
+        var deletedReservationId = reservation.ReservationId;
+        var deletedReservationTime = reservation.ReservationTime;
+        var deletedDurationMinutes = reservation.DurationMinutes;
 
         _db.Reservations.Remove(reservation);
         await _db.SaveChangesAsync();
+
+        if (deletedReservationTable is not null)
+        {
+            await _hub.Clients.All.SendAsync(
+                "TableStatusUpdated",
+                new
+                {
+                    TableId = deletedReservationTable.TableId,
+                    deletedReservationTable.TableName,
+                    Status = deletedReservationTable.Status
+                });
+        }
+
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = deletedReservationId,
+                Status = ReservationStatus.DaHuy.ToString(),
+                Stage = "Deleted",
+                ReservationTime = deletedReservationTime,
+                HoldUntil = deletedReservationTime.AddMinutes(deletedDurationMinutes)
+            });
+
         if (reservation.CustomerId.HasValue)
         {
             await _notifications.CreateForCustomerAsync(
