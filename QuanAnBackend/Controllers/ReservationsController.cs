@@ -45,6 +45,12 @@ public class ReservationsController : ControllerBase
         _tableState = tableState;
     }
 
+    private string CurrentReservationSource()
+        => User.Identity?.IsAuthenticated == true &&
+           !User.IsInRole(CustomerAccessMiddleware.CustomerRole)
+            ? ReservationSources.NhanVien
+            : ReservationSources.Web;
+
     private async Task<int?> ResolveCustomerIdAsync(string? phone)
     {
         if (User.IsInRole(CustomerAccessMiddleware.CustomerRole))
@@ -412,6 +418,7 @@ public class ReservationsController : ControllerBase
             NumberOfGuests = request.NumberOfGuests,
             DepositAmount = request.DepositAmount,
             Note = request.Note,
+            Source = CurrentReservationSource(),
             Status = ReservationStatus.ChoXacNhan
         };
         _db.Reservations.Add(reservation);
@@ -596,6 +603,8 @@ public class ReservationsController : ControllerBase
         var created = new List<Reservation>();
         var changedTables = new List<DiningTable>();
         var first = true;
+        var customerId = await ResolveCustomerIdAsync(request.CustomerPhone);
+        var source = CurrentReservationSource();
 
         foreach (var slot in request.Tables)
         {
@@ -604,7 +613,7 @@ public class ReservationsController : ControllerBase
             var reservation = new Reservation
             {
                 TableId = table.TableId,
-                CustomerId = await ResolveCustomerIdAsync(request.CustomerPhone),
+                CustomerId = customerId,
                 CustomerName = request.CustomerName,
                 CustomerPhone = request.CustomerPhone,
                 ReservationTime = request.ReservationTime,
@@ -612,6 +621,7 @@ public class ReservationsController : ControllerBase
                 NumberOfGuests = slot.NumberOfGuests,
                 DepositAmount = first ? request.DepositAmount : 0,
                 Note = string.IsNullOrWhiteSpace(note) ? null : note,
+                Source = source,
                 Status = ReservationStatus.ChoXacNhan
             };
             created.Add(reservation);
@@ -626,6 +636,17 @@ public class ReservationsController : ControllerBase
 
         _db.Reservations.AddRange(created);
         await _db.SaveChangesAsync();
+
+        // Một lượt đặt nhiều bàn phải dùng chung mã của dòng đầu tiên để
+        // tra cứu/hủy/quá giờ xử lý cả nhóm trên Web, Mobile và WinForms.
+        if (created.Count > 1)
+        {
+            var groupId = created[0].ReservationId;
+            foreach (var reservation in created)
+                reservation.BookingGroupId = groupId;
+
+            await _db.SaveChangesAsync();
+        }
 
         foreach (var t in changedTables)
             await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = t.TableId, t.TableName, Status = t.Status });
