@@ -929,6 +929,12 @@ public class ReservationsController : ControllerBase
         var reservation = await _db.Reservations.Include(r => r.Table).FirstOrDefaultAsync(r => r.ReservationId == id);
         if (reservation is null) return NotFound();
 
+        var accessError = await ValidateCancellationAccessAsync(
+            reservation,
+            ReservationStatus.DaHuy);
+        if (accessError is not null)
+            return accessError;
+
         if (reservation.Status == ReservationStatus.DaXacNhan && reservation.Table is not null && reservation.Table.Status == TableStatus.DaDat)
         {
             reservation.Table.Status = TableStatus.Trong;
