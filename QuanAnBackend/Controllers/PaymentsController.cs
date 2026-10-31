@@ -65,6 +65,7 @@ public class PaymentsController : ControllerBase
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
     private readonly IPaymentProvider _paymentProvider;
+    private readonly TableStateService _tableState;
     private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
@@ -73,11 +74,13 @@ public class PaymentsController : ControllerBase
         NotificationService notifications,
         IEmailService email,
         IPaymentProvider paymentProvider,
+        TableStateService tableState,
         ILogger<PaymentsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _tableState = tableState;
         _email = email;
         _paymentProvider = paymentProvider;
         _logger = logger;
@@ -724,11 +727,11 @@ public class PaymentsController : ControllerBase
         foreach (var notification in paymentRequestNotifications)
             notification.IsRead = true;
 
-        // Trả bàn về trạng thái Trống sau khi thanh toán xong
+        // Đóng lượt đặt bàn gắn với lượt ngồi hiện tại. Trạng thái bàn sau
+        // thanh toán sẽ được TableStateService tính lại sau khi Order đã đóng.
         var finishedReservations = new List<Reservation>();
         if (order.Table is not null)
         {
-            order.Table.Status = TableStatus.Trong;
 
             // FIX: dong luot dat ban gan voi luot ngoi nay lai NGAY LUC NAY (neu co).
             // Truoc day khong co buoc nay -> Reservation.Status dung mai o DaNhanBan
@@ -743,51 +746,38 @@ public class PaymentsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        // Một order có thể ghép nhiều bàn vật lý. Thanh toán một lần phải trả
-        // toàn bộ bàn thuộc order về Trống.
+        // Một order có thể ghép nhiều bàn vật lý. Sau khi order đã đóng,
+        // mỗi bàn phải trở về trạng thái đúng theo lịch đặt tiếp theo:
+        // DaDat nếu còn reservation hiệu lực, ngược lại Trong.
         var linkedTableIds = await GetLinkedTableIdsAsync(order.OrderId, order.TableId);
-        if (linkedTableIds.Count > 0)
+        var affectedTableIds = linkedTableIds
+            .Append(order.TableId ?? 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        var resolvedStatuses = await _tableState.ResolveIdleStatusesAsync(
+            affectedTableIds);
+
+        var affectedTables = await _db.Tables
+            .Where(table => affectedTableIds.Contains(table.TableId))
+            .ToListAsync();
+
+        foreach (var table in affectedTables)
         {
-            var connection = _db.Database.GetDbConnection();
-            var shouldClose = connection.State != System.Data.ConnectionState.Open;
-            if (shouldClose) await connection.OpenAsync();
-            try
-            {
-                await using var command = connection.CreateCommand();
-                var parameterNames = new List<string>();
-                for (var i = 0; i < linkedTableIds.Count; i++)
-                {
-                    var p = command.CreateParameter();
-                    p.ParameterName = $"@p{i}";
-                    p.Value = linkedTableIds[i];
-                    command.Parameters.Add(p);
-                    parameterNames.Add(p.ParameterName);
-                }
-                command.CommandText = $"UPDATE DiningTables SET Status = N'Trong' WHERE TableId IN ({string.Join(",", parameterNames)});";
-                await command.ExecuteNonQueryAsync();
-            }
-            finally
-            {
-                if (shouldClose) await connection.CloseAsync();
-            }
+            if (resolvedStatuses.TryGetValue(table.TableId, out var status))
+                table.Status = status;
         }
 
-        if (order.Table is not null)
+        await _db.SaveChangesAsync();
+
+        foreach (var table in affectedTables)
         {
             await _hub.Clients.All.SendAsync("TableStatusUpdated", new
             {
-                TableId = order.Table.TableId,
-                order.Table.TableName,
-                Status = order.Table.Status
-            });
-        }
-
-        foreach (var linkedTableId in linkedTableIds.Where(id => id != order.TableId))
-        {
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new
-            {
-                TableId = linkedTableId,
-                Status = TableStatus.Trong
+                TableId = table.TableId,
+                table.TableName,
+                Status = table.Status
             });
         }
 
