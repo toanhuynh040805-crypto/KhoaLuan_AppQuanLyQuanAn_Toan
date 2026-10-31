@@ -10,12 +10,16 @@ export const bookingApi = {
         query.set('durationMinutes', String(durationMinutes));
         if (areaId != null && Number.isInteger(Number(areaId))) query.set('areaId', String(areaId));
 
+        // /tables/available là nguồn chuẩn dùng chung cho Web và WinForms.
+        // Endpoint này xử lý trùng TableId cũ, trạng thái hiện tại và lịch đặt
+        // giao nhau trên cùng một bàn vật lý.
         try {
-            const tables = await apiClient.get(`/reservations/available-tables?${query}`);
+            const tables = await apiClient.get(`/tables/available?${query}`);
             return Array.isArray(tables) ? tables : [];
         } catch {
-            const fallbackTables = await apiClient.get(`/tables/available?${query}`);
-            return Array.isArray(fallbackTables) ? fallbackTables.filter(t => t.isAvailable !== false && t.IsAvailable !== false) : [];
+            // Chỉ giữ fallback legacy để tương thích khi Backend cũ chưa được restart.
+            const fallbackTables = await apiClient.get(`/reservations/available-tables?${query}`);
+            return Array.isArray(fallbackTables) ? fallbackTables : [];
         }
     },
 
