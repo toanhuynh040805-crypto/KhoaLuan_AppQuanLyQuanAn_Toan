@@ -15,6 +15,7 @@ public record MobileTableLockRequest(
 
 [ApiController]
 [Route("api/mobile/table-locks")]
+[Route("api/table-locks")]
 [RequireMobilePermission("table.manage")]
 public class MobileTableLocksController : ControllerBase
 {
