@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
@@ -248,6 +249,7 @@ public class ReservationsController : ControllerBase
     [ApiExplorerSettings(IgnoreApi = true)]
     [HttpGet("available-tables-legacy")]
     [AllowAnonymous]
+    [EnableRateLimiting("web-read")]
     public async Task<IActionResult> GetAvailableTables(
         [FromQuery] DateTime? reservationTime,
         [FromQuery] DateTime? time,
@@ -322,6 +324,7 @@ public class ReservationsController : ControllerBase
     [ApiExplorerSettings(IgnoreApi = true)]
     [HttpPost("web-legacy")]
     [AllowAnonymous]
+    [EnableRateLimiting("web-booking")]
     public async Task<IActionResult> CreateWeb([FromBody] System.Text.Json.JsonElement payload)
     {
         if (payload.TryGetProperty("tables", out var tablesProp) && tablesProp.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -340,6 +343,7 @@ public class ReservationsController : ControllerBase
 
     [HttpPost]
     [AllowAnonymous]
+    [EnableRateLimiting("web-booking")]
     public async Task<IActionResult> Create([FromBody] CreateReservationRequest request)
     {
         var table = await _db.Tables.FindAsync(request.TableId);
@@ -478,6 +482,7 @@ public class ReservationsController : ControllerBase
 
     [HttpPost("batch")]
     [AllowAnonymous]
+    [EnableRateLimiting("web-booking")]
     public async Task<IActionResult> CreateBatch([FromBody] CreateReservationBatchRequest request)
     {
         if (request.Tables is null || request.Tables.Count == 0)
