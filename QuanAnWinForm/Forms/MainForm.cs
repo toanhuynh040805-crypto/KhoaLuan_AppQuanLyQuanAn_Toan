@@ -341,7 +341,7 @@ public partial class MainForm : Form
         int? takeawayOrderId) => key switch
     {
         "dashboard" => new DashboardControl(),
-        "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
+        "sales" => BuildSalesControl(preselectedTableId, takeawayOrderId),
         "tables" => BuildDiningTabsControl(),
         "orders" => new OrderManagementControl(_userId),
         "menu" => new MenuManagementControl(),
@@ -447,6 +447,35 @@ public partial class MainForm : Form
         {
             panelContent.ResumeLayout(performLayout: true);
         }
+    }
+
+    private SalesControl BuildSalesControl(
+        int? preselectedTableId,
+        int? takeawayOrderId)
+    {
+        var control = new SalesControl(
+            _userId,
+            preselectedTableId,
+            takeawayOrderId);
+
+        control.ReturnToTablesRequested += () =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            void NavigateBack()
+            {
+                sidebar.SelectNavItem("tables");
+                ShowContent("tables", preselectedTableId: null);
+            }
+
+            if (InvokeRequired)
+                BeginInvoke(new Action(NavigateBack));
+            else
+                NavigateBack();
+        };
+
+        return control;
     }
 
     // Màn "Sơ đồ bàn" gồm 2 tab: Ăn tại chỗ (sơ đồ bàn) và Mang về (danh sách đơn mang về).
