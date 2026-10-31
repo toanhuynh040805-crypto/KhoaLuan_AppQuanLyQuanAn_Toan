@@ -361,13 +361,26 @@ public class ReservationsController : ControllerBase
         };
         _db.Reservations.Add(reservation);
 
+        var tableStatusChanged = false;
         if (table.Status == TableStatus.Trong && isUpcoming)
         {
             table.Status = TableStatus.DaDat;
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = table.TableId, table.TableName, Status = table.Status });
+            tableStatusChanged = true;
         }
 
         await _db.SaveChangesAsync();
+
+        if (tableStatusChanged)
+        {
+            await _hub.Clients.All.SendAsync(
+                "TableStatusUpdated",
+                new
+                {
+                    TableId = table.TableId,
+                    table.TableName,
+                    Status = table.Status
+                });
+        }
 
         await _notifications.CreateForRolesAsync(
             "Có đặt bàn mới",
