@@ -237,6 +237,52 @@ public class TablesController : ControllerBase
 
             return Ok(normalized);
         }
+        catch (DbException)
+        {
+            // Các bảng phụ tương thích như OrderTables/WaitingQueue/Combos có thể
+            // chưa đồng nhất trên DB cũ. Sơ đồ bàn là chức năng lõi nên fallback
+            // về EF Core thay vì trả 500 cho Web/Mobile/WinForms.
+            var fallbackTables = await _db.Tables
+                .AsNoTracking()
+                .Include(table => table.Area)
+                .OrderBy(table => table.Area != null ? table.Area.AreaName : "")
+                .ThenBy(table => table.TableName)
+                .ToListAsync();
+
+            var normalized = fallbackTables
+                .GroupBy(table => new
+                {
+                    table.AreaId,
+                    Name = NormalizeTableName(table.TableName)
+                })
+                .Select(group => group
+                    .OrderByDescending(table => TableDisplayPriority(table.Status))
+                    .ThenByDescending(table => table.TableId)
+                    .First())
+                .Select(table => new TableListItem(
+                    table.TableId,
+                    table.TableName,
+                    table.Capacity,
+                    (int)table.Status,
+                    table.AreaId,
+                    table.Area?.AreaName ?? "",
+                    table.TableType.ToString(),
+                    null,
+                    null,
+                    null,
+                    false,
+                    null))
+                .ToList();
+
+            if (TryParseStatusFilter(statusFilter, out var requestedStatus))
+            {
+                normalized = normalized
+                    .Where(table => table.status == (int)requestedStatus)
+                    .ToList();
+            }
+
+            return Ok(normalized);
+        }
         finally
         {
             if (shouldClose)
