@@ -202,6 +202,7 @@ public sealed class ReservationReminderService : BackgroundService
         DateTime reservationTime,
         DateTime holdUntil,
         DateTime now,
+        bool broadcastStage,
         CancellationToken cancellationToken)
     {
         var userIds = await audience.GetRecipientUserIdsAsync(
