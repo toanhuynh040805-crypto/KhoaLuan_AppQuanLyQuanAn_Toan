@@ -87,6 +87,30 @@ public class ReservationsController : ControllerBase
     private static string NormalizePhone(string? phone) =>
         string.Concat((phone ?? string.Empty).Where(char.IsDigit));
 
+    private async Task<HashSet<int>> GetPhysicalTableIdsAsync(
+        DiningTable table)
+    {
+        var normalizedName = table.TableName.Trim().ToUpper();
+
+        var ids = await _db.Tables
+            .AsNoTracking()
+            .Where(candidate =>
+                candidate.AreaId == table.AreaId &&
+                candidate.TableName.Trim().ToUpper() == normalizedName)
+            .Select(candidate => candidate.TableId)
+            .ToListAsync();
+
+        return ids.ToHashSet();
+    }
+
+    private static int PhysicalStatusPriority(TableStatus status) => status switch
+    {
+        TableStatus.DangPhucVu => 400,
+        TableStatus.DaDat => 300,
+        TableStatus.DangDonDep => 200,
+        _ => 100
+    };
+
     private static object ToPublicReservation(Reservation reservation) => new
     {
         Id = reservation.ReservationId,
@@ -330,13 +354,37 @@ public class ReservationsController : ControllerBase
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
 
+        var physicalTableIds = await GetPhysicalTableIdsAsync(table);
+        if (physicalTableIds.Count == 0)
+            physicalTableIds.Add(table.TableId);
+
+        var physicalStatuses = await _db.Tables
+            .AsNoTracking()
+            .Where(candidate => physicalTableIds.Contains(candidate.TableId))
+            .Select(candidate => candidate.Status)
+            .ToListAsync();
+        var effectiveStatus = physicalStatuses
+            .OrderByDescending(PhysicalStatusPriority)
+            .FirstOrDefault();
+
         var isUpcoming = request.ReservationTime <= DateTime.Now.Add(UpcomingThreshold);
-        if (isUpcoming && (table.Status == TableStatus.DangPhucVu || table.Status == TableStatus.DangDonDep || table.Status == TableStatus.DaDat))
-            return BadRequest(new { message = "Bàn đang có khách/đang dọn dẹp, chưa rõ giờ trống - vui lòng chọn giờ đến xa hơn hoặc bàn khác" });
+        if (isUpcoming &&
+            (effectiveStatus == TableStatus.DangPhucVu ||
+             effectiveStatus == TableStatus.DangDonDep ||
+             effectiveStatus == TableStatus.DaDat))
+        {
+            return BadRequest(new
+            {
+                message = "Bàn đang có khách/đang dọn dẹp/đã được giữ chỗ - vui lòng chọn giờ đến xa hơn hoặc bàn khác"
+            });
+        }
 
         var conflict = await _db.Reservations
-            .Where(r => r.TableId == request.TableId &&
-                        (r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan))
+            .Where(r =>
+                physicalTableIds.Contains(r.TableId) &&
+                (r.Status == ReservationStatus.ChoXacNhan ||
+                 r.Status == ReservationStatus.DaXacNhan ||
+                 r.Status == ReservationStatus.DaNhanBan))
             .ToListAsync();
         var overlapped = conflict.FirstOrDefault(r => IsOverlapping(request.ReservationTime, durationMinutes, r.ReservationTime, r.DurationMinutes));
         if (overlapped is not null)
@@ -442,15 +490,50 @@ public class ReservationsController : ControllerBase
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
 
-        var tables = await _db.Tables.Where(t => ids.Contains(t.TableId)).ToListAsync();
+        var tables = await _db.Tables
+            .Where(t => ids.Contains(t.TableId))
+            .ToListAsync();
         if (tables.Count != ids.Count)
             return BadRequest(new { message = "Có bàn không tồn tại" });
+
+        var selectedPhysicalKeys = tables
+            .Select(table => new
+            {
+                table.AreaId,
+                Name = table.TableName.Trim().ToUpper()
+            })
+            .ToList();
+
+        if (selectedPhysicalKeys
+            .GroupBy(key => new { key.AreaId, key.Name })
+            .Any(group => group.Count() > 1))
+        {
+            return BadRequest(new
+            {
+                message = "Danh sách đang chọn trùng cùng một bàn vật lý."
+            });
+        }
+
+        var physicalIdsByTableId = new Dictionary<int, HashSet<int>>();
+        var allPhysicalIds = new HashSet<int>();
+        foreach (var table in tables)
+        {
+            var physicalIds = await GetPhysicalTableIdsAsync(table);
+            if (physicalIds.Count == 0)
+                physicalIds.Add(table.TableId);
+
+            physicalIdsByTableId[table.TableId] = physicalIds;
+            allPhysicalIds.UnionWith(physicalIds);
+        }
 
         var isUpcoming = request.ReservationTime <= DateTime.Now.Add(UpcomingThreshold);
 
         var existing = await _db.Reservations
-            .Where(r => ids.Contains(r.TableId) &&
-                        (r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan))
+            .Where(r =>
+                allPhysicalIds.Contains(r.TableId) &&
+                (r.Status == ReservationStatus.ChoXacNhan ||
+                 r.Status == ReservationStatus.DaXacNhan ||
+                 r.Status == ReservationStatus.DaNhanBan))
             .ToListAsync();
 
         foreach (var slot in request.Tables)
@@ -462,11 +545,34 @@ public class ReservationsController : ControllerBase
             if (slot.NumberOfGuests > table.Capacity)
                 return BadRequest(new { message = $"Bàn {table.TableName} chỉ chứa tối đa {table.Capacity} khách" });
 
-            if (isUpcoming && (table.Status == TableStatus.DangPhucVu || table.Status == TableStatus.DangDonDep || table.Status == TableStatus.DaDat))
-                return BadRequest(new { message = $"Bàn {table.TableName} đang có khách/đang dọn dẹp, vui lòng chọn bàn khác hoặc giờ đến xa hơn" });
+            var physicalIds = physicalIdsByTableId[table.TableId];
+            var physicalStatuses = await _db.Tables
+                .AsNoTracking()
+                .Where(candidate => physicalIds.Contains(candidate.TableId))
+                .Select(candidate => candidate.Status)
+                .ToListAsync();
+            var effectiveStatus = physicalStatuses
+                .OrderByDescending(PhysicalStatusPriority)
+                .FirstOrDefault();
 
-            var overlapped = existing.FirstOrDefault(r => r.TableId == table.TableId &&
-                IsOverlapping(request.ReservationTime, durationMinutes, r.ReservationTime, r.DurationMinutes));
+            if (isUpcoming &&
+                (effectiveStatus == TableStatus.DangPhucVu ||
+                 effectiveStatus == TableStatus.DangDonDep ||
+                 effectiveStatus == TableStatus.DaDat))
+            {
+                return BadRequest(new
+                {
+                    message = $"Bàn {table.TableName} đang có khách/đang dọn dẹp/đã được giữ chỗ, vui lòng chọn bàn khác hoặc giờ đến xa hơn"
+                });
+            }
+
+            var overlapped = existing.FirstOrDefault(r =>
+                physicalIds.Contains(r.TableId) &&
+                IsOverlapping(
+                    request.ReservationTime,
+                    durationMinutes,
+                    r.ReservationTime,
+                    r.DurationMinutes));
             if (overlapped is not null)
                 return BadRequest(new
                 {
