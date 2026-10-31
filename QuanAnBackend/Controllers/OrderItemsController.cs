@@ -272,7 +272,7 @@ public class OrderItemsController : ControllerBase
 
             if (request.NewStatus == KitchenStatus.DaHuy)
             {
-                await _hub.Clients.All.SendAsync("OrderItemCancelled", new
+                await _hub.Clients.Group("internal-users").SendAsync("OrderItemCancelled", new
                 {
                     Id = item.OrderItemId,
                     item.OrderId,
@@ -402,7 +402,7 @@ public class OrderItemsController : ControllerBase
     private async Task BroadcastItemStatusAsync(OrderItem item)
     {
         var label = OrderLabel(item.Order);
-        await _hub.Clients.All.SendAsync("ItemStatusUpdated", new
+        await _hub.Clients.Group("internal-users").SendAsync("ItemStatusUpdated", new
         {
             Id = item.OrderItemId,
             item.OrderId,
