@@ -478,7 +478,7 @@ public class PaymentsController : ControllerBase
             relatedEntityId: order.OrderId
         );
 
-        await _hub.Clients.All.SendAsync("PaymentRequested", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentRequested", new
         {
             TableId = order.TableId,
             TableName = tableName,
@@ -790,7 +790,7 @@ public class PaymentsController : ControllerBase
 
         // Phát cho tất cả client để cả WinForms và Mobile đều đóng trạng thái
         // chờ thanh toán/bàn ngay sau khi giao dịch hoàn tất.
-        await _hub.Clients.All.SendAsync("PaymentCompleted", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentCompleted", new
         {
             tableId = order.TableId,
             orderId = order.OrderId,
