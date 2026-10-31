@@ -215,6 +215,17 @@ public class WebReservationsController : ControllerBase
                 relatedEntityType: "Reservation",
                 relatedEntityId: code);
 
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = code,
+                    Status = ReservationStatus.DaXacNhan.ToString(),
+                    Stage = "Created",
+                    ReservationTime = start,
+                    HoldUntil = start.AddMinutes(duration)
+                });
+
             if (customerId.HasValue)
             {
                 await _notifications.CreateForCustomerAsync(
@@ -338,6 +349,17 @@ public class WebReservationsController : ControllerBase
             foreach (var t in changedTables)
                 await _hub.Clients.All.SendAsync("TableStatusUpdated",
                     new { TableId = t.TableId, t.TableName, Status = t.Status });
+
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = codeValue,
+                    Status = ReservationStatus.DaHuy.ToString(),
+                    Stage = "Cancelled",
+                    ReservationTime = rows[0].ReservationTime,
+                    HoldUntil = rows[0].ReservationTime.AddMinutes(rows[0].DurationMinutes)
+                });
 
             await _notifications.CreateForRolesAsync(
                 "Khách hủy đặt bàn",
