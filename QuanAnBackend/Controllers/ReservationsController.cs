@@ -27,12 +27,18 @@ public class ReservationsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
+    private readonly ReservationAudienceService _reservationAudience;
 
-    public ReservationsController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications)
+    public ReservationsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        ReservationAudienceService reservationAudience)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _reservationAudience = reservationAudience;
     }
 
     private async Task<int?> ResolveCustomerIdAsync(string? phone)
@@ -92,7 +98,10 @@ public class ReservationsController : ControllerBase
         reservation.NumberOfGuests,
         Status = (int)reservation.Status,
         StatusName = reservation.Status.ToString(),
-        reservation.Note
+        reservation.Note,
+        reservation.DurationMinutes,
+        HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes),
+        IsHoldExpired = DateTime.Now >= reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
     };
 
     [HttpGet]
@@ -138,6 +147,8 @@ public class ReservationsController : ControllerBase
                 r.ReservationTime,
                 r.DurationMinutes,
                 ReservationEndTime = r.ReservationTime.AddMinutes(r.DurationMinutes),
+                HoldUntil = r.ReservationTime.AddMinutes(r.DurationMinutes),
+                IsHoldExpired = DateTime.Now >= r.ReservationTime.AddMinutes(r.DurationMinutes),
                 r.NumberOfGuests,
                 Status = r.Status,
                 r.DepositAmount,
@@ -371,14 +382,23 @@ public class ReservationsController : ControllerBase
             await _notifications.CreateForCustomerAsync(
                 reservation.CustomerId.Value,
                 "Đặt bàn đã được tiếp nhận",
-                $"Yêu cầu đặt bàn tại {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận và đang chờ nhà hàng xác nhận.",
+                $"Yêu cầu đặt bàn tại {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận. " +
+                $"Bàn được giữ tối đa đến {request.ReservationTime.AddMinutes(durationMinutes):HH:mm}.",
                 NotificationType.DatBan,
                 $"reservation-created:{reservation.ReservationId}",
                 "Reservation",
                 reservation.ReservationId);
         }
 
-        return Ok(new { Id = reservation.ReservationId, reservation.TableId, reservation.DurationMinutes, Status = reservation.Status });
+        return Ok(new
+        {
+            Id = reservation.ReservationId,
+            reservation.TableId,
+            reservation.ReservationTime,
+            reservation.DurationMinutes,
+            HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes),
+            Status = reservation.Status
+        });
     }
 
     [HttpPost("batch")]
@@ -485,14 +505,24 @@ public class ReservationsController : ControllerBase
             await _notifications.CreateForCustomerAsync(
                 customerId,
                 "Đặt bàn đã được tiếp nhận",
-                $"Yêu cầu đặt bàn tại {names} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận và đang chờ nhà hàng xác nhận.",
+                $"Yêu cầu đặt bàn tại {names} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận. " +
+                $"Bàn được giữ tối đa đến {request.ReservationTime.AddMinutes(durationMinutes):HH:mm}.",
                 NotificationType.DatBan,
                 $"reservation-batch:{created[0].ReservationId}",
                 "Reservation",
                 created[0].ReservationId);
         }
 
-        return Ok(new { Id = created[0].ReservationId, ReservationId = created[0].ReservationId, Count = created.Count, Ids = created.Select(r => r.ReservationId).ToList() });
+        return Ok(new
+        {
+            Id = created[0].ReservationId,
+            ReservationId = created[0].ReservationId,
+            Count = created.Count,
+            Ids = created.Select(r => r.ReservationId).ToList(),
+            ReservationTime = request.ReservationTime,
+            DurationMinutes = durationMinutes,
+            HoldUntil = request.ReservationTime.AddMinutes(durationMinutes)
+        });
     }
 
     [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
@@ -664,6 +694,179 @@ public class ReservationsController : ControllerBase
         return Ok(new { Id = reservation.ReservationId });
     }
 
+    [HttpPost("{id:int}/release-overdue")]
+    public async Task<IActionResult> ReleaseOverdue(int id)
+    {
+        var rows = await _db.Reservations
+            .Include(reservation => reservation.Table)
+            .Where(reservation =>
+                reservation.ReservationId == id ||
+                reservation.BookingGroupId == id)
+            .OrderBy(reservation => reservation.ReservationId)
+            .ToListAsync();
+
+        if (rows.Count == 0)
+            return NotFound(new { message = "Không tìm thấy đặt bàn." });
+
+        var activeRows = rows
+            .Where(row =>
+                row.Status == ReservationStatus.DaXacNhan ||
+                row.Status == ReservationStatus.ChoXacNhan)
+            .ToList();
+
+        if (activeRows.Count == 0)
+            return BadRequest(new { message = "Lượt đặt bàn không còn ở trạng thái chờ khách." });
+
+        var now = DateTime.Now;
+        var holdUntil = activeRows.Max(row =>
+            row.ReservationTime.AddMinutes(row.DurationMinutes));
+
+        if (now < holdUntil)
+            return BadRequest(new
+            {
+                message = $"Bàn vẫn đang trong thời gian giữ chỗ đến {holdUntil:HH:mm}."
+            });
+
+        var userId = CurrentInternalUserId();
+        if (!userId.HasValue)
+            return Unauthorized(new { message = "Không xác định được tài khoản nhân viên." });
+
+        var areaIds = activeRows
+            .Select(row => row.Table?.AreaId ?? 0)
+            .Where(areaId => areaId > 0)
+            .Distinct()
+            .ToList();
+
+        var allowed = false;
+        foreach (var areaId in areaIds)
+        {
+            if (await _reservationAudience.CanHandleOverdueAsync(
+                    userId.Value,
+                    areaId,
+                    now))
+            {
+                allowed = true;
+                break;
+            }
+        }
+
+        if (!allowed)
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "Bạn không thuộc nhóm được thông báo/phụ trách khu vực của lượt đặt bàn này."
+            });
+
+        var changedTables = new List<DiningTable>();
+        foreach (var row in activeRows)
+        {
+            row.Status = ReservationStatus.KhongDen;
+            row.CancelledByUserId = userId.Value;
+            row.CancelledAt = now;
+
+            if (row.Table is not null && row.Table.Status == TableStatus.DaDat)
+            {
+                row.Table.Status = TableStatus.Trong;
+                changedTables.Add(row.Table);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        foreach (var table in changedTables.DistinctBy(table => table.TableId))
+        {
+            await _hub.Clients.All.SendAsync(
+                "TableStatusUpdated",
+                new
+                {
+                    TableId = table.TableId,
+                    table.TableName,
+                    Status = table.Status
+                });
+        }
+
+        var groupId = rows[0].BookingGroupId ?? rows[0].ReservationId;
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = groupId,
+                Status = ReservationStatus.KhongDen.ToString(),
+                Stage = "ReleasedOverdue"
+            });
+
+        var customerId = rows.Select(row => row.CustomerId)
+            .FirstOrDefault(value => value.HasValue);
+        if (customerId.HasValue)
+        {
+            await _notifications.CreateForCustomerAsync(
+                customerId.Value,
+                "Đặt bàn đã được hủy do quá giờ",
+                $"Lượt đặt bàn đã quá thời gian giữ chỗ đến {holdUntil:HH:mm} và được nhà hàng ghi nhận là không đến.",
+                NotificationType.DatBan,
+                $"reservation-no-show:{groupId}",
+                "Reservation",
+                groupId);
+        }
+
+        return Ok(new
+        {
+            Id = groupId,
+            Status = ReservationStatus.KhongDen,
+            HoldUntil = holdUntil,
+            ReleasedTables = changedTables
+                .Select(table => table.TableId)
+                .Distinct()
+                .ToList()
+        });
+    }
+
+    private int? CurrentInternalUserId()
+    {
+        var raw = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("UserId");
+        return int.TryParse(raw, out var userId) && userId > 0
+            ? userId
+            : null;
+    }
+
+    private async Task<IActionResult?> ValidateCancellationAccessAsync(
+        Reservation reservation,
+        ReservationStatus targetStatus)
+    {
+        if (targetStatus is not (ReservationStatus.DaHuy or ReservationStatus.KhongDen))
+            return null;
+
+        var userId = CurrentInternalUserId();
+        if (!userId.HasValue)
+            return Unauthorized(new { message = "Không xác định được tài khoản nhân viên." });
+
+        if (reservation.Table is null)
+            return BadRequest(new { message = "Đặt bàn chưa gắn với bàn hợp lệ." });
+
+        var now = DateTime.Now;
+        if (targetStatus == ReservationStatus.KhongDen &&
+            now < reservation.ReservationTime.AddMinutes(reservation.DurationMinutes))
+        {
+            return BadRequest(new
+            {
+                message = $"Chưa hết thời gian giữ chỗ. Bàn được giữ đến {reservation.ReservationTime.AddMinutes(reservation.DurationMinutes):HH:mm}."
+            });
+        }
+
+        if (!await _reservationAudience.CanHandleOverdueAsync(
+                userId.Value,
+                reservation.Table.AreaId,
+                now))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "Bạn không thuộc nhóm quản lý/thu ngân/phục vụ đang phụ trách khu vực bàn này."
+            });
+        }
+
+        return null;
+    }
+
     [HttpPut("{id}/status")]
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] ReservationStatus status)
     {
@@ -672,6 +875,10 @@ public class ReservationsController : ControllerBase
 
         var reservation = await _db.Reservations.Include(r => r.Table).FirstOrDefaultAsync(r => r.ReservationId == id);
         if (reservation is null) return NotFound();
+
+        var accessError = await ValidateCancellationAccessAsync(reservation, status);
+        if (accessError is not null)
+            return accessError;
 
         var previousStatus = reservation.Status;
         reservation.Status = status;
