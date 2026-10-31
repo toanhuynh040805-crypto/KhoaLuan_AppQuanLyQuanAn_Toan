@@ -486,6 +486,12 @@ public partial class SalesControl : UserControl
 
                 // Đơn đã được thiết bị khác thanh toán: không giữ món/giỏ cục bộ
                 // của lượt cũ để tránh thao tác tiếp trên hóa đơn đã đóng.
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+
                 ClearCart();
                 _existingOrder = null;
                 _selectedCustomer = null;
@@ -608,38 +614,109 @@ public partial class SalesControl : UserControl
             .ToList();
         var keepTableId = _selectedTableId ?? _preselectedTableId;
 
-        cbTable.Items.Clear();
-        foreach (var t in tables) cbTable.Items.Add(t);
-        cbTable.DisplayMember = "TableName";
+        _suppressTableSelectionChanged = true;
+        try
+        {
+            cbTable.Items.Clear();
+            foreach (var t in tables) cbTable.Items.Add(t);
+            cbTable.DisplayMember = "TableName";
 
-        if (tables.Count == 0) return;
+            if (tables.Count == 0)
+            {
+                cbTable.SelectedIndex = -1;
+                return;
+            }
 
-        var indexToSelect = keepTableId is null ? 0 : tables.FindIndex(t => t.Id == keepTableId.Value);
-        cbTable.SelectedIndex = indexToSelect >= 0 ? indexToSelect : 0;
+            // Không tự chọn bàn đầu tiên: mở màn Bán hàng không được vô tình
+            // chiếm lease và đẩy Mobile/WinForms khác ra khỏi một bàn.
+            var indexToSelect = keepTableId is null
+                ? -1
+                : tables.FindIndex(t => t.Id == keepTableId.Value);
+            cbTable.SelectedIndex = indexToSelect;
+        }
+        finally
+        {
+            _suppressTableSelectionChanged = false;
+        }
+
+        if (!_isTakeaway &&
+            cbTable.SelectedItem is TableDto selected &&
+            (_lockedTableId != selected.Id ||
+             string.IsNullOrWhiteSpace(_tableLockToken)))
+        {
+            await SelectDineInTableAsync(selected);
+        }
     }
 
-    private void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
+    private async void CbTable_SelectedIndexChanged(object? sender, EventArgs e)
     {
-        if (_isTakeaway) return; // dang ban mang ve: bo qua thay doi combobox ban (vd sau khi nap lai danh sach ban)
+        if (_suppressTableSelectionChanged || _isTakeaway)
+            return;
 
-        if (cbTable.SelectedItem is TableDto t)
+        if (cbTable.SelectedItem is not TableDto table)
         {
-            _selectedTableId = t.Id;
-            lblTableName.Text = t.TableName;
-            ClearCart();
-            _existingOrder = null;
-            if (cbCampaign.Items.Count > 0) cbCampaign.SelectedIndex = 0;
-
-            // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
-            _selectedCustomer = null;
-            txtCustomerPhone.Clear();
-            UpdateCustomerInfoLabel();
-
-            RenderCart();
-
-            // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
-            _ = LoadOpenOrderAsync(t.Id);
+            _selectedTableId = null;
+            lblTableName.Text = "Chưa chọn bàn";
+            return;
         }
+
+        await SelectDineInTableAsync(table);
+    }
+
+    private async Task SelectDineInTableAsync(TableDto table)
+    {
+        if (_isTakeaway || IsDisposed)
+            return;
+
+        var previousTableId = _selectedTableId;
+
+        if (!await AcquireTableLockAsync(table.Id))
+        {
+            _suppressTableSelectionChanged = true;
+            try
+            {
+                if (previousTableId.HasValue)
+                {
+                    var previousIndex = Enumerable.Range(0, cbTable.Items.Count)
+                        .FirstOrDefault(index =>
+                            cbTable.Items[index] is TableDto item &&
+                            item.Id == previousTableId.Value);
+                    cbTable.SelectedIndex =
+                        previousIndex >= 0 &&
+                        previousIndex < cbTable.Items.Count &&
+                        cbTable.Items[previousIndex] is TableDto previous &&
+                        previous.Id == previousTableId.Value
+                            ? previousIndex
+                            : -1;
+                }
+                else
+                {
+                    cbTable.SelectedIndex = -1;
+                }
+            }
+            finally
+            {
+                _suppressTableSelectionChanged = false;
+            }
+            return;
+        }
+
+        _selectedTableId = table.Id;
+        lblTableName.Text = table.TableName;
+        ClearCart();
+        _existingOrder = null;
+        if (cbCampaign.Items.Count > 0)
+            cbCampaign.SelectedIndex = 0;
+
+        // Đổi bàn = bắt đầu lượt bán khác -> bỏ khách đang gắn của lượt trước.
+        _selectedCustomer = null;
+        txtCustomerPhone.Clear();
+        UpdateCustomerInfoLabel();
+
+        RenderCart();
+
+        // Lấy đơn đang mở của bàn (các món đã gọi) rồi vẽ lại giỏ hàng.
+        await LoadOpenOrderAsync(table.Id);
     }
 
     private async Task LoadOpenOrderAsync(int tableId, bool silent = false)
@@ -860,6 +937,8 @@ public partial class SalesControl : UserControl
 
         if (takeaway)
         {
+            _ = ReleaseCurrentTableLockAsync();
+            _selectedTableId = null;
             lblTableName.Text = "Mang về";
             RenderCart();
         }
