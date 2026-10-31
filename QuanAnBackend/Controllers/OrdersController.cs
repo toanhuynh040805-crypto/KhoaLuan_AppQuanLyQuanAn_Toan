@@ -387,6 +387,10 @@ public class OrdersController : ControllerBase
                 Status = TableStatus.DangPhucVu
             });
 
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId = orderId.Value });
+
             foreach (var stationGroup in realtimeTickets.GroupBy(x => x.StationName))
             {
                 await _hub.Clients
