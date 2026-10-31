@@ -218,6 +218,7 @@ public class LoginResultDto
     public int UserId { get; set; }
     public string FullName { get; set; } = "";
     public string Username { get; set; } = "";
+    public string EmployeeCode { get; set; } = "";
     public string RoleName { get; set; } = "";
     public int? StationId { get; set; }
     public string? StationName { get; set; }
@@ -281,4 +282,23 @@ public class PaymentPreviewOrderDto
     public string TransferContent { get; set; } = "";
     public string ShopName { get; set; } = "";
     public string ShopAddress { get; set; } = "";
+}
+
+
+public class TableLockLeaseDto
+{
+    public int TableId { get; set; }
+    public string EmployeeCode { get; set; } = "";
+    public string EmployeeName { get; set; } = "";
+    public string ClientToken { get; set; } = "";
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
+}
+
+public class TableLockTakenOverPayload
+{
+    public int TableId { get; set; }
+    public string TableName { get; set; } = "";
+    public string PreviousClientToken { get; set; } = "";
+    public string TakenOverByEmployeeCode { get; set; } = "";
+    public string TakenOverByEmployeeName { get; set; } = "";
 }
