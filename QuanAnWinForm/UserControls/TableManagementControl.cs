@@ -883,7 +883,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         // Realtime: khi Mobile nhận bàn / hủy / đặt bàn, backend phát TableStatusUpdated
         // -> tải lại danh sách ngay trong hộp thoại (đang mở dạng modal nên phải tự đăng ký).
-        void OnReservationRealtime(TableStatusUpdatedPayload p)
+        void RefreshReservationDialog()
         {
             try
             {
@@ -897,7 +897,14 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             catch (InvalidOperationException) { /* dialog đang đóng */ }
         }
 
+        void OnReservationRealtime(TableStatusUpdatedPayload p) =>
+            RefreshReservationDialog();
+
+        void OnReservationUpdated(ReservationUpdatedPayload p) =>
+            RefreshReservationDialog();
+
         NotificationHubClient.TableStatusUpdated += OnReservationRealtime;
+        NotificationHubClient.ReservationUpdated += OnReservationUpdated;
         try
         {
             _ = RefreshAsync();
@@ -986,7 +993,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             row.Controls.Add(lblCancelInfo);
         }
 
-        if (statusIndex == 0)
+        if (statusIndex == 0 || statusIndex == 5)
         {
             var btnCheckIn = new Button { Text = "Nhận bàn", Location = new Point(320, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Tertiary, ForeColor = Color.White, Font = AppFonts.LabelMd };
             btnCheckIn.FlatAppearance.BorderSize = 0;
