@@ -51,6 +51,7 @@ public sealed class ReservationReminderService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
         var audience = scope.ServiceProvider.GetRequiredService<ReservationAudienceService>();
+        var tableState = scope.ServiceProvider.GetRequiredService<TableStateService>();
 
         var now = DateTime.Now;
         var activeRows = await db.Reservations
@@ -64,6 +65,66 @@ public sealed class ReservationReminderService : BackgroundService
                 reservation.ReservationTime >= now.AddDays(-1))
             .OrderBy(reservation => reservation.ReservationTime)
             .ToListAsync(cancellationToken);
+
+        // Synchronize physical table statuses with the same rule used by
+        // payment/release flows. A reservation reaching its time must become
+        // DaDat on every client unless the table is currently serving an open order.
+        var reservationTableIds = activeRows
+            .Select(reservation => reservation.TableId)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        if (reservationTableIds.Count > 0)
+        {
+            var resolvedStatuses = await tableState.ResolveIdleStatusesAsync(
+                reservationTableIds,
+                now,
+                cancellationToken);
+
+            var tables = await db.Tables
+                .Where(table => reservationTableIds.Contains(table.TableId))
+                .ToListAsync(cancellationToken);
+
+            var changedTables = new List<DiningTable>();
+            foreach (var table in tables)
+            {
+                if (!resolvedStatuses.TryGetValue(table.TableId, out var status) ||
+                    table.Status == status)
+                {
+                    continue;
+                }
+
+                // Never downgrade an actively occupied table just because its
+                // reservation reminder reached the scheduled time.
+                if (table.Status == TableStatus.DangPhucVu &&
+                    status != TableStatus.DangPhucVu)
+                {
+                    continue;
+                }
+
+                table.Status = status;
+                changedTables.Add(table);
+            }
+
+            if (changedTables.Count > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+
+                foreach (var table in changedTables)
+                {
+                    await _hub.Clients.All.SendAsync(
+                        "TableStatusUpdated",
+                        new
+                        {
+                            TableId = table.TableId,
+                            table.TableName,
+                            Status = table.Status
+                        },
+                        cancellationToken);
+                }
+            }
+        }
 
         var groups = activeRows.GroupBy(reservation =>
             reservation.BookingGroupId ?? reservation.ReservationId);
