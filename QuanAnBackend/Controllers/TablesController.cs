@@ -29,6 +29,21 @@ public record TableOrderGroupDto(
     List<TableOrderItemDto> Items
 );
 
+internal sealed record TableListItem(
+    int id,
+    string tableName,
+    int capacity,
+    int status,
+    int areaId,
+    string areaName,
+    string tableType,
+    decimal? amount,
+    string? customerName,
+    int? linkedOrderId,
+    bool isLinkPrimary,
+    string? linkedWith
+);
+
 [ApiController]
 [Route("api/[controller]")]
 public class TablesController : ControllerBase
@@ -36,12 +51,18 @@ public class TablesController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
+    private readonly TableStateService _tableState;
 
-    public TablesController(AppDbContext db, IHubContext<OrderHub> hub, NotificationService notifications)
+    public TablesController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub,
+        NotificationService notifications,
+        TableStateService tableState)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _tableState = tableState;
     }
 
     // GET api/tables?areaId=1 -> vẽ sơ đồ bàn, kèm tên khu vực, lọc theo khu vực (tùy chọn)
@@ -151,7 +172,7 @@ public class TablesController : ControllerBase
             statusParameter.Value = !string.IsNullOrWhiteSpace(statusFilter) ? statusFilter.Trim() : DBNull.Value;
             command.Parameters.Add(statusParameter);
 
-            var result = new List<object>();
+            var result = new List<TableListItem>();
             var canViewOrderDetails =
                 User.IsInRole("QuanLy") ||
                 User.IsInRole("ThuNgan") ||
@@ -183,24 +204,37 @@ public class TablesController : ControllerBase
                     customerName = $"{numberOfGuests.Value} khách";
                 }
 
-                result.Add(new
-                {
-                    id = reader.GetInt32(0),
-                    tableName = reader.GetString(1),
-                    capacity = reader.GetInt32(2),
-                    status = StatusToNumber(status),
-                    areaId = reader.GetInt32(4),
-                    areaName = reader.GetString(5),
-                    tableType = reader.GetString(6),
-                    amount = canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
-                    customerName = canViewOrderDetails ? customerName : null,
-                    linkedOrderId = canViewOrderDetails ? linkedOrderId : null,
-                    isLinkPrimary = canViewOrderDetails ? isLinkPrimary : false,
-                    linkedWith = canViewOrderDetails ? linkedWith : null
-                });
+                result.Add(new TableListItem(
+                    reader.GetInt32(0),
+                    reader.GetString(1),
+                    reader.GetInt32(2),
+                    StatusToNumber(status),
+                    reader.GetInt32(4),
+                    reader.GetString(5),
+                    reader.GetString(6),
+                    canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
+                    canViewOrderDetails ? customerName : null,
+                    canViewOrderDetails ? linkedOrderId : null,
+                    canViewOrderDetails && isLinkPrimary,
+                    canViewOrderDetails ? linkedWith : null
+                ));
             }
 
-            return Ok(result);
+            var normalized = result
+                .GroupBy(table => new
+                {
+                    table.areaId,
+                    Name = NormalizeTableName(table.tableName)
+                })
+                .Select(group => group
+                    .OrderByDescending(table => TableDisplayPriority((TableStatus)table.status))
+                    .ThenByDescending(table => table.id)
+                    .First())
+                .OrderBy(table => table.areaName)
+                .ThenBy(table => table.tableName)
+                .ToList();
+
+            return Ok(normalized);
         }
         finally
         {
@@ -436,7 +470,7 @@ public class TablesController : ControllerBase
             .ToListAsync();
         foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
 
-        table.Status = TableStatus.Trong;
+        table.Status = await _tableState.ResolveIdleStatusAsync(id);
         await _db.SaveChangesAsync();
 
         foreach (var order in openOrders.Where(order => order.CustomerId.HasValue))
