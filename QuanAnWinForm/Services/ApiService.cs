@@ -14,12 +14,6 @@ public class ApiService
         _http = new HttpClient(new AuthHeaderHandler()) { BaseAddress = new Uri(ApiConfig.BaseUrl) };
     }
 
-    public async Task<List<TableDto>> GetTablesAsync()
-    {
-        var res = await _http.GetFromJsonAsync<List<TableDto>>("/api/tables", JsonOpts);
-        return res ?? new List<TableDto>();
-    }
-
     public async Task<TableLockLeaseDto?> AcquireTableLockAsync(
         int tableId,
         string employeeCode,
