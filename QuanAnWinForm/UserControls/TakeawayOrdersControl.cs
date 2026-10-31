@@ -21,6 +21,7 @@ public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
     private readonly FlowLayoutPanel _flowOrders = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15000 };
     private bool _loading;
+    private bool _reloadPending;
 
     // Bấm "Tạo đơn mang về"
     public event Action? CreateRequested;
@@ -156,22 +157,33 @@ public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
 
     private async Task LoadOrdersAsync()
     {
-        if (_loading) return;
-        _loading = true;
-        try
+        if (_loading)
         {
-            var orders = await _api.GetOpenTakeawayOrdersAsync();
-            if (IsDisposed) return;
-            RenderOrders(orders);
+            _reloadPending = true;
+            return;
         }
-        catch (Exception ex)
+
+        do
         {
-            if (!IsDisposed) MessageBox.Show($"Không tải được danh sách đơn mang về: {ex.Message}");
+            _reloadPending = false;
+            _loading = true;
+            try
+            {
+                var orders = await _api.GetOpenTakeawayOrdersAsync();
+                if (IsDisposed) return;
+                RenderOrders(orders);
+            }
+            catch (Exception ex)
+            {
+                if (!IsDisposed && Visible)
+                    MessageBox.Show($"Không tải được danh sách đơn mang về: {ex.Message}");
+            }
+            finally
+            {
+                _loading = false;
+            }
         }
-        finally
-        {
-            _loading = false;
-        }
+        while (_reloadPending && !IsDisposed);
     }
 
     private void RenderOrders(List<TakeawayOrderSummaryDto> orders)
