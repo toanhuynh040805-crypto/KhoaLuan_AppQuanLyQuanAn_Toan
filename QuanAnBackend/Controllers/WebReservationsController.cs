@@ -214,6 +214,18 @@ public class WebReservationsController : ControllerBase
                 new[] { "ThuNgan", "PhucVu" },
                 relatedEntityType: "Reservation",
                 relatedEntityId: code);
+
+            if (customerId.HasValue)
+            {
+                await _notifications.CreateForCustomerAsync(
+                    customerId.Value,
+                    "Đặt bàn đã được xác nhận",
+                    $"Lịch đặt bàn lúc {start:HH:mm dd/MM} đã được ghi nhận. Bàn được giữ đến {start.AddMinutes(duration):HH:mm}.",
+                    NotificationType.DatBan,
+                    $"reservation-web-created:{code}",
+                    "Reservation",
+                    code);
+            }
         }
         catch (Exception ex)
         {
@@ -227,6 +239,9 @@ public class WebReservationsController : ControllerBase
             ReservationCode = code,
             Count = created.Count,
             Ids = created.Select(r => r.ReservationId),
+            ReservationTime = start,
+            DurationMinutes = duration,
+            HoldUntil = start.AddMinutes(duration),
             Status = ReservationStatus.DaXacNhan.ToString()
         });
     }
@@ -257,6 +272,8 @@ public class WebReservationsController : ControllerBase
             first.CustomerPhone,
             first.ReservationTime,
             first.DurationMinutes,
+            HoldUntil = first.ReservationTime.AddMinutes(first.DurationMinutes),
+            IsHoldExpired = DateTime.Now >= first.ReservationTime.AddMinutes(first.DurationMinutes),
             NumberOfGuests = rows.Sum(r => r.NumberOfGuests),
             Status = (int)status,
             first.Note,
