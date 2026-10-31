@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Models;
 
@@ -117,6 +118,7 @@ public sealed class TableStateService
         try
         {
             await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
             command.CommandText = """
                 IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
                 BEGIN
