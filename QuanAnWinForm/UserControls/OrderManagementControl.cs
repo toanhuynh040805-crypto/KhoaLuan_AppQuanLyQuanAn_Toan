@@ -11,7 +11,7 @@ namespace QuanAnWinForm.UserControls;
 //  - Thanh lọc: ngày, trạng thái (lọc trạng thái làm ngay trên máy, không gọi lại API).
 //  - Thân trang: bảng danh sách đơn (co giãn theo cửa sổ) + khung chi tiết đơn rộng cố định.
 // Các dòng đơn / dòng món được tự vẽ (OnPaint) nên nhẹ và luôn thẳng cột.
-public partial class OrderManagementControl : UserControl
+public partial class OrderManagementControl : UserControl, IRefreshableContent
 {
     private readonly ApiService _api = new();
     private readonly int _userId;
@@ -25,6 +25,10 @@ public partial class OrderManagementControl : UserControl
     private int _loadVersion;     // chống kết quả cũ ghi đè kết quả mới khi đổi ngày liên tục
     private int _detailVersion;   // chống chi tiết cũ ghi đè khi bấm nhanh nhiều đơn
     private int _orderScrollBar;  // bề rộng thanh cuộn đang chiếm ở danh sách (để tiêu đề cột thẳng hàng)
+    private readonly System.Windows.Forms.Timer _realtimeRefreshTimer =
+        new() { Interval = 350 };
+    private bool _realtimeDirty;
+    private bool _realtimeRefreshRunning;
 
     // Trạng thái nhãn bo tròn ở phần đầu chi tiết
     private string _pillText = "";
@@ -75,7 +79,47 @@ public partial class OrderManagementControl : UserControl
         ShowDetailEmpty();
         UpdateStats();
 
-        Load += async (s, e) => await LoadOrdersAsync();
+        _realtimeRefreshTimer.Tick += async (s, e) =>
+        {
+            _realtimeRefreshTimer.Stop();
+            if (_realtimeRefreshRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRefreshRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await LoadOrdersAsync();
+            }
+            finally
+            {
+                _realtimeRefreshRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeRefreshTimer.Start();
+            }
+        };
+
+        Load += async (s, e) =>
+        {
+            SubscribeRealtime();
+            await LoadOrdersAsync();
+        };
+
+        VisibleChanged += (s, e) =>
+        {
+            if (Visible && _realtimeDirty)
+                QueueRealtimeRefresh();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeRefreshTimer.Stop();
+            _realtimeRefreshTimer.Dispose();
+        };
         dtpFilterDate.ValueChanged += async (s, e) =>
         {
             _selectedOrderId = null;
@@ -93,6 +137,62 @@ public partial class OrderManagementControl : UserControl
 
         panelOrderScroll.Resize += (s, e) => LayoutOrderRows(reposition: false);
         panelItems.Resize += (s, e) => LayoutItemRows(reposition: false);
+    }
+
+    public async Task RefreshDataAsync()
+    {
+        _realtimeDirty = false;
+        await LoadOrdersAsync();
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnOrderItemCancelled(OrderItemCancelledPayload _) => QueueRealtimeRefresh();
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeRefreshTimer.Stop();
+                _realtimeRefreshTimer.Start();
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng.
+        }
     }
 
     // =====================================================================
