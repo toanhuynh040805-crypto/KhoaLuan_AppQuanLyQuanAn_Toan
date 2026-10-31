@@ -129,7 +129,7 @@ public class ReservationsController : ControllerBase
     };
 
     [HttpGet]
-    [AllowAnonymous]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> GetAll([FromQuery] DateTime? date, [FromQuery] ReservationStatus? status, [FromQuery] string? keyword)
     {
         var query = _db.Reservations
@@ -187,7 +187,7 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpGet("last-by-phone")]
-    [AllowAnonymous]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> GetLastByPhone([FromQuery] string? phone)
     {
         var p = phone?.Trim();
@@ -776,6 +776,7 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpPut("{id}")]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateReservationRequest request)
     {
         var reservation = await _db.Reservations.FindAsync(id);
@@ -845,6 +846,7 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpPost("{id:int}/release-overdue")]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> ReleaseOverdue(int id)
     {
         var rows = await _db.Reservations
@@ -1038,6 +1040,7 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpPut("{id}/status")]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] ReservationStatus status)
     {
         if (!Enum.IsDefined(status))
@@ -1132,6 +1135,7 @@ public class ReservationsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
+    [Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
     public async Task<IActionResult> Delete(int id)
     {
         var reservation = await _db.Reservations.Include(r => r.Table).FirstOrDefaultAsync(r => r.ReservationId == id);
