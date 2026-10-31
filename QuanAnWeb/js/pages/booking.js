@@ -1,4 +1,4 @@
-import { bookingApi } from '../api/bookingApi.js?auth-session-2';
+import { bookingApi } from '../api/bookingApi.js?table-sync-3';
 import {
     renderBookingTables,
     renderBookingTableCards,
@@ -6,7 +6,7 @@ import {
     renderBookingTableAlert
 } from '../components/bookingView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
-import { realtimeClient } from '../realtime/realtimeClient.js';
+import { realtimeClient } from '../realtime/realtimeClient.js?table-sync-3';
 
 const form = document.querySelector('[data-booking-form]');
 if (form) {
