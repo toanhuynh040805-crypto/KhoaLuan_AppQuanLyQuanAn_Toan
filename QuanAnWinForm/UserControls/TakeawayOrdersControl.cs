@@ -42,6 +42,10 @@ public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
         {
             NotificationHubClient.ItemStatusUpdated += OnItemChanged;
             NotificationHubClient.OrderItemCancelled += OnItemCancelled;
+            NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+            NotificationHubClient.OrderUpdated += OnOrderUpdated;
+            NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+            NotificationHubClient.ConnectionRestored += OnConnectionRestored;
             _timer.Start();
             await LoadOrdersAsync();
         };
@@ -53,6 +57,10 @@ public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
         {
             NotificationHubClient.ItemStatusUpdated -= OnItemChanged;
             NotificationHubClient.OrderItemCancelled -= OnItemCancelled;
+            NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+            NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+            NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+            NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
             _timer.Stop();
             _timer.Dispose();
         };
@@ -125,6 +133,10 @@ public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
     // Các handler realtime chạy trên luồng nền của SignalR -> đẩy về luồng giao diện
     private void OnItemChanged(ItemStatusUpdatedPayload p) => ReloadOnUiThread();
     private void OnItemCancelled(OrderItemCancelledPayload p) => ReloadOnUiThread();
+    private void OnPaymentCompleted(PaymentCompletedPayload p) => ReloadOnUiThread();
+    private void OnOrderUpdated(OrderUpdatedPayload p) => ReloadOnUiThread();
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload p) => ReloadOnUiThread();
+    private void OnConnectionRestored() => ReloadOnUiThread();
 
     private void ReloadOnUiThread()
     {
