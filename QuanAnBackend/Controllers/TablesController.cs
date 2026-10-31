@@ -536,6 +536,11 @@ public class TablesController : ControllerBase
             .ToListAsync();
         foreach (var r in finishedReservations) r.Status = ReservationStatus.HoanTat;
 
+        // Lưu Order/Reservation đã đóng trước. Nếu resolve trạng thái khi Order
+        // vẫn còn DangMo trong DB, TableStateService sẽ đọc lại và giữ bàn ở
+        // DangPhucVu dù người dùng vừa trả bàn.
+        await _db.SaveChangesAsync();
+
         table.Status = await _tableState.ResolveIdleStatusAsync(id);
         await _db.SaveChangesAsync();
 
