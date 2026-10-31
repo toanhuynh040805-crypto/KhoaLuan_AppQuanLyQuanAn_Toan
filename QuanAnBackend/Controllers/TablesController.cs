@@ -158,7 +158,6 @@ public class TablesController : ControllerBase
                     ORDER BY ot.OrderTableId DESC
                 ) lk
                 WHERE (@AreaId IS NULL OR t.AreaId = @AreaId)
-                  AND (@Status IS NULL OR t.Status = @Status)
                 ORDER BY t.TableId;
                 """;
 
@@ -166,11 +165,6 @@ public class TablesController : ControllerBase
             areaParameter.ParameterName = "@AreaId";
             areaParameter.Value = areaId.HasValue ? areaId.Value : DBNull.Value;
             command.Parameters.Add(areaParameter);
-
-            var statusParameter = command.CreateParameter();
-            statusParameter.ParameterName = "@Status";
-            statusParameter.Value = !string.IsNullOrWhiteSpace(statusFilter) ? statusFilter.Trim() : DBNull.Value;
-            command.Parameters.Add(statusParameter);
 
             var result = new List<TableListItem>();
             var canViewOrderDetails =
@@ -234,6 +228,13 @@ public class TablesController : ControllerBase
                 .ThenBy(table => table.tableName)
                 .ToList();
 
+            if (TryParseStatusFilter(statusFilter, out var requestedStatus))
+            {
+                normalized = normalized
+                    .Where(table => table.status == (int)requestedStatus)
+                    .ToList();
+            }
+
             return Ok(normalized);
         }
         finally
@@ -255,6 +256,24 @@ public class TablesController : ControllerBase
         TableStatus.DangDonDep => 200,
         _ => 100
     };
+
+    private static bool TryParseStatusFilter(
+        string? value,
+        out TableStatus status)
+    {
+        status = TableStatus.Trong;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        if (int.TryParse(value, out var numeric) &&
+            Enum.IsDefined(typeof(TableStatus), numeric))
+        {
+            status = (TableStatus)numeric;
+            return true;
+        }
+
+        return Enum.TryParse(value.Trim(), ignoreCase: true, out status);
+    }
 
     // WinForm đọc Status là số (khớp enum TableStatus: 0=Trong, 1=DangPhucVu,
     // 2=DaDat, 3=DangDonDep); Mobile parse được cả số lẫn chuỗi.
@@ -531,25 +550,37 @@ public class TablesController : ControllerBase
             .AsNoTracking()
             .ToListAsync();
 
-        // DB cũ có thể có nhiều TableId cùng tên trong một khu. Danh sách chọn
-        // đặt bàn chỉ hiển thị một bản đại diện, ưu tiên bàn có trạng thái đang
-        // hoạt động rồi mới đến TableId mới hơn. Không xóa dữ liệu lịch sử.
-        tables = tables
+        // DB cũ có thể có nhiều TableId cùng tên trong một khu. Xử lý chúng
+        // như cùng một bàn vật lý: chọn một TableId đại diện để thao tác nhưng
+        // kiểm tra lịch đặt trên TẤT CẢ TableId trùng cũ.
+        var physicalGroups = tables
             .GroupBy(t => new
             {
                 t.AreaId,
                 Name = NormalizeTableName(t.TableName)
             })
-            .Select(group => group
-                .OrderByDescending(t => TableDisplayPriority(t.Status))
-                .ThenByDescending(t => t.TableId)
-                .First())
+            .Select(group => new
+            {
+                Canonical = group
+                    .OrderByDescending(t => TableDisplayPriority(t.Status))
+                    .ThenByDescending(t => t.TableId)
+                    .First(),
+                AllIds = group.Select(t => t.TableId).ToHashSet(),
+                EffectiveStatus = group
+                    .OrderByDescending(t => TableDisplayPriority(t.Status))
+                    .ThenByDescending(t => t.TableId)
+                    .First()
+                    .Status
+            })
             .ToList();
 
-        // Chi lay dat ban con hieu luc (chua Huy/Khong den) - du xa ngay hom nay
-        // bao nhieu cung phai xet, vi khach co the dat truoc hang tuan.
+        // Chỉ lấy đặt bàn còn hiệu lực, kể cả reservation đang gắn với một
+        // TableId trùng cũ của cùng bàn vật lý.
         var activeReservations = await _db.Reservations
-            .Where(r => r.Status == ReservationStatus.ChoXacNhan || r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.DaNhanBan)
+            .Where(r =>
+                r.Status == ReservationStatus.ChoXacNhan ||
+                r.Status == ReservationStatus.DaXacNhan ||
+                r.Status == ReservationStatus.DaNhanBan)
             .Select(r => new
             {
                 r.TableId,
@@ -558,39 +589,50 @@ public class TablesController : ControllerBase
             })
             .ToListAsync();
 
-        var result = tables.Select(t =>
+        var result = physicalGroups.Select(group =>
         {
+            var table = group.Canonical;
             string? reason = null;
 
-            // Luon kiem tra trung voi dat ban truoc khac tren cung ban, bat ke gan
-            // hay xa (truoc day 2 dieu kien nay bi viet if/else nen bo sot truong
-            // hop "sap toi + trung dat ban khac" - da sua lai thanh kiem tra doc lap).
             var overlapped = activeReservations
-                .Where(r => r.TableId == t.TableId)
-                .FirstOrDefault(r => time < r.ReservationTime.AddMinutes(r.DurationMinutes) && r.ReservationTime < requestedEnd);
-            if (overlapped is not null)
-                reason = $"Đã có khách đặt {overlapped.ReservationTime:HH:mm dd/MM} - {overlapped.ReservationTime.AddMinutes(overlapped.DurationMinutes):HH:mm dd/MM}";
+                .Where(r => group.AllIds.Contains(r.TableId))
+                .FirstOrDefault(r =>
+                    time < r.ReservationTime.AddMinutes(r.DurationMinutes) &&
+                    r.ReservationTime < requestedEnd);
 
-            if (reason is null && isUpcoming && (t.Status == TableStatus.DangPhucVu || t.Status == TableStatus.DangDonDep))
+            if (overlapped is not null)
             {
-                reason = t.Status == TableStatus.DangPhucVu
+                reason =
+                    $"Đã có khách đặt {overlapped.ReservationTime:HH:mm dd/MM} - " +
+                    $"{overlapped.ReservationTime.AddMinutes(overlapped.DurationMinutes):HH:mm dd/MM}";
+            }
+
+            if (reason is null &&
+                isUpcoming &&
+                (group.EffectiveStatus == TableStatus.DangPhucVu ||
+                 group.EffectiveStatus == TableStatus.DangDonDep))
+            {
+                reason = group.EffectiveStatus == TableStatus.DangPhucVu
                     ? "Bàn đang có khách, chưa rõ giờ trống"
                     : "Bàn đang dọn dẹp";
             }
 
             return new
             {
-                Id = t.TableId,
-                t.TableName,
-                t.Capacity,
-                t.AreaId,
-                AreaName = t.Area != null ? t.Area.AreaName : "",
-                CurrentStatus = t.Status,
+                Id = table.TableId,
+                TableId = table.TableId,
+                table.TableName,
+                table.Capacity,
+                table.AreaId,
+                AreaName = table.Area != null ? table.Area.AreaName : "",
+                TableType = table.TableType,
+                CurrentStatus = group.EffectiveStatus,
                 IsAvailable = reason is null,
                 Reason = reason
             };
         })
-        .OrderBy(t => t.AreaName).ThenBy(t => t.TableName)
+        .OrderBy(t => t.AreaName)
+        .ThenBy(t => t.TableName)
         .ToList();
 
         return Ok(result);
