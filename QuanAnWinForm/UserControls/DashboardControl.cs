@@ -9,17 +9,100 @@ namespace QuanAnWinForm.UserControls;
 // TablesController (so ban dang phuc vu) va CustomersController (khach moi).
 public partial class DashboardControl : UserControl, IRefreshableContent
 {
-    public Task RefreshDataAsync() => LoadAllAsync();
-
+    public Task RefreshDataAsync() => LoadAllAsync(silent: true);
 
     private readonly ApiService _api = new();
+    private readonly System.Windows.Forms.Timer _realtimeTimer =
+        new() { Interval = 700 };
+    private bool _realtimeRunning;
+    private bool _realtimeDirty;
 
     public DashboardControl()
     {
         InitializeComponent();
         WireUpEvents();
 
-        Load += async (s, e) => await LoadAllAsync();
+        _realtimeTimer.Tick += async (s, e) =>
+        {
+            _realtimeTimer.Stop();
+            if (_realtimeRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await LoadAllAsync(silent: true);
+            }
+            finally
+            {
+                _realtimeRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeTimer.Start();
+            }
+        };
+
+        Load += async (s, e) =>
+        {
+            SubscribeRealtime();
+            await LoadAllAsync();
+        };
+
+        VisibleChanged += (s, e) =>
+        {
+            if (Visible && _realtimeDirty)
+                QueueRealtimeRefresh();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeTimer.Stop();
+            _realtimeTimer.Dispose();
+        };
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
+    private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeTimer.Stop();
+                _realtimeTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
     }
 
     private void WireUpEvents()
@@ -38,7 +121,7 @@ public partial class DashboardControl : UserControl, IRefreshableContent
             e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelTopItemsCard.Width - 1, panelTopItemsCard.Height - 1);
     }
 
-    private async Task LoadAllAsync()
+    private async Task LoadAllAsync(bool silent = false)
     {
         lblSubtitle.Text = $"Cập nhật lúc {DateTime.Now:HH:mm, dd/MM/yyyy}";
 
@@ -54,7 +137,8 @@ public partial class DashboardControl : UserControl, IRefreshableContent
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được dữ liệu tổng quan: {ex.Message}");
+            if (!silent && !IsDisposed)
+                MessageBox.Show($"Không tải được dữ liệu tổng quan: {ex.Message}");
         }
     }
 
