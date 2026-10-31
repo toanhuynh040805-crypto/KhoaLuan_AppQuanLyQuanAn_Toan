@@ -576,7 +576,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 // Giữ vị trí cuộn của lưới bàn (Clear() sẽ làm nhảy về đầu)
                 var scroll = new Point(-flowTables.AutoScrollPosition.X, -flowTables.AutoScrollPosition.Y);
 
-                _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+                _tables = NormalizePhysicalTables(
+                    (await _api.GetTablesAsync())
+                        .Where(t => !IsTakeawaySlot(t)));
 
                 if (CanCompletePayment)
                 {
