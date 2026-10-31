@@ -104,8 +104,7 @@ public class OrderHub : Hub
         if (string.IsNullOrWhiteSpace(employeeCode))
             return;
 
-        if (IsCustomer())
-            throw new HubException("Khách hàng không được tham gia nhóm nhân viên nội bộ.");
+        EnsureInternalAuthenticated();
 
         var userId = GetCurrentUserId();
         if (Context.User?.Identity?.IsAuthenticated == true && userId.HasValue)
@@ -139,8 +138,7 @@ public class OrderHub : Hub
         if (userId <= 0)
             return;
 
-        if (IsCustomer())
-            throw new HubException("Khách hàng không được tham gia nhóm nhân viên nội bộ.");
+        EnsureInternalAuthenticated();
 
         var currentUserId = GetCurrentUserId();
         if (Context.User?.Identity?.IsAuthenticated == true && currentUserId.HasValue && currentUserId.Value != userId && !Context.User.IsInRole("QuanLy"))
@@ -168,10 +166,9 @@ public class OrderHub : Hub
         if (string.IsNullOrWhiteSpace(role))
             return;
 
-        if (IsCustomer())
-            throw new HubException("Khách hàng không được tham gia nhóm vai trò nội bộ.");
+        EnsureInternalAuthenticated();
 
-        if (Context.User?.Identity?.IsAuthenticated == true && !Context.User.IsInRole(role.Trim()))
+        if (!Context.User!.IsInRole(role.Trim()))
             throw new HubException("Bạn không có quyền tham gia nhóm vai trò này.");
 
         await Groups.AddToGroupAsync(
@@ -193,8 +190,13 @@ public class OrderHub : Hub
 
     public async Task JoinOrderManagementGroup()
     {
-        if (IsCustomer())
-            throw new HubException("Khách hàng không được tham gia nhóm quản lý đơn hàng.");
+        EnsureInternalAuthenticated();
+
+        if (!Context.User!.IsInRole("QuanLy") &&
+            !Context.User.IsInRole("ThuNgan"))
+        {
+            throw new HubException("Bạn không có quyền tham gia nhóm quản lý đơn hàng.");
+        }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, "order-management");
     }
@@ -219,6 +221,15 @@ public class OrderHub : Hub
         }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, $"customer-{customerId}");
+    }
+
+    private void EnsureInternalAuthenticated()
+    {
+        if (Context.User?.Identity?.IsAuthenticated != true)
+            throw new HubException("Cần đăng nhập để tham gia nhóm nội bộ.");
+
+        if (IsCustomer())
+            throw new HubException("Khách hàng không được tham gia nhóm nội bộ.");
     }
 
     private bool IsCustomer()
