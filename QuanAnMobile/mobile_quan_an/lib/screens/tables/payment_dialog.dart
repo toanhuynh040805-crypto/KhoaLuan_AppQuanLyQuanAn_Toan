@@ -7,6 +7,7 @@ import '../../app/theme.dart';
 import '../../models/payment_method_option.dart';
 import '../../models/payment_preview.dart';
 import '../../services/app_services.dart';
+import '../../widgets/api_qr_image.dart';
 
 class PaymentDialogResult {
   final int method;
@@ -319,22 +320,9 @@ class _PaymentDialogState
                   const EdgeInsets.all(
                 6,
               ),
-              child: Image.network(
-                preview.qrImageUrl,
+              child: ApiQrImage(
+                imageUrl: preview.qrImageUrl,
                 fit: BoxFit.contain,
-                errorBuilder:
-                    (
-                      context,
-                      error,
-                      stackTrace,
-                    ) =>
-                        const Center(
-                  child: Text(
-                    'Không tải được QR',
-                    textAlign:
-                        TextAlign.center,
-                  ),
-                ),
               ),
             )
           else
