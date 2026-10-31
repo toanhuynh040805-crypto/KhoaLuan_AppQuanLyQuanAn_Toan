@@ -9,8 +9,11 @@ namespace QuanAnWinForm.UserControls;
 // - "Thanh toán"         -> mở đơn đó ở màn Thanh toán để thu tiền
 // - "Hủy đơn"            -> hủy đơn mang về (khách không lấy)
 // Control dựng hoàn toàn bằng code (không có Designer).
-public partial class TakeawayOrdersControl : UserControl
+public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadOrdersAsync();
+
+
     private readonly ApiService _api = new();
     private readonly int _userId;
 
