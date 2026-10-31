@@ -32,6 +32,10 @@ public class OrderHub : Hub
             }
             else
             {
+                await Groups.AddToGroupAsync(
+                    Context.ConnectionId,
+                    "internal-users");
+
                 var userId = GetCurrentUserId();
                 if (userId.HasValue &&
                     (Context.User.IsInRole("QuanLy") || Context.User.IsInRole("ThuNgan")))
