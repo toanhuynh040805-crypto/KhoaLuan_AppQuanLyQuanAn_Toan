@@ -32,6 +32,8 @@ class _NotificationScreenState
 
   StreamSubscription<AppNotification>?
       _realtimeSubscription;
+  final Set<int> _releasedReservationIds =
+      <int>{};
 
   @override
   void initState() {
@@ -270,6 +272,9 @@ class _NotificationScreenState
                 final bool canReleaseOverdue =
                     notification.relatedEntityType == 'Reservation' &&
                     notification.relatedEntityId != null &&
+                    !_releasedReservationIds.contains(
+                      notification.relatedEntityId,
+                    ) &&
                     (notification.eventKey ?? '')
                         .startsWith('reservation-overdue:');
 
@@ -306,6 +311,11 @@ class _NotificationScreenState
                                     showError: false,
                                   );
                                   if (mounted) {
+                                    setState(() {
+                                      _releasedReservationIds.add(
+                                        notification.relatedEntityId!,
+                                      );
+                                    });
                                     TopMessage.show(
                                       context,
                                       message:
