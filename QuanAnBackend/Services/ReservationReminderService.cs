@@ -1,0 +1,230 @@
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using QuanAnBackend.Data;
+using QuanAnBackend.Hubs;
+using QuanAnBackend.Models;
+
+namespace QuanAnBackend.Services;
+
+public sealed class ReservationReminderService : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHubContext<OrderHub> _hub;
+    private readonly ILogger<ReservationReminderService> _logger;
+
+    public ReservationReminderService(
+        IServiceScopeFactory scopeFactory,
+        IHubContext<OrderHub> hub,
+        ILogger<ReservationReminderService> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _hub = hub;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await ProcessAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Reservation reminder scan failed.");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+        }
+    }
+
+    private async Task ProcessAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
+        var audience = scope.ServiceProvider.GetRequiredService<ReservationAudienceService>();
+
+        var now = DateTime.Now;
+        var activeRows = await db.Reservations
+            .AsNoTracking()
+            .Include(reservation => reservation.Table)!
+                .ThenInclude(table => table!.Area)
+            .Where(reservation =>
+                (reservation.Status == ReservationStatus.DaXacNhan ||
+                 reservation.Status == ReservationStatus.ChoXacNhan) &&
+                reservation.ReservationTime <= now)
+            .OrderBy(reservation => reservation.ReservationTime)
+            .ToListAsync(cancellationToken);
+
+        var groups = activeRows.GroupBy(reservation =>
+            reservation.BookingGroupId ?? reservation.ReservationId);
+
+        foreach (var group in groups)
+        {
+            var rows = group.ToList();
+            if (rows.Count == 0)
+                continue;
+
+            var first = rows[0];
+            var groupId = group.Key;
+            var reservationTime = rows.Min(row => row.ReservationTime);
+            var holdUntil = rows.Max(row =>
+                row.ReservationTime.AddMinutes(row.DurationMinutes));
+            var tableNames = string.Join(", ", rows
+                .Select(row => row.Table?.TableName ?? $"Bàn {row.TableId}")
+                .Distinct());
+            var areaIds = rows
+                .Select(row => row.Table?.AreaId ?? 0)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToArray();
+
+            if (now < holdUntil)
+            {
+                await SendDueAsync(
+                    notifications,
+                    audience,
+                    groupId,
+                    first.CustomerId,
+                    areaIds,
+                    tableNames,
+                    reservationTime,
+                    holdUntil,
+                    now,
+                    cancellationToken);
+            }
+            else
+            {
+                await SendOverdueAsync(
+                    notifications,
+                    audience,
+                    groupId,
+                    first.CustomerId,
+                    areaIds,
+                    tableNames,
+                    reservationTime,
+                    holdUntil,
+                    now,
+                    cancellationToken);
+            }
+        }
+    }
+
+    private async Task SendDueAsync(
+        NotificationService notifications,
+        ReservationAudienceService audience,
+        int groupId,
+        int? customerId,
+        int[] areaIds,
+        string tableNames,
+        DateTime reservationTime,
+        DateTime holdUntil,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var userIds = await audience.GetRecipientUserIdsAsync(
+            areaIds,
+            reservationTime,
+            cancellationToken);
+
+        foreach (var userId in userIds)
+        {
+            await notifications.CreateAsync(
+                "Đã đến giờ khách đặt bàn",
+                $"{tableNames} có lịch đặt lúc {reservationTime:HH:mm}. " +
+                $"Bàn được giữ đến {holdUntil:HH:mm}. Vui lòng kiểm tra khách đã đến nhận bàn chưa.",
+                NotificationType.DatBan,
+                targetUserId: userId,
+                relatedEntityType: "Reservation",
+                relatedEntityId: groupId,
+                eventKey: $"reservation-due:{groupId}:user:{userId}");
+        }
+
+        if (customerId.HasValue)
+        {
+            await notifications.CreateForCustomerAsync(
+                customerId.Value,
+                "Đã đến giờ đặt bàn của bạn",
+                $"Lịch đặt {tableNames} là {reservationTime:HH:mm}. " +
+                $"Nhà hàng giữ bàn cho bạn đến {holdUntil:HH:mm}.",
+                NotificationType.DatBan,
+                $"reservation-due:{groupId}:customer:{customerId.Value}",
+                "Reservation",
+                groupId);
+        }
+
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                reservationId = groupId,
+                stage = "Due",
+                reservationTime,
+                holdUntil
+            },
+            cancellationToken);
+    }
+
+    private async Task SendOverdueAsync(
+        NotificationService notifications,
+        ReservationAudienceService audience,
+        int groupId,
+        int? customerId,
+        int[] areaIds,
+        string tableNames,
+        DateTime reservationTime,
+        DateTime holdUntil,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var userIds = await audience.GetRecipientUserIdsAsync(
+            areaIds,
+            now,
+            cancellationToken);
+
+        foreach (var userId in userIds)
+        {
+            await notifications.CreateAsync(
+                "Đặt bàn quá giờ giữ chỗ",
+                $"{tableNames} đặt lúc {reservationTime:HH:mm} đã quá thời gian giữ đến {holdUntil:HH:mm}. " +
+                "Nếu khách chưa đến, bạn có thể đánh dấu Không đến để nhả bàn.",
+                NotificationType.DatBan,
+                targetUserId: userId,
+                relatedEntityType: "Reservation",
+                relatedEntityId: groupId,
+                eventKey: $"reservation-overdue:{groupId}:user:{userId}");
+        }
+
+        if (customerId.HasValue)
+        {
+            await notifications.CreateForCustomerAsync(
+                customerId.Value,
+                "Đặt bàn đã quá thời gian giữ chỗ",
+                $"Lịch đặt {tableNames} lúc {reservationTime:HH:mm} được giữ đến {holdUntil:HH:mm}. " +
+                "Thời gian giữ chỗ đã hết; nhà hàng có thể hủy lượt đặt nếu bạn chưa nhận bàn.",
+                NotificationType.DatBan,
+                $"reservation-overdue:{groupId}:customer:{customerId.Value}",
+                "Reservation",
+                groupId);
+        }
+
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                reservationId = groupId,
+                stage = "Overdue",
+                reservationTime,
+                holdUntil
+            },
+            cancellationToken);
+    }
+}
