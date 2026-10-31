@@ -1934,8 +1934,19 @@ public partial class SalesControl : UserControl
             ClearCart();
             _existingOrder = null;
 
-            if (_isTakeaway)
+            if (!_isTakeaway)
+            {
+                await ReleaseCurrentTableLockAsync();
+                _selectedTableId = null;
+                _suppressTableSelectionChanged = true;
+                try { cbTable.SelectedIndex = -1; }
+                finally { _suppressTableSelectionChanged = false; }
+                lblTableName.Text = "Chưa chọn bàn";
+            }
+            else
+            {
                 lblTableName.Text = "Mang về";
+            }
 
             RenderCart();
             UpdateSendKitchenButton();
