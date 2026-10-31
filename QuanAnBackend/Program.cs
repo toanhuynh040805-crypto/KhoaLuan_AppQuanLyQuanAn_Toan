@@ -63,6 +63,7 @@ builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<MobilePermissionService>();
 builder.Services.AddScoped<MobilePermissionSchemaService>();
 builder.Services.AddScoped<AreaAccessService>();
+builder.Services.AddScoped<TableStateService>();
 builder.Services.AddScoped<ReservationAudienceService>();
 builder.Services.AddScoped<AreaAssignmentSchemaService>();
 builder.Services.AddScoped<AttendanceSettingsService>();
