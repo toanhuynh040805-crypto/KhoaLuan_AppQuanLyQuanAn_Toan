@@ -156,6 +156,33 @@ public class MobileDiningController : ControllerBase
 
             return Ok(result);
         }
+        catch (DbException)
+        {
+            // Một số DB cũ có thể chưa có đầy đủ các bảng phụ như
+            // OrderTables/WaitingQueue/Combos. Không để lỗi dữ liệu bổ sung
+            // làm Mobile mất toàn bộ sơ đồ bàn.
+            var fallback = await _db.Tables
+                .AsNoTracking()
+                .Include(table => table.Area)
+                .OrderBy(table => table.Area != null ? table.Area.AreaName : "")
+                .ThenBy(table => table.TableName)
+                .ToListAsync();
+
+            return Ok(fallback.Select(table => new
+            {
+                id = table.TableId,
+                tableName = table.TableName,
+                capacity = table.Capacity,
+                status = table.Status.ToString(),
+                areaId = table.AreaId,
+                areaName = table.Area?.AreaName ?? "",
+                tableType = table.TableType.ToString(),
+                amount = (decimal?)null,
+                customerName = (string?)null,
+                guestCount = (int?)null,
+                time = (string?)null
+            }));
+        }
         finally
         {
             if (shouldClose)
