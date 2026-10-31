@@ -9,8 +9,11 @@ namespace QuanAnWinForm.UserControls;
 // Man hinh "Thong ke & Bao cao" - QuanLy, ThuNgan.
 // Bo loc: Hom nay / Chon ngay / Theo tuan / Theo thang / Theo quy (+ nut lui/tien ky).
 // Co nut "Xuat Excel" xuat toan bo bao cao cua ky dang xem.
-public partial class RevenueControl : UserControl
+public partial class RevenueControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => ReloadAllAsync();
+
+
     private const int PeriodToday = 0;
     private const int PeriodDay = 1;
     private const int PeriodWeek = 2;
