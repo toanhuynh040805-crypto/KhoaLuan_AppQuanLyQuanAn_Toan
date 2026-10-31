@@ -27,18 +27,33 @@ public sealed class TableStateService
     {
         var current = now ?? DateTime.Now;
 
+        var physicalTableIds = await GetPhysicalTableIdsAsync(
+            tableId,
+            cancellationToken);
+
+        if (physicalTableIds.Count == 0)
+            physicalTableIds.Add(tableId);
+
         var hasActiveOpenOrder = await _db.Orders
             .AsNoTracking()
             .AnyAsync(order =>
                 order.Status == OrderStatus.DangMo &&
-                order.TableId == tableId,
+                order.TableId.HasValue &&
+                physicalTableIds.Contains(order.TableId.Value),
                 cancellationToken);
 
         if (!hasActiveOpenOrder)
         {
-            hasActiveOpenOrder = await HasLinkedOpenOrderAsync(
-                tableId,
-                cancellationToken);
+            foreach (var physicalTableId in physicalTableIds)
+            {
+                if (await HasLinkedOpenOrderAsync(
+                        physicalTableId,
+                        cancellationToken))
+                {
+                    hasActiveOpenOrder = true;
+                    break;
+                }
+            }
         }
 
         if (hasActiveOpenOrder)
@@ -47,7 +62,7 @@ public sealed class TableStateService
         var hasRelevantReservation = await _db.Reservations
             .AsNoTracking()
             .AnyAsync(reservation =>
-                reservation.TableId == tableId &&
+                physicalTableIds.Contains(reservation.TableId) &&
                 (reservation.Status == ReservationStatus.ChoXacNhan ||
                  reservation.Status == ReservationStatus.DaXacNhan) &&
                 reservation.ReservationTime <= current.Add(UpcomingReservationWindow),
@@ -56,6 +71,36 @@ public sealed class TableStateService
         return hasRelevantReservation
             ? TableStatus.DaDat
             : TableStatus.Trong;
+    }
+
+    private async Task<HashSet<int>> GetPhysicalTableIdsAsync(
+        int tableId,
+        CancellationToken cancellationToken)
+    {
+        var table = await _db.Tables
+            .AsNoTracking()
+            .Where(item => item.TableId == tableId)
+            .Select(item => new
+            {
+                item.AreaId,
+                item.TableName
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (table is null)
+            return new HashSet<int>();
+
+        var normalizedName = table.TableName.Trim().ToUpper();
+
+        var ids = await _db.Tables
+            .AsNoTracking()
+            .Where(item =>
+                item.AreaId == table.AreaId &&
+                item.TableName.Trim().ToUpper() == normalizedName)
+            .Select(item => item.TableId)
+            .ToListAsync(cancellationToken);
+
+        return ids.ToHashSet();
     }
 
     private async Task<bool> HasLinkedOpenOrderAsync(
