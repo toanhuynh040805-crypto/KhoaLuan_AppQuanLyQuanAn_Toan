@@ -537,7 +537,10 @@ public class TablesController : ControllerBase
     //   dang con hieu luc tren cung ban do, theo dung khung [time, time+duration).
     [HttpGet("available")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetAvailable([FromQuery] DateTime time, [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes)
+    public async Task<IActionResult> GetAvailable(
+        [FromQuery] DateTime time,
+        [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes,
+        [FromQuery] int? areaId = null)
     {
         if (durationMinutes < Reservation.MinDurationMinutes || durationMinutes > Reservation.MaxDurationMinutes)
             return BadRequest(new { message = $"Thời lượng giữ bàn phải từ {Reservation.MinDurationMinutes} đến {Reservation.MaxDurationMinutes} phút" });
@@ -545,10 +548,15 @@ public class TablesController : ControllerBase
         var requestedEnd = time.AddMinutes(durationMinutes);
         var isUpcoming = time <= DateTime.Now.AddHours(3);
 
-        var tables = await _db.Tables
+        var tableQuery = _db.Tables
             .Include(t => t.Area)
             .AsNoTracking()
-            .ToListAsync();
+            .AsQueryable();
+
+        if (areaId.HasValue && areaId.Value > 0)
+            tableQuery = tableQuery.Where(table => table.AreaId == areaId.Value);
+
+        var tables = await tableQuery.ToListAsync();
 
         // DB cũ có thể có nhiều TableId cùng tên trong một khu. Xử lý chúng
         // như cùng một bàn vật lý: chọn một TableId đại diện để thao tác nhưng
