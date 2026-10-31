@@ -618,6 +618,7 @@ public class PaymentsController : ControllerBase
         // cứu lại sau này, và cập nhật hạng thành viên theo số dư điểm mới.
         int earnedPoints = 0;
         MemberLevel? previousLevel = null;
+        var memberLevelChanged = false;
         if (customer is not null)
         {
             previousLevel = customer.MemberLevel;
@@ -651,16 +652,8 @@ public class PaymentsController : ControllerBase
 
                         customer.MemberLevel = CustomerLoyaltyHelper.CalculateMemberLevel(customer.LoyaltyPoint);
 
-            if (customer.MemberLevel != previousLevel)
-            {
-                await _notifications.CreateForRolesAsync(
-                    "Khách hàng thăng hạng thành viên",
-                    $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
-                    NotificationType.KhuyenMai,
-                    new[] { "QuanLy", "ThuNgan" },
-                    relatedEntityType: "Customer",
-                    relatedEntityId: customer.CustomerId);
-            }
+            memberLevelChanged =
+                customer.MemberLevel != previousLevel;
         }
 
         var qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(
@@ -745,6 +738,20 @@ public class PaymentsController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
+
+        // Chỉ phát thông báo sau khi Payment/Order/điểm đã lưu thành công.
+        // NotificationService cũng dùng cùng DbContext và tự SaveChanges, nên
+        // gọi sớm hơn có thể vô tình commit điểm khách giữa chừng.
+        if (memberLevelChanged && customer is not null)
+        {
+            await _notifications.CreateForRolesAsync(
+                "Khách hàng thăng hạng thành viên",
+                $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
+                NotificationType.KhuyenMai,
+                new[] { "QuanLy", "ThuNgan" },
+                relatedEntityType: "Customer",
+                relatedEntityId: customer.CustomerId);
+        }
 
         // Một order có thể ghép nhiều bàn vật lý. Sau khi order đã đóng,
         // mỗi bàn phải trở về trạng thái đúng theo lịch đặt tiếp theo:
