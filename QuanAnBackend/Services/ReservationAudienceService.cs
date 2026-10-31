@@ -57,6 +57,7 @@ public sealed class ReservationAudienceService
 
         var employeeIds = servers.Select(item => item.EmployeeId).ToList();
         var workDate = DateOnly.FromDateTime(at.Date);
+        var previousDate = DateOnly.FromDateTime(at.Date.AddDays(-1));
 
         var assignments = await _db.ShiftAssignments
             .AsNoTracking()
@@ -64,8 +65,10 @@ public sealed class ReservationAudienceService
             .Include(assignment => assignment.AssignedAreas)
             .Where(assignment =>
                 employeeIds.Contains(assignment.EmployeeId) &&
-                assignment.WorkDate == workDate &&
-                assignment.Status != AssignmentStatus.VangMat)
+                (assignment.WorkDate == workDate ||
+                 assignment.WorkDate == previousDate) &&
+                (assignment.Status == AssignmentStatus.DaXepLich ||
+                 assignment.Status == AssignmentStatus.DaDiemDanh))
             .ToListAsync(cancellationToken);
 
         foreach (var server in servers)
@@ -74,7 +77,7 @@ public sealed class ReservationAudienceService
                 .Where(assignment =>
                     assignment.EmployeeId == server.EmployeeId &&
                     assignment.Shift is not null &&
-                    IsWithinShift(assignment.Shift, at.TimeOfDay))
+                    IsAssignmentActiveAt(assignment, at))
                 .ToList();
 
             if (currentAssignments.Count == 0)
@@ -108,12 +111,21 @@ public sealed class ReservationAudienceService
         return recipients.Contains(userId);
     }
 
-    private static bool IsWithinShift(Shift shift, TimeSpan now)
+    private static bool IsAssignmentActiveAt(
+        ShiftAssignment assignment,
+        DateTime at)
     {
-        if (shift.StartTime <= shift.EndTime)
-            return now >= shift.StartTime && now <= shift.EndTime;
+        if (assignment.Shift is null)
+            return false;
 
-        // Ca qua đêm, ví dụ 18:00 - 02:00.
-        return now >= shift.StartTime || now <= shift.EndTime;
+        var start = assignment.WorkDate
+            .ToDateTime(TimeOnly.FromTimeSpan(assignment.Shift.StartTime));
+        var endDate = assignment.Shift.EndTime < assignment.Shift.StartTime
+            ? assignment.WorkDate.AddDays(1)
+            : assignment.WorkDate;
+        var end = endDate
+            .ToDateTime(TimeOnly.FromTimeSpan(assignment.Shift.EndTime));
+
+        return at >= start && at <= end;
     }
 }
