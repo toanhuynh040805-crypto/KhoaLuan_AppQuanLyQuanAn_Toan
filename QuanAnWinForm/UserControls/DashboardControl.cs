@@ -7,8 +7,11 @@ namespace QuanAnWinForm.UserControls;
 // Man hinh Tong quan (Dashboard) - chi danh cho Role QuanLy. Lay du lieu THAT
 // tu ReportsController (doanh thu, don hang, mon ban chay, bieu do theo gio),
 // TablesController (so ban dang phuc vu) va CustomersController (khach moi).
-public partial class DashboardControl : UserControl
+public partial class DashboardControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadAllAsync();
+
+
     private readonly ApiService _api = new();
 
     public DashboardControl()
