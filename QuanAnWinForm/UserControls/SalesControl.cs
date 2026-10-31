@@ -37,6 +37,10 @@ public partial class SalesControl : UserControl
     // Đơn ĐANG MỞ của bàn đang chọn (các món khách đã gọi trước đó, kể cả từ Mobile).
     // Hiển thị chỉ-đọc ở giỏ hàng; _cart chỉ chứa các món THÊM MỚI tại quầy.
     private OpenTableOrderDto? _existingOrder;
+    private readonly System.Windows.Forms.Timer _realtimeRefreshTimer =
+        new() { Interval = 300 };
+    private bool _realtimeRefreshRunning;
+    private bool _realtimeDirty;
 
     // Món THÊM MỚI mà khách ăn tại chỗ yêu cầu MANG VỀ (cùng 1 đơn / 1 hóa đơn với đơn tại bàn).
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
@@ -89,9 +93,43 @@ public partial class SalesControl : UserControl
         panelLeft.Resize += (s, e) => FitLayout();
         panelRight.Resize += (s, e) => FitLayout();
         Load += (s, e) => FitLayout();
-        Disposed += (s, e) => _tip.Dispose();
 
-        Load += async (s, e) => await LoadDataAsync();
+        _realtimeRefreshTimer.Tick += async (s, e) =>
+        {
+            _realtimeRefreshTimer.Stop();
+            if (_realtimeRefreshRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRefreshRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await RefreshCurrentOrderRealtimeAsync();
+            }
+            finally
+            {
+                _realtimeRefreshRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeRefreshTimer.Start();
+            }
+        };
+
+        Load += async (s, e) =>
+        {
+            SubscribeRealtime();
+            await LoadDataAsync();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeRefreshTimer.Stop();
+            _realtimeRefreshTimer.Dispose();
+            _tip.Dispose();
+        };
         btnVietQr.Click += async (s, e) => await ProcessPaymentAsync(method: 1);
         btnThanhToan.Click += async (s, e) => await ProcessPaymentAsync(method: 0);
         btnConfirmOrder.Click += async (s, e) => await ConfirmOrderAsync();
@@ -115,6 +153,127 @@ public partial class SalesControl : UserControl
         };
 
         UpdateCustomerInfoLabel();
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private bool IsCurrentOrder(int orderId) =>
+        orderId > 0 && _existingOrder?.OrderId == orderId;
+
+    private bool IsCurrentTable(int? tableId) =>
+        !_isTakeaway &&
+        tableId.HasValue &&
+        tableId.Value > 0 &&
+        _selectedTableId == tableId.Value;
+
+    private void OnOrderUpdated(OrderUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnOrderItemCancelled(OrderItemCancelledPayload payload)
+    {
+        if (IsCurrentOrder(payload.OrderId) || IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload payload)
+    {
+        if (IsCurrentTable(payload.TableId))
+            QueueRealtimeRefresh();
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload payload)
+    {
+        if (!IsCurrentOrder(payload.OrderId) && !IsCurrentTable(payload.TableId))
+            return;
+
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke(async () =>
+            {
+                if (IsDisposed) return;
+
+                // Đơn đã được thiết bị khác thanh toán: không giữ món/giỏ cục bộ
+                // của lượt cũ để tránh thao tác tiếp trên hóa đơn đã đóng.
+                ClearCart();
+                _existingOrder = null;
+                _selectedCustomer = null;
+                txtCustomerPhone.Clear();
+                UpdateCustomerInfoLabel();
+                RenderCart();
+
+                try { await RefreshTablesAsync(); } catch { }
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeRefreshTimer.Stop();
+                _realtimeRefreshTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task RefreshCurrentOrderRealtimeAsync()
+    {
+        try
+        {
+            if (_isTakeaway)
+            {
+                if (_existingOrder?.OrderId is int orderId && orderId > 0)
+                    await LoadTakeawayOrderAsync(orderId, silent: true);
+                return;
+            }
+
+            if (_selectedTableId is int tableId && tableId > 0)
+                await LoadOpenOrderAsync(tableId, silent: true);
+        }
+        catch
+        {
+            // Realtime refresh không được làm gián đoạn thao tác bán hàng.
+        }
     }
 
     private async Task LoadDataAsync()
@@ -220,7 +379,7 @@ public partial class SalesControl : UserControl
         }
     }
 
-    private async Task LoadOpenOrderAsync(int tableId)
+    private async Task LoadOpenOrderAsync(int tableId, bool silent = false)
     {
         try
         {
@@ -238,7 +397,8 @@ public partial class SalesControl : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
+            if (!silent && !IsDisposed && Visible)
+                MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
         }
     }
 
@@ -466,14 +626,17 @@ public partial class SalesControl : UserControl
     }
 
     // Mo 1 don MANG VE dang mo (da gui bep truoc do) de thanh toan.
-    private async Task LoadTakeawayOrderAsync(int orderId)
+    private async Task LoadTakeawayOrderAsync(int orderId, bool silent = false)
     {
         SetMode(takeaway: true);
 
         var order = await _api.GetOrderByIdAsync(orderId);
         if (order is null)
         {
-            MessageBox.Show("Không tìm thấy đơn mang về.");
+            _existingOrder = null;
+            RenderCart();
+            if (!silent)
+                MessageBox.Show("Không tìm thấy đơn mang về.");
             return;
         }
 
