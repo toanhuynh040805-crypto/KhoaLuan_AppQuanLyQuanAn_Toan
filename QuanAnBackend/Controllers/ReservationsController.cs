@@ -957,21 +957,8 @@ public class ReservationsController : ControllerBase
 
         if (table is not null)
         {
-            var resolvedStatus = await _tableState.ResolveIdleStatusAsync(table.TableId);
-            if (table.Status != resolvedStatus)
-            {
-                table.Status = resolvedStatus;
-                await _db.SaveChangesAsync();
-
-                await _hub.Clients.All.SendAsync(
-                    "TableStatusUpdated",
-                    new
-                    {
-                        TableId = table.TableId,
-                        table.TableName,
-                        Status = table.Status
-                    });
-            }
+            var changedTables = await SynchronizePhysicalTableStateAsync(table);
+            await BroadcastTableStatusesAsync(changedTables);
         }
 
         if (detailsChanged)
@@ -1075,11 +1062,6 @@ public class ReservationsController : ControllerBase
                 message = "Bạn không thuộc nhóm được thông báo/phụ trách khu vực của lượt đặt bàn này."
             });
 
-        var releasedIds = activeRows
-            .Select(row => row.ReservationId)
-            .ToHashSet();
-        var changedTables = new List<DiningTable>();
-
         foreach (var row in activeRows)
         {
             row.Status = ReservationStatus.KhongDen;
@@ -1087,41 +1069,24 @@ public class ReservationsController : ControllerBase
             row.CancelledAt = now;
         }
 
+        await _db.SaveChangesAsync();
+
+        var changedTables = new List<DiningTable>();
         foreach (var table in activeRows
             .Select(row => row.Table)
             .Where(table => table is not null)
             .Cast<DiningTable>()
-            .DistinctBy(table => table.TableId))
+            .DistinctBy(table => new
+            {
+                table.AreaId,
+                Name = table.TableName.Trim().ToUpper()
+            }))
         {
-            if (table.Status != TableStatus.DaDat)
-                continue;
-
-            var stillHeld = await _db.Reservations.AnyAsync(reservation =>
-                reservation.TableId == table.TableId &&
-                !releasedIds.Contains(reservation.ReservationId) &&
-                (reservation.Status == ReservationStatus.DaXacNhan ||
-                 reservation.Status == ReservationStatus.ChoXacNhan) &&
-                reservation.ReservationTime <= now.Add(UpcomingThreshold));
-
-            table.Status = stillHeld
-                ? TableStatus.DaDat
-                : TableStatus.Trong;
-            changedTables.Add(table);
+            changedTables.AddRange(
+                await SynchronizePhysicalTableStateAsync(table, now));
         }
 
-        await _db.SaveChangesAsync();
-
-        foreach (var table in changedTables.DistinctBy(table => table.TableId))
-        {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new
-                {
-                    TableId = table.TableId,
-                    table.TableName,
-                    Status = table.Status
-                });
-        }
+        await BroadcastTableStatusesAsync(changedTables);
 
         var groupId = rows[0].BookingGroupId ?? rows[0].ReservationId;
         await _hub.Clients.All.SendAsync(
@@ -1230,37 +1195,13 @@ public class ReservationsController : ControllerBase
             reservation.CancelledAt = DateTime.Now;
         }
 
-        DiningTable? tableToBroadcast = null;
-        if ((status == ReservationStatus.DaHuy || status == ReservationStatus.KhongDen)
-            && reservation.Table is not null
-            && reservation.Table.Status == TableStatus.DaDat)
-        {
-            var now = DateTime.Now;
-            var stillHeld = await _db.Reservations.AnyAsync(other =>
-                other.ReservationId != reservation.ReservationId &&
-                other.TableId == reservation.TableId &&
-                (other.Status == ReservationStatus.DaXacNhan ||
-                 other.Status == ReservationStatus.ChoXacNhan) &&
-                other.ReservationTime <= now.Add(UpcomingThreshold));
-
-            reservation.Table.Status = stillHeld
-                ? TableStatus.DaDat
-                : TableStatus.Trong;
-            tableToBroadcast = reservation.Table;
-        }
-
         await _db.SaveChangesAsync();
 
-        if (tableToBroadcast is not null)
+        if (reservation.Table is not null)
         {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new
-                {
-                    TableId = tableToBroadcast.TableId,
-                    tableToBroadcast.TableName,
-                    Status = tableToBroadcast.Status
-                });
+            var changedTables = await SynchronizePhysicalTableStateAsync(
+                reservation.Table);
+            await BroadcastTableStatusesAsync(changedTables);
         }
 
         if (previousStatus != status)
@@ -1314,43 +1255,19 @@ public class ReservationsController : ControllerBase
         if (accessError is not null)
             return accessError;
 
-        DiningTable? deletedReservationTable = null;
-        if ((reservation.Status == ReservationStatus.DaXacNhan ||
-             reservation.Status == ReservationStatus.ChoXacNhan) &&
-            reservation.Table is not null &&
-            reservation.Table.Status == TableStatus.DaDat)
-        {
-            var now = DateTime.Now;
-            var stillHeld = await _db.Reservations.AnyAsync(other =>
-                other.ReservationId != reservation.ReservationId &&
-                other.TableId == reservation.TableId &&
-                (other.Status == ReservationStatus.DaXacNhan ||
-                 other.Status == ReservationStatus.ChoXacNhan) &&
-                other.ReservationTime <= now.Add(UpcomingThreshold));
-
-            reservation.Table.Status = stillHeld
-                ? TableStatus.DaDat
-                : TableStatus.Trong;
-            deletedReservationTable = reservation.Table;
-        }
-
         var deletedReservationId = reservation.ReservationId;
         var deletedReservationTime = reservation.ReservationTime;
         var deletedDurationMinutes = reservation.DurationMinutes;
+        var deletedTable = reservation.Table;
 
         _db.Reservations.Remove(reservation);
         await _db.SaveChangesAsync();
 
-        if (deletedReservationTable is not null)
+        if (deletedTable is not null)
         {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new
-                {
-                    TableId = deletedReservationTable.TableId,
-                    deletedReservationTable.TableName,
-                    Status = deletedReservationTable.Status
-                });
+            var changedTables = await SynchronizePhysicalTableStateAsync(
+                deletedTable);
+            await BroadcastTableStatusesAsync(changedTables);
         }
 
         await _hub.Clients.All.SendAsync(
