@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +17,7 @@ public record MobileTableLockRequest(
 [ApiController]
 [Route("api/mobile/table-locks")]
 [Route("api/table-locks")]
-[RequireMobilePermission("table.manage")]
+[Authorize(Roles = "QuanLy,ThuNgan,PhucVu")]
 public class MobileTableLocksController : ControllerBase
 {
     private readonly AppDbContext _db;
