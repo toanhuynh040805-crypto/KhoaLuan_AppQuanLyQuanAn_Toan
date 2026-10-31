@@ -725,10 +725,10 @@ public class ReservationsController : ControllerBase
                 HoldUntil = request.ReservationTime.AddMinutes(durationMinutes)
             });
 
-        if (created[0].CustomerId is int customerId)
+        if (customerId.HasValue)
         {
             await _notifications.CreateForCustomerAsync(
-                customerId,
+                customerId.Value,
                 "Đặt bàn đã được tiếp nhận",
                 $"Yêu cầu đặt bàn tại {names} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận. " +
                 $"Bàn được giữ tối đa đến {request.ReservationTime.AddMinutes(durationMinutes):HH:mm}.",
