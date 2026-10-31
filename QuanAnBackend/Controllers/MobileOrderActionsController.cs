@@ -861,7 +861,9 @@ public class MobileOrderActionsController : ControllerBase
             return Ok(new
             {
                 tableId = request.TableId,
-                status = "Trống",
+                status = affectedTables
+                    .FirstOrDefault(table => table.TableId == request.TableId)?
+                    .Status.ToString() ?? TableStatus.Trong.ToString(),
                 cancelledCount = itemIds.Count
             });
         }
