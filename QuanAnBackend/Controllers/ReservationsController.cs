@@ -8,6 +8,7 @@ using QuanAnBackend.Hubs;
 using QuanAnBackend.Middleware;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
+using System.Data;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -352,20 +353,23 @@ public class ReservationsController : ControllerBase
     [EnableRateLimiting("web-booking")]
     public async Task<IActionResult> Create([FromBody] CreateReservationRequest request)
     {
-        var table = await _db.Tables.FindAsync(request.TableId);
-        if (table is null) return BadRequest(new { message = "Bàn không tồn tại" });
-
         if (request.NumberOfGuests < 1)
             return BadRequest(new { message = "Số lượng khách phải từ 1 trở lên" });
-
-        if (request.NumberOfGuests > table.Capacity)
-            return BadRequest(new { message = $"Bàn chỉ chứa tối đa {table.Capacity} khách" });
 
         if (request.ReservationTime < DateTime.Now.AddMinutes(-5))
             return BadRequest(new { message = "Giờ đến phải ở hiện tại hoặc trong tương lai" });
 
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
+
+        await using var reservationTransaction =
+            await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        var table = await _db.Tables.FindAsync(request.TableId);
+        if (table is null) return BadRequest(new { message = "Bàn không tồn tại" });
+
+        if (request.NumberOfGuests > table.Capacity)
+            return BadRequest(new { message = $"Bàn chỉ chứa tối đa {table.Capacity} khách" });
 
         var physicalTableIds = await GetPhysicalTableIdsAsync(table);
         if (physicalTableIds.Count == 0)
@@ -431,6 +435,7 @@ public class ReservationsController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
+        await reservationTransaction.CommitAsync();
 
         if (tableStatusChanged)
         {
@@ -504,6 +509,9 @@ public class ReservationsController : ControllerBase
 
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
+
+        await using var batchTransaction =
+            await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
         var tables = await _db.Tables
             .Where(t => ids.Contains(t.TableId))
@@ -647,6 +655,8 @@ public class ReservationsController : ControllerBase
 
             await _db.SaveChangesAsync();
         }
+
+        await batchTransaction.CommitAsync();
 
         foreach (var t in changedTables)
             await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = t.TableId, t.TableName, Status = t.Status });
