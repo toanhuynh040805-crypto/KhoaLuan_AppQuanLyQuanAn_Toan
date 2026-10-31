@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
@@ -921,6 +922,7 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
             command.CommandText = """
                 SELECT TOP 1 o.OrderId
                 FROM Orders o
@@ -952,7 +954,19 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT TableId FROM OrderTables WHERE OrderId = @OrderId;";
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = """
+                IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
+                BEGIN
+                    SELECT CAST(NULL AS int) AS TableId WHERE 1 = 0;
+                END
+                ELSE
+                BEGIN
+                    SELECT TableId
+                    FROM dbo.OrderTables
+                    WHERE OrderId = @OrderId;
+                END;
+                """;
             var p = command.CreateParameter();
             p.ParameterName = "@OrderId";
             p.Value = orderId;
