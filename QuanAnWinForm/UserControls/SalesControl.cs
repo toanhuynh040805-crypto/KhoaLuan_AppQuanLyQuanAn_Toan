@@ -42,6 +42,16 @@ public partial class SalesControl : UserControl
     private bool _realtimeRefreshRunning;
     private bool _realtimeDirty;
 
+    private readonly System.Windows.Forms.Timer _tableLockHeartbeatTimer =
+        new() { Interval = 15000 };
+    private int? _lockedTableId;
+    private string? _tableLockToken;
+    private bool _tableLockSwitching;
+    private bool _tableLockLostDialogShowing;
+    private bool _suppressTableSelectionChanged;
+
+    public event Action? ReturnToTablesRequested;
+
     // Món THÊM MỚI mà khách ăn tại chỗ yêu cầu MANG VỀ (cùng 1 đơn / 1 hóa đơn với đơn tại bàn).
     private readonly Dictionary<int, (MenuItemDto Item, int Qty)> _cartTake = new();
     private readonly int? _preselectedTakeawayOrderId;
@@ -94,6 +104,11 @@ public partial class SalesControl : UserControl
         panelRight.Resize += (s, e) => FitLayout();
         Load += (s, e) => FitLayout();
 
+        _tableLockHeartbeatTimer.Tick += async (s, e) =>
+        {
+            await HeartbeatCurrentTableLockAsync();
+        };
+
         _realtimeRefreshTimer.Tick += async (s, e) =>
         {
             _realtimeRefreshTimer.Stop();
@@ -128,6 +143,19 @@ public partial class SalesControl : UserControl
             UnsubscribeRealtime();
             _realtimeRefreshTimer.Stop();
             _realtimeRefreshTimer.Dispose();
+            _tableLockHeartbeatTimer.Stop();
+            _tableLockHeartbeatTimer.Dispose();
+
+            var tableId = _lockedTableId;
+            var token = _tableLockToken;
+            _lockedTableId = null;
+            _tableLockToken = null;
+
+            if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            {
+                _ = SafeReleaseTableLockAsync(tableId.Value, token!);
+            }
+
             _tip.Dispose();
         };
         btnVietQr.Click += async (s, e) => await ProcessPaymentAsync(method: 1);
@@ -163,6 +191,7 @@ public partial class SalesControl : UserControl
         NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
         NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver += OnTableLockTakenOver;
         NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
@@ -173,7 +202,241 @@ public partial class SalesControl : UserControl
         NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
         NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.TableLockTakenOver -= OnTableLockTakenOver;
         NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnTableLockTakenOver(TableLockTakenOverPayload payload)
+    {
+        if (IsDisposed ||
+            !_lockedTableId.HasValue ||
+            payload.TableId != _lockedTableId.Value)
+        {
+            return;
+        }
+
+        var currentToken = _tableLockToken?.Trim() ?? "";
+        if (currentToken.Length == 0)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(payload.PreviousClientToken) &&
+            !string.Equals(
+                payload.PreviousClientToken.Trim(),
+                currentToken,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(async () =>
+            {
+                await HandleTableLockLostAsync(
+                    payload.TakenOverByEmployeeName,
+                    payload.TakenOverByEmployeeCode);
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng.
+        }
+    }
+
+    private async Task<bool> AcquireTableLockAsync(int tableId)
+    {
+        if (_lockedTableId == tableId &&
+            !string.IsNullOrWhiteSpace(_tableLockToken))
+        {
+            return true;
+        }
+
+        if (_tableLockSwitching)
+            return false;
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+        {
+            MessageBox.Show(
+                "Không xác định được mã nhân viên của phiên đăng nhập.",
+                "Không thể vào bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+
+        _tableLockSwitching = true;
+        cbTable.Enabled = false;
+
+        try
+        {
+            var newToken = $"winform-{Guid.NewGuid():N}";
+            var lease = await _api.AcquireTableLockAsync(
+                tableId,
+                employeeCode,
+                newToken);
+
+            if (lease is null || string.IsNullOrWhiteSpace(lease.ClientToken))
+                throw new InvalidOperationException("Máy chủ không trả về phiên khóa bàn hợp lệ.");
+
+            var previousTableId = _lockedTableId;
+            var previousToken = _tableLockToken;
+
+            _lockedTableId = tableId;
+            _tableLockToken = lease.ClientToken;
+            _tableLockHeartbeatTimer.Start();
+
+            if (previousTableId.HasValue &&
+                previousTableId.Value != tableId &&
+                !string.IsNullOrWhiteSpace(previousToken))
+            {
+                await SafeReleaseTableLockAsync(
+                    previousTableId.Value,
+                    previousToken!);
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không thể vào bàn: {ex.Message}",
+                "Khóa bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+        finally
+        {
+            _tableLockSwitching = false;
+            if (!cbTable.IsDisposed)
+                cbTable.Enabled = true;
+        }
+    }
+
+    private async Task HeartbeatCurrentTableLockAsync()
+    {
+        if (!_lockedTableId.HasValue ||
+            string.IsNullOrWhiteSpace(_tableLockToken) ||
+            _tableLockLostDialogShowing ||
+            IsDisposed)
+        {
+            return;
+        }
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length == 0)
+            return;
+
+        try
+        {
+            var result = await _api.HeartbeatTableLockAsync(
+                _lockedTableId.Value,
+                employeeCode,
+                _tableLockToken!);
+
+            if (!result.IsOwner)
+            {
+                await HandleTableLockLostAsync(
+                    result.Message ?? "",
+                    "");
+            }
+        }
+        catch
+        {
+            // Mất mạng tạm thời không đẩy người dùng ra ngay. Lease phía server
+            // tự hết hạn sau 45 giây; khi kết nối lại heartbeat/event sẽ xác nhận.
+        }
+    }
+
+    private async Task HandleTableLockLostAsync(
+        string takenOverByName,
+        string takenOverByCode)
+    {
+        if (IsDisposed || _tableLockLostDialogShowing)
+            return;
+
+        _tableLockLostDialogShowing = true;
+        _tableLockHeartbeatTimer.Stop();
+
+        _lockedTableId = null;
+        _tableLockToken = null;
+        _selectedTableId = null;
+        _existingOrder = null;
+        ClearCart();
+        RenderCart();
+
+        var name = takenOverByName?.Trim() ?? "";
+        var code = takenOverByCode?.Trim() ?? "";
+        string account;
+
+        // Heartbeat conflict truyền message qua tham số đầu tiên.
+        if (name.StartsWith("Bàn ", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("thiết bị khác", StringComparison.OrdinalIgnoreCase))
+        {
+            account = name;
+        }
+        else if (name.Length > 0 && code.Length > 0 &&
+                 !string.Equals(name, code, StringComparison.OrdinalIgnoreCase))
+        {
+            account = $"Tài khoản {name} ({code}) đã tiếp quản bàn này.";
+        }
+        else if (name.Length > 0 || code.Length > 0)
+        {
+            account = $"Tài khoản {(name.Length > 0 ? name : code)} đã tiếp quản bàn này.";
+        }
+        else
+        {
+            account = "Bàn đã được tài khoản khác tiếp quản.";
+        }
+
+        MessageBox.Show(
+            account + Environment.NewLine +
+            "Bạn không thể tiếp tục thao tác trên bàn này.",
+            "Bàn đã được tiếp quản",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+
+        _tableLockLostDialogShowing = false;
+
+        if (!IsDisposed)
+            ReturnToTablesRequested?.Invoke();
+
+        await Task.CompletedTask;
+    }
+
+    private async Task ReleaseCurrentTableLockAsync()
+    {
+        var tableId = _lockedTableId;
+        var token = _tableLockToken;
+
+        _tableLockHeartbeatTimer.Stop();
+        _lockedTableId = null;
+        _tableLockToken = null;
+
+        if (tableId.HasValue && !string.IsNullOrWhiteSpace(token))
+            await SafeReleaseTableLockAsync(tableId.Value, token!);
+    }
+
+    private async Task SafeReleaseTableLockAsync(
+        int tableId,
+        string clientToken)
+    {
+        try
+        {
+            var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+            if (employeeCode.Length == 0)
+                return;
+
+            await _api.ReleaseTableLockAsync(
+                tableId,
+                employeeCode,
+                clientToken);
+        }
+        catch
+        {
+            // Lease tự hết hạn sau 45 giây nếu Backend/mạng vừa mất.
+        }
     }
 
     private bool IsCurrentOrder(int orderId) =>
