@@ -11,8 +11,12 @@ namespace QuanAnWinForm.UserControls;
 // Co nut "Xuat Excel" xuat toan bo bao cao cua ky dang xem.
 public partial class RevenueControl : UserControl, IRefreshableContent
 {
-    public Task RefreshDataAsync() => ReloadAllAsync();
+    public Task RefreshDataAsync() => ReloadAllAsync(silent: true);
 
+    private readonly System.Windows.Forms.Timer _realtimeTimer =
+        new() { Interval = 700 };
+    private bool _realtimeRunning;
+    private bool _realtimeDirty;
 
     private const int PeriodToday = 0;
     private const int PeriodDay = 1;
@@ -50,11 +54,48 @@ public partial class RevenueControl : UserControl, IRefreshableContent
         ApplyModeUI();
         WireUpEvents();
 
+        _realtimeTimer.Tick += async (s, e) =>
+        {
+            _realtimeTimer.Stop();
+            if (_realtimeRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await ReloadAllAsync(silent: true);
+            }
+            finally
+            {
+                _realtimeRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeTimer.Start();
+            }
+        };
+
         Load += async (s, e) =>
         {
+            SubscribeRealtime();
             PositionHeaderButtons();
             LayoutFilterRow();
             await ReloadAllAsync();
+        };
+
+        VisibleChanged += (s, e) =>
+        {
+            if (Visible && _realtimeDirty)
+                QueueRealtimeRefresh();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeTimer.Stop();
+            _realtimeTimer.Dispose();
         };
     }
 
@@ -159,6 +200,43 @@ public partial class RevenueControl : UserControl, IRefreshableContent
         _suppress = true;
         try { picker.Value = value; }
         finally { _suppress = wasSuppressed; }
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
+    private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeTimer.Stop();
+                _realtimeTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
     }
 
     private void WireUpEvents()
@@ -518,7 +596,7 @@ public partial class RevenueControl : UserControl, IRefreshableContent
     // TAI DU LIEU
     // ------------------------------------------------------------------
 
-    private async Task ReloadAllAsync()
+    private async Task ReloadAllAsync(bool silent = false)
     {
         if (_suppress) return;
 
@@ -556,7 +634,7 @@ public partial class RevenueControl : UserControl, IRefreshableContent
         }
         catch (Exception ex)
         {
-            if (ver == _version && !IsDisposed)
+            if (!silent && ver == _version && !IsDisposed)
                 MessageBox.Show($"Không tải được báo cáo: {ex.Message}");
         }
         finally
