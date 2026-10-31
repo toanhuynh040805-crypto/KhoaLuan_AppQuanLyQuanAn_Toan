@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
@@ -583,6 +584,7 @@ public class TablesController : ControllerBase
     //   dang con hieu luc tren cung ban do, theo dung khung [time, time+duration).
     [HttpGet("available")]
     [AllowAnonymous]
+    [EnableRateLimiting("web-read")]
     public async Task<IActionResult> GetAvailable(
         [FromQuery] DateTime time,
         [FromQuery] int durationMinutes = Reservation.DefaultDurationMinutes,
