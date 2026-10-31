@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
+using QuanAnBackend.Services;
 using QuanAnBackend.Authorization;
 
 namespace QuanAnBackend.Controllers;
@@ -32,13 +33,16 @@ public class MobileOrderActionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
+    private readonly TableStateService _tableState;
 
     public MobileOrderActionsController(
         AppDbContext db,
-        IHubContext<OrderHub> hub)
+        IHubContext<OrderHub> hub,
+        TableStateService tableState)
     {
         _db = db;
         _hub = hub;
+        _tableState = tableState;
     }
 
     [HttpPost("served")]
@@ -651,7 +655,9 @@ public class MobileOrderActionsController : ControllerBase
                 return Ok(new
                 {
                     tableId = request.TableId,
-                    status = "Trống",
+                    status = affectedTables
+                    .FirstOrDefault(table => table.TableId == request.TableId)?
+                    .Status.ToString() ?? TableStatus.Trong.ToString(),
                     cancelledCount = 0
                 });
             }
@@ -804,16 +810,24 @@ public class MobileOrderActionsController : ControllerBase
             }
 
             var tableIdList = tableIds.ToList();
-            var tableIn = IdList(tableIdList, "TableId");
-            await using (var releaseCommand = connection.CreateCommand())
-            {
-                releaseCommand.Transaction = transaction;
-                releaseCommand.CommandText = $"UPDATE DiningTables SET Status = N'Trong' WHERE TableId IN ({tableIn});";
-                AddIds(releaseCommand, tableIdList, "TableId");
-                await releaseCommand.ExecuteNonQueryAsync();
-            }
 
             await transaction.CommitAsync();
+
+            // Order đã đóng. Tính lại trạng thái từng bàn theo lịch đặt kế tiếp
+            // thay vì ép toàn bộ về Trống.
+            var resolvedStatuses = await _tableState.ResolveIdleStatusesAsync(
+                tableIdList);
+            var affectedTables = await _db.Tables
+                .Where(table => tableIdList.Contains(table.TableId))
+                .ToListAsync();
+
+            foreach (var table in affectedTables)
+            {
+                if (resolvedStatuses.TryGetValue(table.TableId, out var status))
+                    table.Status = status;
+            }
+
+            await _db.SaveChangesAsync();
 
             foreach (var itemId in itemIds)
             {
@@ -827,12 +841,13 @@ public class MobileOrderActionsController : ControllerBase
                 });
             }
 
-            foreach (var releasedTableId in tableIds)
+            foreach (var table in affectedTables)
             {
                 await _hub.Clients.All.SendAsync("TableStatusUpdated", new
                 {
-                    TableId = releasedTableId,
-                    Status = TableStatus.Trong
+                    TableId = table.TableId,
+                    table.TableName,
+                    Status = table.Status
                 });
             }
 
