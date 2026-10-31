@@ -55,6 +55,14 @@ class NotificationService {
     );
   }
 
+  Future<void> releaseOverdueReservation({
+    required int reservationId,
+  }) async {
+    await _apiClient.post(
+      '/reservations/$reservationId/release-overdue',
+    );
+  }
+
   Future<void> markAllAsRead({
     required String employeeCode,
   }) async {
