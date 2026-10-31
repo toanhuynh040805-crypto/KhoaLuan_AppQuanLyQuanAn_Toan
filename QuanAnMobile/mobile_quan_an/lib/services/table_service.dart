@@ -10,8 +10,18 @@ class TableService {
   }) : _apiClient = apiClient;
 
   Future<List<RestaurantTable>> getTables() async {
-    final dynamic response =
-        await _apiClient.get('/mobile/dining/tables');
+    dynamic response;
+
+    try {
+      response =
+          await _apiClient.get('/mobile/dining/tables');
+    } on ApiException {
+      // Endpoint mobile có thêm dữ liệu thời gian/khách/số tiền. Nếu một
+      // bảng phụ tương thích ở Backend đang lỗi, vẫn phải cho nhân viên xem
+      // được sơ đồ bàn bằng endpoint cơ bản thay vì trắng toàn màn hình.
+      response =
+          await _apiClient.get('/tables');
+    }
 
     dynamic data = response;
 
