@@ -122,6 +122,51 @@ public class ReservationsController : ControllerBase
         _ => 100
     };
 
+    private async Task<List<DiningTable>> SynchronizePhysicalTableStateAsync(
+        DiningTable table,
+        DateTime? now = null)
+    {
+        var physicalIds = await GetPhysicalTableIdsAsync(table);
+        if (physicalIds.Count == 0)
+            physicalIds.Add(table.TableId);
+
+        var status = await _tableState.ResolveIdleStatusAsync(
+            table.TableId,
+            now);
+
+        var physicalTables = await _db.Tables
+            .Where(candidate => physicalIds.Contains(candidate.TableId))
+            .ToListAsync();
+
+        var changed = physicalTables
+            .Where(candidate => candidate.Status != status)
+            .ToList();
+
+        foreach (var candidate in changed)
+            candidate.Status = status;
+
+        if (changed.Count > 0)
+            await _db.SaveChangesAsync();
+
+        return changed;
+    }
+
+    private async Task BroadcastTableStatusesAsync(
+        IEnumerable<DiningTable> tables)
+    {
+        foreach (var table in tables.DistinctBy(item => item.TableId))
+        {
+            await _hub.Clients.All.SendAsync(
+                "TableStatusUpdated",
+                new
+                {
+                    TableId = table.TableId,
+                    table.TableName,
+                    Status = table.Status
+                });
+        }
+    }
+
     private static object ToPublicReservation(Reservation reservation) => new
     {
         Id = reservation.ReservationId,
@@ -714,50 +759,88 @@ public class ReservationsController : ControllerBase
         if (customerId is null)
             return Unauthorized(new { message = "Phiên đăng nhập không hợp lệ." });
 
-        var reservation = await _db.Reservations
-            .Include(candidate => candidate.Table)
+        var selected = await _db.Reservations
+            .AsNoTracking()
             .FirstOrDefaultAsync(candidate =>
-                candidate.ReservationId == id && candidate.CustomerId == customerId.Value);
-        if (reservation is null)
+                candidate.ReservationId == id &&
+                candidate.CustomerId == customerId.Value);
+        if (selected is null)
             return NotFound(new { message = "Không tìm thấy đặt bàn của bạn." });
 
-        if (reservation.ReservationTime <= DateTime.Now ||
-            reservation.Status is not (ReservationStatus.ChoXacNhan or ReservationStatus.DaXacNhan or ReservationStatus.DaNhanBan))
-            return BadRequest(new { message = "Đặt bàn hiện tại không đủ điều kiện để hủy." });
+        var groupId = selected.BookingGroupId ?? selected.ReservationId;
+        var rows = await _db.Reservations
+            .Include(candidate => candidate.Table)
+            .Where(candidate =>
+                candidate.CustomerId == customerId.Value &&
+                (candidate.ReservationId == groupId ||
+                 candidate.BookingGroupId == groupId))
+            .ToListAsync();
 
-        reservation.Status = ReservationStatus.DaHuy;
-        var tableStatusChanged = reservation.Table?.Status == TableStatus.DaDat;
-        if (tableStatusChanged)
-            reservation.Table!.Status = TableStatus.Trong;
+        var cancellable = rows
+            .Where(candidate =>
+                candidate.Status is ReservationStatus.ChoXacNhan
+                    or ReservationStatus.DaXacNhan
+                    or ReservationStatus.DaNhanBan)
+            .ToList();
+
+        if (cancellable.Count == 0 ||
+            cancellable.Any(candidate => candidate.ReservationTime <= DateTime.Now))
+        {
+            return BadRequest(new { message = "Đặt bàn hiện tại không đủ điều kiện để hủy." });
+        }
+
+        foreach (var reservation in cancellable)
+        {
+            reservation.Status = ReservationStatus.DaHuy;
+            reservation.CancelledAt = DateTime.Now;
+        }
+
         await _db.SaveChangesAsync();
 
-        if (tableStatusChanged && reservation.Table is not null)
+        var changedTables = new List<DiningTable>();
+        foreach (var table in cancellable
+            .Select(candidate => candidate.Table)
+            .Where(table => table is not null)
+            .Cast<DiningTable>()
+            .DistinctBy(table => new
+            {
+                table.AreaId,
+                Name = table.TableName.Trim().ToUpper()
+            }))
         {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new { TableId = reservation.Table.TableId, reservation.Table.TableName, Status = reservation.Table.Status });
+            changedTables.AddRange(
+                await SynchronizePhysicalTableStateAsync(table));
         }
+
+        await BroadcastTableStatusesAsync(changedTables);
 
         await _hub.Clients.All.SendAsync(
             "ReservationUpdated",
             new
             {
-                ReservationId = reservation.ReservationId,
-                Status = reservation.Status.ToString(),
+                ReservationId = groupId,
+                Status = ReservationStatus.DaHuy.ToString(),
                 Stage = "Cancelled",
-                reservation.ReservationTime,
-                HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+                ReservationTime = cancellable.Min(item => item.ReservationTime),
+                HoldUntil = cancellable.Max(item =>
+                    item.ReservationTime.AddMinutes(item.DurationMinutes))
             });
+
         await _notifications.CreateForCustomerAsync(
             customerId.Value,
             "Đặt bàn đã bị hủy",
             "Đặt bàn của bạn đã được hủy theo yêu cầu.",
             NotificationType.DatBan,
-            $"reservation-cancelled:{reservation.ReservationId}",
+            $"reservation-cancelled:{groupId}",
             "Reservation",
-            reservation.ReservationId);
+            groupId);
 
-        return Ok(new { Id = reservation.ReservationId, Status = reservation.Status });
+        return Ok(new
+        {
+            Id = groupId,
+            Status = ReservationStatus.DaHuy,
+            Count = cancellable.Count
+        });
     }
 
     [ApiExplorerSettings(IgnoreApi = true)]
@@ -786,17 +869,14 @@ public class ReservationsController : ControllerBase
             return BadRequest(new { message = "Đặt bàn hiện tại không đủ điều kiện để hủy." });
 
         reservation.Status = ReservationStatus.DaHuy;
-        var tableStatusChanged = reservation.Table?.Status == TableStatus.DaDat;
-        if (tableStatusChanged)
-            reservation.Table!.Status = TableStatus.Trong;
-
+        reservation.CancelledAt = DateTime.Now;
         await _db.SaveChangesAsync();
 
-        if (tableStatusChanged && reservation.Table is not null)
+        if (reservation.Table is not null)
         {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new { TableId = reservation.Table.TableId, reservation.Table.TableName, Status = reservation.Table.Status });
+            var changedTables = await SynchronizePhysicalTableStateAsync(
+                reservation.Table);
+            await BroadcastTableStatusesAsync(changedTables);
         }
 
         if (reservation.CustomerId.HasValue)
