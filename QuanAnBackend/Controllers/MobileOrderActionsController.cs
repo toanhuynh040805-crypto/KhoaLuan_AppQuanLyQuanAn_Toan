@@ -377,6 +377,10 @@ public class MobileOrderActionsController : ControllerBase
                         Status = KitchenStatus.MoiGoi,
                         Quantity = request.Quantity
                     });
+
+                await _hub.Clients
+                    .Group("order-management")
+                    .SendAsync("OrderUpdated", new { orderId });
             }
             catch
             {
@@ -514,6 +518,10 @@ public class MobileOrderActionsController : ControllerBase
                     Status = item.Status,
                     Quantity = item.Quantity
                 });
+
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId = item.OrderId });
 
             return Ok(new
             {
@@ -828,6 +836,13 @@ public class MobileOrderActionsController : ControllerBase
                 });
             }
 
+            foreach (var affectedOrderId in orderIds.Distinct())
+            {
+                await _hub.Clients
+                    .Group("order-management")
+                    .SendAsync("OrderUpdated", new { orderId = affectedOrderId });
+            }
+
             return Ok(new
             {
                 tableId = request.TableId,
@@ -878,8 +893,11 @@ public class MobileOrderActionsController : ControllerBase
         IEnumerable<OrderItem> items,
         string status)
     {
+        var affectedOrderIds = new HashSet<int>();
+
         foreach (var item in items)
         {
+            affectedOrderIds.Add(item.OrderId);
             var tableId = item.Order?.TableId ?? 0;
             var tableName = item.Order?.Table?.TableName ?? $"Bàn #{tableId}";
             var itemName = item.MenuItem?.ItemName ?? "Món";
@@ -904,6 +922,13 @@ public class MobileOrderActionsController : ControllerBase
                 MenuItemName = itemName,
                 Status = item.Status
             });
+        }
+
+        foreach (var orderId in affectedOrderIds)
+        {
+            await _hub.Clients
+                .Group("order-management")
+                .SendAsync("OrderUpdated", new { orderId });
         }
     }
 
