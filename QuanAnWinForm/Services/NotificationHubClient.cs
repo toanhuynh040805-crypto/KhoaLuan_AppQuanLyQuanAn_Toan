@@ -33,6 +33,7 @@ public class NotificationHubClient
     public static event Action<PaymentRequestedPayload>? PaymentRequested;
     public static event Action<PaymentCompletedPayload>? PaymentCompleted;
     public static event Action<OrderUpdatedPayload>? OrderUpdated;
+    public static event Action<ReservationUpdatedPayload>? ReservationUpdated;
     public static event Action? ConnectionRestored;
 
     public async Task ConnectAsync(int userId, string roleName)
@@ -120,6 +121,14 @@ public class NotificationHubClient
                 raw.GetRawText(),
                 JsonOpts);
             if (payload is not null) OrderUpdated?.Invoke(payload);
+        });
+
+        connection.On<JsonElement>("ReservationUpdated", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<ReservationUpdatedPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null) ReservationUpdated?.Invoke(payload);
         });
 
         // AutomaticReconnect chỉ chạy sau khi đã kết nối thành công.
@@ -249,4 +258,14 @@ public class PaymentCompletedPayload
 public class OrderUpdatedPayload
 {
     public int OrderId { get; set; }
+}
+
+
+public class ReservationUpdatedPayload
+{
+    public int ReservationId { get; set; }
+    public string Status { get; set; } = "";
+    public string Stage { get; set; } = "";
+    public DateTime? ReservationTime { get; set; }
+    public DateTime? HoldUntil { get; set; }
 }
