@@ -14,8 +14,11 @@ namespace QuanAnWinForm.UserControls;
 //
 // Giao dien: the thong ke (tong / dang dien ra / sap dien ra / da ket thuc) + chip loc
 // nhanh + moi chien dich la 1 the (badge %, ten, thoi gian con lai, thanh tien do).
-public partial class PromotionsControl : UserControl
+public partial class PromotionsControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadCampaignsAsync();
+
+
     private enum StatusKind { Off, Upcoming, Running, Expired }
     private enum CampaignFilter { All, Running, Upcoming, Ended }
 
