@@ -209,6 +209,19 @@ public class TablesController : ControllerBase
         }
     }
 
+    private static string NormalizeTableName(string? value)
+        => (value ?? "")
+            .Trim()
+            .ToUpperInvariant();
+
+    private static int TableDisplayPriority(TableStatus status) => status switch
+    {
+        TableStatus.DangPhucVu => 400,
+        TableStatus.DaDat => 300,
+        TableStatus.DangDonDep => 200,
+        _ => 100
+    };
+
     // WinForm đọc Status là số (khớp enum TableStatus: 0=Trong, 1=DangPhucVu,
     // 2=DaDat, 3=DangDonDep); Mobile parse được cả số lẫn chuỗi.
     private static int StatusToNumber(string? status) => status switch
@@ -479,7 +492,25 @@ public class TablesController : ControllerBase
         var requestedEnd = time.AddMinutes(durationMinutes);
         var isUpcoming = time <= DateTime.Now.AddHours(3);
 
-        var tables = await _db.Tables.Include(t => t.Area).AsNoTracking().ToListAsync();
+        var tables = await _db.Tables
+            .Include(t => t.Area)
+            .AsNoTracking()
+            .ToListAsync();
+
+        // DB cũ có thể có nhiều TableId cùng tên trong một khu. Danh sách chọn
+        // đặt bàn chỉ hiển thị một bản đại diện, ưu tiên bàn có trạng thái đang
+        // hoạt động rồi mới đến TableId mới hơn. Không xóa dữ liệu lịch sử.
+        tables = tables
+            .GroupBy(t => new
+            {
+                t.AreaId,
+                Name = NormalizeTableName(t.TableName)
+            })
+            .Select(group => group
+                .OrderByDescending(t => TableDisplayPriority(t.Status))
+                .ThenByDescending(t => t.TableId)
+                .First())
+            .ToList();
 
         // Chi lay dat ban con hieu luc (chua Huy/Khong den) - du xa ngay hom nay
         // bao nhieu cung phai xet, vi khach co the dat truoc hang tuan.
@@ -535,12 +566,31 @@ public class TablesController : ControllerBase
     [Authorize(Roles = "QuanLy")]
     public async Task<IActionResult> Create([FromBody] TableRequest request)
     {
+        var tableName = request.TableName?.Trim() ?? "";
+        if (tableName.Length == 0)
+            return BadRequest(new { message = "Tên bàn không được để trống" });
+
+        if (request.Capacity <= 0)
+            return BadRequest(new { message = "Sức chứa bàn phải lớn hơn 0" });
+
         if (!await _db.Areas.AnyAsync(a => a.AreaId == request.AreaId))
             return BadRequest(new { message = "Khu vực không tồn tại" });
 
+        var duplicate = await _db.Tables
+            .AsNoTracking()
+            .AnyAsync(t =>
+                t.AreaId == request.AreaId &&
+                t.TableName.Trim() == tableName);
+
+        if (duplicate)
+            return Conflict(new
+            {
+                message = $"Khu vực này đã có bàn \"{tableName}\"."
+            });
+
         var table = new DiningTable
         {
-            TableName = request.TableName,
+            TableName = tableName,
             Capacity = request.Capacity,
             AreaId = request.AreaId,
             Status = TableStatus.Trong
@@ -557,7 +607,30 @@ public class TablesController : ControllerBase
         var table = await _db.Tables.FindAsync(id);
         if (table is null) return NotFound();
 
-        table.TableName = request.TableName;
+        var tableName = request.TableName?.Trim() ?? "";
+        if (tableName.Length == 0)
+            return BadRequest(new { message = "Tên bàn không được để trống" });
+
+        if (request.Capacity <= 0)
+            return BadRequest(new { message = "Sức chứa bàn phải lớn hơn 0" });
+
+        if (!await _db.Areas.AnyAsync(a => a.AreaId == request.AreaId))
+            return BadRequest(new { message = "Khu vực không tồn tại" });
+
+        var duplicate = await _db.Tables
+            .AsNoTracking()
+            .AnyAsync(t =>
+                t.TableId != id &&
+                t.AreaId == request.AreaId &&
+                t.TableName.Trim() == tableName);
+
+        if (duplicate)
+            return Conflict(new
+            {
+                message = $"Khu vực này đã có bàn \"{tableName}\"."
+            });
+
+        table.TableName = tableName;
         table.Capacity = request.Capacity;
         table.AreaId = request.AreaId;
         await _db.SaveChangesAsync();
