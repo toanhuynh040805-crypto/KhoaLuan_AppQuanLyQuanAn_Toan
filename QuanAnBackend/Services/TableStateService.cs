@@ -120,20 +120,21 @@ public sealed class TableStateService
                 IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
                 BEGIN
                     SELECT CAST(0 AS bit);
-                    RETURN;
+                END
+                ELSE
+                BEGIN
+                    SELECT CAST(
+                        CASE WHEN EXISTS (
+                            SELECT 1
+                            FROM dbo.OrderTables ot
+                            INNER JOIN dbo.Orders o
+                                ON o.OrderId = ot.OrderId
+                            WHERE ot.TableId = @TableId
+                              AND o.Status = N'DangMo'
+                        )
+                        THEN 1 ELSE 0 END
+                    AS bit);
                 END;
-
-                SELECT CAST(
-                    CASE WHEN EXISTS (
-                        SELECT 1
-                        FROM dbo.OrderTables ot
-                        INNER JOIN dbo.Orders o
-                            ON o.OrderId = ot.OrderId
-                        WHERE ot.TableId = @TableId
-                          AND o.Status = N'DangMo'
-                    )
-                    THEN 1 ELSE 0 END
-                AS bit);
                 """;
 
             var parameter = command.CreateParameter();
