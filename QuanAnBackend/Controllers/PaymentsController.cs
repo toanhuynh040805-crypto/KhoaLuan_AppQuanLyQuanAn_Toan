@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Data;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -519,6 +520,20 @@ public class PaymentsController : ControllerBase
             return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
         }
 
+        // Serialize phần ghi thanh toán để hai thiết bị không thể cùng hoàn tất
+        // một Order và để Invoice/Payment/điểm/Order/trạng thái bàn commit đồng bộ.
+        await using var paymentTransaction =
+            await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        var currentOrderStatus = await _db.Orders
+            .AsNoTracking()
+            .Where(item => item.OrderId == order.OrderId)
+            .Select(item => item.Status)
+            .FirstAsync();
+
+        if (currentOrderStatus == OrderStatus.DaThanhToan)
+            return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
+
         // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
         // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
         var requestedByUserId = order.PaymentRequestedByUserId;
@@ -739,20 +754,6 @@ public class PaymentsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        // Chỉ phát thông báo sau khi Payment/Order/điểm đã lưu thành công.
-        // NotificationService cũng dùng cùng DbContext và tự SaveChanges, nên
-        // gọi sớm hơn có thể vô tình commit điểm khách giữa chừng.
-        if (memberLevelChanged && customer is not null)
-        {
-            await _notifications.CreateForRolesAsync(
-                "Khách hàng thăng hạng thành viên",
-                $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
-                NotificationType.KhuyenMai,
-                new[] { "QuanLy", "ThuNgan" },
-                relatedEntityType: "Customer",
-                relatedEntityId: customer.CustomerId);
-        }
-
         // Một order có thể ghép nhiều bàn vật lý. Sau khi order đã đóng,
         // mỗi bàn phải trở về trạng thái đúng theo lịch đặt tiếp theo:
         // DaDat nếu còn reservation hiệu lực, ngược lại Trong.
@@ -777,6 +778,19 @@ public class PaymentsController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
+        await paymentTransaction.CommitAsync();
+
+        // Từ đây trở đi chỉ còn side-effects ngoài giao dịch DB lõi.
+        if (memberLevelChanged && customer is not null)
+        {
+            await _notifications.CreateForRolesAsync(
+                "Khách hàng thăng hạng thành viên",
+                $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
+                NotificationType.KhuyenMai,
+                new[] { "QuanLy", "ThuNgan" },
+                relatedEntityType: "Customer",
+                relatedEntityId: customer.CustomerId);
+        }
 
         foreach (var table in affectedTables)
         {
