@@ -188,6 +188,7 @@ if (form) {
                 capacity,
                 areaId,
                 areaName,
+                currentStatus: t.currentStatus ?? t.CurrentStatus ?? 0,
                 isVip,
                 isCombined: false,
                 tableCount: 1
