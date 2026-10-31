@@ -396,8 +396,15 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     try {
       final List<RestaurantTable> loadedTables = await _tableService
           .getTables();
-      final Map<int, List<OrderItem>> loadedOrders = await _tableService
-          .getInitialOrders();
+
+      // Chi tiết món đang mở là dữ liệu bổ sung. Trước đây request này lỗi
+      // sẽ làm mất luôn toàn bộ sơ đồ bàn dù API bàn vẫn hoạt động.
+      Map<int, List<OrderItem>> loadedOrders = <int, List<OrderItem>>{};
+      try {
+        loadedOrders = await _tableService.getInitialOrders();
+      } catch (_) {
+        loadedOrders = <int, List<OrderItem>>{};
+      }
 
       final List<RestaurantTable> normalizedTables = loadedTables.map((table) {
         final List<OrderItem> items =
