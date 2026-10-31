@@ -636,28 +636,33 @@ public class MobileOrderActionsController : ControllerBase
 
             if (orderIds.Count == 0)
             {
-                await using var emptyTableCommand = connection.CreateCommand();
-                emptyTableCommand.Transaction = transaction;
-                emptyTableCommand.CommandText = "UPDATE DiningTables SET Status = N'Trong' WHERE TableId = @TableId";
-                var p = emptyTableCommand.CreateParameter();
-                p.ParameterName = "@TableId";
-                p.Value = request.TableId;
-                emptyTableCommand.Parameters.Add(p);
-                await emptyTableCommand.ExecuteNonQueryAsync();
-
                 await transaction.CommitAsync();
-                await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+
+                // Không có order mở nhưng bàn có thể đang được giữ cho một
+                // reservation sắp tới. Tính lại trạng thái chuẩn thay vì ép Trong.
+                var resolvedStatus = await _tableState.ResolveIdleStatusAsync(
+                    request.TableId);
+
+                var emptyTable = await _db.Tables
+                    .FirstOrDefaultAsync(table => table.TableId == request.TableId);
+
+                if (emptyTable is not null)
                 {
-                    TableId = request.TableId,
-                    Status = TableStatus.Trong
-                });
+                    emptyTable.Status = resolvedStatus;
+                    await _db.SaveChangesAsync();
+
+                    await _hub.Clients.All.SendAsync("TableStatusUpdated", new
+                    {
+                        TableId = emptyTable.TableId,
+                        emptyTable.TableName,
+                        Status = emptyTable.Status
+                    });
+                }
 
                 return Ok(new
                 {
                     tableId = request.TableId,
-                    status = affectedTables
-                    .FirstOrDefault(table => table.TableId == request.TableId)?
-                    .Status.ToString() ?? TableStatus.Trong.ToString(),
+                    status = resolvedStatus.ToString(),
                     cancelledCount = 0
                 });
             }
