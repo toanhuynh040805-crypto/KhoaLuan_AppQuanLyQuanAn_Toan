@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Models;
@@ -30,9 +31,15 @@ public sealed class TableStateService
             .AsNoTracking()
             .AnyAsync(order =>
                 order.Status == OrderStatus.DangMo &&
-                (order.TableId == tableId ||
-                 order.OrderTables.Any(link => link.TableId == tableId)),
+                order.TableId == tableId,
                 cancellationToken);
+
+        if (!hasActiveOpenOrder)
+        {
+            hasActiveOpenOrder = await HasLinkedOpenOrderAsync(
+                tableId,
+                cancellationToken);
+        }
 
         if (hasActiveOpenOrder)
             return TableStatus.DangPhucVu;
@@ -49,6 +56,56 @@ public sealed class TableStateService
         return hasRelevantReservation
             ? TableStatus.DaDat
             : TableStatus.Trong;
+    }
+
+    private async Task<bool> HasLinkedOpenOrderAsync(
+        int tableId,
+        CancellationToken cancellationToken)
+    {
+        var connection = _db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+
+        if (shouldClose)
+            await connection.OpenAsync(cancellationToken);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
+                BEGIN
+                    SELECT CAST(0 AS bit);
+                    RETURN;
+                END;
+
+                SELECT CAST(
+                    CASE WHEN EXISTS (
+                        SELECT 1
+                        FROM dbo.OrderTables ot
+                        INNER JOIN dbo.Orders o
+                            ON o.OrderId = ot.OrderId
+                        WHERE ot.TableId = @TableId
+                          AND o.Status = N'DangMo'
+                    )
+                    THEN 1 ELSE 0 END
+                AS bit);
+                """;
+
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@TableId";
+            parameter.Value = tableId;
+            command.Parameters.Add(parameter);
+
+            var raw = await command.ExecuteScalarAsync(cancellationToken);
+            return raw is not null &&
+                   raw != DBNull.Value &&
+                   Convert.ToBoolean(raw);
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
     }
 
     public async Task<Dictionary<int, TableStatus>> ResolveIdleStatusesAsync(
