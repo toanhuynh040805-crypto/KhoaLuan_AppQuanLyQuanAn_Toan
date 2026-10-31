@@ -34,6 +34,7 @@ public class NotificationHubClient
     public static event Action<PaymentCompletedPayload>? PaymentCompleted;
     public static event Action<OrderUpdatedPayload>? OrderUpdated;
     public static event Action<ReservationUpdatedPayload>? ReservationUpdated;
+    public static event Action<TableLockTakenOverPayload>? TableLockTakenOver;
     public static event Action? ConnectionRestored;
 
     public async Task ConnectAsync(int userId, string roleName)
@@ -131,6 +132,14 @@ public class NotificationHubClient
             if (payload is not null) ReservationUpdated?.Invoke(payload);
         });
 
+        connection.On<JsonElement>("TableLockTakenOver", raw =>
+        {
+            var payload = JsonSerializer.Deserialize<TableLockTakenOverPayload>(
+                raw.GetRawText(),
+                JsonOpts);
+            if (payload is not null) TableLockTakenOver?.Invoke(payload);
+        });
+
         // AutomaticReconnect chỉ chạy sau khi đã kết nối thành công.
         // Sau reconnect phải join lại group và yêu cầu các màn tải bù dữ liệu
         // có thể đã bị bỏ lỡ trong khoảng mất mạng.
@@ -180,6 +189,10 @@ public class NotificationHubClient
 
         await connection.InvokeAsync("JoinUserGroup", userId);
         await connection.InvokeAsync("JoinRoleGroup", roleName);
+
+        var employeeCode = SessionContext.EmployeeCode?.Trim() ?? "";
+        if (employeeCode.Length > 0)
+            await connection.InvokeAsync("JoinEmployeeGroup", employeeCode);
     }
 
     public async Task DisconnectAsync()
