@@ -107,11 +107,24 @@ public class MobileTableLocksController : ControllerBase
         // không thay lease và không đẩy phiên cũ ra.
         if (!acquired)
         {
+            var holderName = previousLease?.EmployeeName?.Trim() ?? string.Empty;
+            var holderCode = previousLease?.EmployeeCode?.Trim() ?? string.Empty;
+            var holder = holderName.Length > 0 &&
+                         holderCode.Length > 0 &&
+                         !string.Equals(
+                             holderName,
+                             holderCode,
+                             StringComparison.OrdinalIgnoreCase)
+                ? $"{holderName} ({holderCode})"
+                : holderName.Length > 0
+                    ? holderName
+                    : holderCode.Length > 0
+                        ? holderCode
+                        : "tài khoản khác";
+
             return Conflict(new
             {
-                message =
-                    $"{table.TableName} đang được {previousLease?.EmployeeName ?? "tài khoản khác"} giữ. " +
-                    "Nếu tiếp tục, phiên đang giữ bàn sẽ bị đẩy ra.",
+                message = $"{table.TableName} đang được {holder} giữ.",
                 tableId,
                 tableName = table.TableName,
                 requiresConfirmation = true,
