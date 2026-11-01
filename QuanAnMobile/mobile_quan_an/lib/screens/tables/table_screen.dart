@@ -619,12 +619,55 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       );
     } on ApiException catch (error) {
       if (!mounted) return null;
+
+      if (error.statusCode == 409) {
+        final bool? confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Bàn đang được sử dụng'),
+            content: Text(
+              '${error.message}\n\n'
+              'Nếu bạn đồng ý tiếp tục, người đang giữ bàn sẽ bị đẩy ra '
+              'và bạn sẽ nhận quyền thao tác bàn này.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Đồng ý'),
+              ),
+            ],
+          ),
+        );
+
+        if (!mounted || confirmed != true) return null;
+
+        try {
+          return await AppServices.tableLockService.acquire(
+            tableId: table.id,
+            employeeCode: appEmployee.employeeCode,
+            forceTakeover: true,
+          );
+        } on ApiException catch (takeoverError) {
+          if (!mounted) return null;
+          TopMessage.show(
+            context,
+            message: takeoverError.message,
+            type: TopMessageType.error,
+            duration: const Duration(milliseconds: 3000),
+          );
+          return null;
+        }
+      }
+
       TopMessage.show(
         context,
         message: error.message,
-        type: error.statusCode == 409
-            ? TopMessageType.warning
-            : TopMessageType.error,
+        type: TopMessageType.error,
         duration: const Duration(milliseconds: 2600),
       );
       return null;
