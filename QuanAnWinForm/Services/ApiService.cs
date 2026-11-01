@@ -4,6 +4,13 @@ using QuanAnWinForm.Models;
 
 namespace QuanAnWinForm.Services;
 
+public sealed class TableLockConflictException : Exception
+{
+    public TableLockConflictException(string message) : base(message)
+    {
+    }
+}
+
 public class ApiService
 {
     private readonly HttpClient _http;
@@ -17,15 +24,39 @@ public class ApiService
     public async Task<TableLockLeaseDto?> AcquireTableLockAsync(
         int tableId,
         string employeeCode,
-        string clientToken)
+        string clientToken,
+        bool forceTakeover = false)
     {
         using var response = await _http.PostAsJsonAsync(
             $"/api/table-locks/{tableId}/acquire",
             new
             {
                 employeeCode,
-                clientToken
+                clientToken,
+                forceTakeover
             });
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            string message = "Bàn đang được tài khoản khác giữ.";
+            try
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("message", out var messageElement))
+                {
+                    var serverMessage = messageElement.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(serverMessage))
+                        message = serverMessage;
+                }
+            }
+            catch
+            {
+                // Giữ message mặc định để UI vẫn có thể hỏi xác nhận takeover.
+            }
+
+            throw new TableLockConflictException(message);
+        }
 
         await EnsureSuccessOrThrowMessageAsync(response);
         return await response.Content.ReadFromJsonAsync<TableLockLeaseDto>(JsonOpts);
