@@ -271,10 +271,28 @@ public partial class SalesControl : UserControl
         try
         {
             var newToken = $"winform-{Guid.NewGuid():N}";
-            var lease = await _api.AcquireTableLockAsync(
-                tableId,
-                employeeCode,
-                newToken);
+            TableLockLeaseDto? lease;
+
+            try
+            {
+                lease = await _api.AcquireTableLockAsync(
+                    tableId,
+                    employeeCode,
+                    newToken);
+            }
+            catch (TableLockConflictException conflict)
+            {
+                // Không chiếm bàn ngay. Chỉ khi người dùng đọc cảnh báo và bấm
+                // "Đồng ý" mới gọi lại Backend với forceTakeover=true.
+                if (!ShowTableTakeoverConfirmation(conflict.Message))
+                    return false;
+
+                lease = await _api.AcquireTableLockAsync(
+                    tableId,
+                    employeeCode,
+                    newToken,
+                    forceTakeover: true);
+            }
 
             if (lease is null || string.IsNullOrWhiteSpace(lease.ClientToken))
                 throw new InvalidOperationException("Máy chủ không trả về phiên khóa bàn hợp lệ.");
@@ -312,6 +330,71 @@ public partial class SalesControl : UserControl
             if (!cbTable.IsDisposed)
                 cbTable.Enabled = true;
         }
+    }
+
+    private bool ShowTableTakeoverConfirmation(string serverMessage)
+    {
+        using var dialog = new Form
+        {
+            Text = "Bàn đang được sử dụng",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new Size(500, 210)
+        };
+
+        var content = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Padding = new Padding(20, 18, 20, 12),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Text =
+                serverMessage + Environment.NewLine + Environment.NewLine +
+                "Nếu bạn đồng ý tiếp tục, người đang giữ bàn sẽ bị đẩy ra " +
+                "và bạn sẽ nhận quyền thao tác bàn này."
+        };
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 58,
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(10),
+            WrapContents = false
+        };
+
+        var confirmButton = new Button
+        {
+            Text = "Đồng ý",
+            DialogResult = DialogResult.OK,
+            Width = 105,
+            Height = 34
+        };
+
+        var cancelButton = new Button
+        {
+            Text = "Hủy",
+            DialogResult = DialogResult.Cancel,
+            Width = 105,
+            Height = 34
+        };
+
+        buttons.Controls.Add(confirmButton);
+        buttons.Controls.Add(cancelButton);
+        dialog.Controls.Add(content);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = confirmButton;
+        dialog.CancelButton = cancelButton;
+
+        var owner = FindForm();
+        var result = owner is null
+            ? dialog.ShowDialog()
+            : dialog.ShowDialog(owner);
+
+        return result == DialogResult.OK;
     }
 
     private async Task HeartbeatCurrentTableLockAsync()

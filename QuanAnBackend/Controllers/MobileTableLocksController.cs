@@ -12,7 +12,8 @@ namespace QuanAnBackend.Controllers;
 
 public record MobileTableLockRequest(
     string? EmployeeCode,
-    string? ClientToken
+    string? ClientToken,
+    bool ForceTakeover = false
 );
 
 [ApiController]
@@ -92,16 +93,49 @@ public class MobileTableLocksController : ControllerBase
         if (string.IsNullOrWhiteSpace(employeeName))
             employeeName = employeeCode;
 
-        _locks.TryAcquire(
+        var acquired = _locks.TryAcquire(
             tableId,
             employeeCode,
             employeeName,
             clientToken,
+            request.ForceTakeover,
             out var lease,
             out var previousLease);
 
-        // Tài khoản/thiết bị vào sau được tiếp quản ngay, không phải chờ tài
-        // khoản trước xác nhận. Phiên cũ nhận realtime và tự quay về sơ đồ bàn.
+        // Lần đầu chỉ báo cho client biết ai đang giữ bàn. Client phải hỏi
+        // người dùng có đồng ý tiếp quản hay không; chưa xác nhận thì tuyệt đối
+        // không thay lease và không đẩy phiên cũ ra.
+        if (!acquired)
+        {
+            var holderName = previousLease?.EmployeeName?.Trim() ?? string.Empty;
+            var holderCode = previousLease?.EmployeeCode?.Trim() ?? string.Empty;
+            var holder = holderName.Length > 0 &&
+                         holderCode.Length > 0 &&
+                         !string.Equals(
+                             holderName,
+                             holderCode,
+                             StringComparison.OrdinalIgnoreCase)
+                ? $"{holderName} ({holderCode})"
+                : holderName.Length > 0
+                    ? holderName
+                    : holderCode.Length > 0
+                        ? holderCode
+                        : "tài khoản khác";
+
+            return Conflict(new
+            {
+                message = $"{table.TableName} đang được {holder} giữ.",
+                tableId,
+                tableName = table.TableName,
+                requiresConfirmation = true,
+                lockedByEmployeeCode = previousLease?.EmployeeCode,
+                lockedByEmployeeName = previousLease?.EmployeeName,
+                expiresAtUtc = previousLease?.ExpiresAtUtc
+            });
+        }
+
+        // Chỉ force takeover sau khi client đã xác nhận. Lúc này mới thông báo
+        // realtime để phiên cũ tự đóng màn chi tiết/quay về sơ đồ bàn.
         if (previousLease is not null)
         {
             await _hub.Clients
