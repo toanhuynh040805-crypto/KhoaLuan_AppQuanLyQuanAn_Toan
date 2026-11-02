@@ -46,6 +46,98 @@ public class ReservationsController : ControllerBase
         _tableState = tableState;
     }
 
+    private async Task<List<string>> GetAdminNotificationRolesAsync()
+    {
+        var roles = await _db.Roles
+            .AsNoTracking()
+            .Where(role =>
+                role.RoleName == "QuanLy" ||
+                role.RoleName == "Admin")
+            .Select(role => role.RoleName)
+            .Distinct()
+            .ToListAsync();
+
+        // Database hiện tại dùng QuanLy như tài khoản quản trị chính.
+        // Fallback để thông báo vẫn hoạt động nếu bảng Roles chưa có bản ghi Admin.
+        if (roles.Count == 0)
+            roles.Add("QuanLy");
+
+        return roles;
+    }
+
+    private async Task<string> CurrentActorNameAsync()
+    {
+        var userId = CurrentInternalUserId();
+        if (!userId.HasValue)
+            return "Khách hàng";
+
+        return await _db.Users
+            .AsNoTracking()
+            .Where(user => user.UserId == userId.Value)
+            .Select(user => string.IsNullOrWhiteSpace(user.FullName)
+                ? user.Username
+                : user.FullName)
+            .FirstOrDefaultAsync()
+            ?? User.Identity?.Name
+            ?? "Nhân viên";
+    }
+
+    private async Task NotifyReservationDecisionAsync(
+        Reservation reservation,
+        ReservationStatus status,
+        string actorName)
+    {
+        if (status is not (ReservationStatus.DaXacNhan or ReservationStatus.DaHuy))
+            return;
+
+        var tableName = reservation.Table?.TableName ?? $"Bàn #{reservation.TableId}";
+        var customerName = string.IsNullOrWhiteSpace(reservation.CustomerName)
+            ? "Khách"
+            : reservation.CustomerName.Trim();
+        var when = reservation.ReservationTime.ToString("HH:mm dd/MM/yyyy");
+
+        var adminTitle = status == ReservationStatus.DaXacNhan
+            ? "Đặt bàn đã được xác nhận"
+            : "Đặt bàn đã bị hủy";
+
+        var adminContent = status == ReservationStatus.DaXacNhan
+            ? $"{actorName} đã xác nhận {tableName} lúc {when} cho {customerName}."
+            : $"{actorName} đã hủy {tableName} lúc {when} của {customerName}.";
+
+        foreach (var role in await GetAdminNotificationRolesAsync())
+        {
+            await _notifications.CreateAsync(
+                adminTitle,
+                adminContent,
+                NotificationType.DatBan,
+                targetRole: role,
+                relatedEntityType: "Reservation",
+                relatedEntityId: reservation.ReservationId,
+                eventKey:
+                    $"reservation-admin:{reservation.ReservationId}:{(int)status}:{role}");
+        }
+
+        if (!reservation.CustomerId.HasValue)
+            return;
+
+        var customerTitle = status == ReservationStatus.DaXacNhan
+            ? "Đặt bàn của bạn đã được xác nhận"
+            : "Đặt bàn của bạn đã bị hủy";
+
+        var customerContent = status == ReservationStatus.DaXacNhan
+            ? $"Nhà hàng đã xác nhận {tableName} lúc {when}. Vui lòng đến đúng giờ đã đặt."
+            : $"Nhà hàng đã hủy lượt đặt {tableName} lúc {when}. Bạn có thể tạo lượt đặt mới trên website.";
+
+        await _notifications.CreateForCustomerAsync(
+            reservation.CustomerId.Value,
+            customerTitle,
+            customerContent,
+            NotificationType.DatBan,
+            $"reservation-customer-decision:{reservation.ReservationId}:{(int)status}",
+            "Reservation",
+            reservation.ReservationId);
+    }
+
     private string CurrentReservationSource()
         => User.Identity?.IsAuthenticated == true &&
            !User.IsInRole(CustomerAccessMiddleware.CustomerRole)
@@ -795,6 +887,27 @@ public class ReservationsController : ControllerBase
                     item.ReservationTime.AddMinutes(item.DurationMinutes))
             });
 
+        var adminRoles = await GetAdminNotificationRolesAsync();
+        var firstCancelled = cancellable[0];
+        var cancelledTableNames = string.Join(
+            ", ",
+            cancellable
+                .Select(item => item.Table?.TableName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct());
+
+        foreach (var role in adminRoles)
+        {
+            await _notifications.CreateAsync(
+                "Khách hàng đã hủy đặt bàn",
+                $"{firstCancelled.CustomerName ?? "Khách"} đã hủy {cancelledTableNames} lúc {firstCancelled.ReservationTime:HH:mm dd/MM/yyyy} trên Web.",
+                NotificationType.DatBan,
+                targetRole: role,
+                relatedEntityType: "Reservation",
+                relatedEntityId: groupId,
+                eventKey: $"reservation-admin-customer-cancel:{groupId}:{role}");
+        }
+
         await _notifications.CreateForCustomerAsync(
             customerId.Value,
             "Đặt bàn đã bị hủy",
@@ -1200,25 +1313,34 @@ public class ReservationsController : ControllerBase
                 });
         }
 
-        if (previousStatus != status && reservation.CustomerId.HasValue)
+        if (previousStatus != status)
         {
-            var (title, content) = status switch
+            if (status is ReservationStatus.DaXacNhan or ReservationStatus.DaHuy)
             {
-                ReservationStatus.DaXacNhan => ("Đặt bàn của bạn đã được xác nhận", "Yêu cầu đặt bàn của bạn đã được nhân viên nhà hàng xác nhận thành công."),
-                ReservationStatus.DaNhanBan => ("Đã nhận bàn", "Nhà hàng đã ghi nhận bạn đến nhận bàn và bắt đầu dùng bữa."),
-                ReservationStatus.DaHuy => ("Đặt bàn của bạn đã bị từ chối / hủy", "Đặt bàn của bạn đã bị hủy hoặc từ chối bởi nhà hàng."),
-                ReservationStatus.KhongDen => ("Đặt bàn quá giờ", "Lượt đặt bàn của bạn đã bị hủy do quá thời gian nhận bàn."),
-                ReservationStatus.HoanTat => ("Đặt bàn đã hoàn tất", "Lượt đặt bàn của bạn đã hoàn tất. Cảm ơn bạn đã ghé thăm GustoPOS!"),
-                _ => ("Cập nhật đặt bàn", "Trạng thái đặt bàn của bạn vừa được cập nhật.")
-            };
-            await _notifications.CreateForCustomerAsync(
-                reservation.CustomerId.Value,
-                title,
-                content,
-                NotificationType.DatBan,
-                $"reservation-status:{reservation.ReservationId}:{(int)previousStatus}:{(int)status}",
-                "Reservation",
-                reservation.ReservationId);
+                await NotifyReservationDecisionAsync(
+                    reservation,
+                    status,
+                    await CurrentActorNameAsync());
+            }
+            else if (reservation.CustomerId.HasValue)
+            {
+                var (title, content) = status switch
+                {
+                    ReservationStatus.DaNhanBan => ("Đã nhận bàn", "Nhà hàng đã ghi nhận bạn đến nhận bàn và bắt đầu dùng bữa."),
+                    ReservationStatus.KhongDen => ("Đặt bàn quá giờ", "Lượt đặt bàn của bạn đã bị hủy do quá thời gian nhận bàn."),
+                    ReservationStatus.HoanTat => ("Đặt bàn đã hoàn tất", "Lượt đặt bàn của bạn đã hoàn tất. Cảm ơn bạn đã ghé thăm GustoPOS!"),
+                    _ => ("Cập nhật đặt bàn", "Trạng thái đặt bàn của bạn vừa được cập nhật.")
+                };
+
+                await _notifications.CreateForCustomerAsync(
+                    reservation.CustomerId.Value,
+                    title,
+                    content,
+                    NotificationType.DatBan,
+                    $"reservation-status:{reservation.ReservationId}:{(int)previousStatus}:{(int)status}",
+                    "Reservation",
+                    reservation.ReservationId);
+            }
         }
 
         return Ok(new { Id = reservation.ReservationId, Status = reservation.Status });
