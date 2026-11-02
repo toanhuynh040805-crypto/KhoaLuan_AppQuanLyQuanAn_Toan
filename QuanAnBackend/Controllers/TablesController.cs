@@ -328,8 +328,7 @@ public class TablesController : ControllerBase
             .Include(reservation => reservation.Table)
             .Where(reservation =>
                 reservation.ReservationTime >= now.AddDays(-1) &&
-                (reservation.Status == ReservationStatus.ChoXacNhan ||
-                 reservation.Status == ReservationStatus.DaXacNhan ||
+                (reservation.Status == ReservationStatus.DaXacNhan ||
                  reservation.Status == ReservationStatus.DaNhanBan))
             .ToListAsync();
 
@@ -359,8 +358,7 @@ public class TablesController : ControllerBase
 
             var nextReservation = reservations
                 .Where(reservation =>
-                    (reservation.Status == ReservationStatus.ChoXacNhan ||
-                     reservation.Status == ReservationStatus.DaXacNhan) &&
+                    reservation.Status == ReservationStatus.DaXacNhan &&
                     reservation.ReservationTime
                         .AddMinutes(reservation.DurationMinutes) >= now)
                 .OrderBy(reservation => reservation.ReservationTime)
@@ -368,11 +366,20 @@ public class TablesController : ControllerBase
                 .FirstOrDefault();
 
             var displayStatus = table.status;
+
+            if (displayStatus == (int)TableStatus.DaDat &&
+                nextReservation is null &&
+                currentReservation is null)
+            {
+                // Dữ liệu cũ có thể đã đánh dấu Đã đặt ngay từ lúc Chờ xác nhận.
+                // Không để trạng thái cũ làm reservation chưa duyệt xuất hiện trên sơ đồ.
+                displayStatus = (int)TableStatus.Trong;
+            }
+
             if (displayStatus == (int)TableStatus.Trong &&
                 nextReservation is not null)
             {
-                // Bàn vẫn có thể nhận khách thường; "Đã đặt" ở đây là trạng thái
-                // HIỂN THỊ để nhân viên luôn thấy reservation kể cả đặt trước nhiều ngày.
+                // Chỉ reservation đã được Quản lý xác nhận mới xuất hiện trên sơ đồ.
                 displayStatus = (int)TableStatus.DaDat;
             }
 
