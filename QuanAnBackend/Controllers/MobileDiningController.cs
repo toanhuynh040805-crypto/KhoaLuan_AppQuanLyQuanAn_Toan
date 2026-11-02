@@ -89,8 +89,7 @@ public class MobileDiningController : ControllerBase
             .Where(reservation =>
                 tableIds.Contains(reservation.TableId) &&
                 reservation.ReservationTime >= now.AddDays(-1) &&
-                (reservation.Status == ReservationStatus.ChoXacNhan ||
-                 reservation.Status == ReservationStatus.DaXacNhan ||
+                (reservation.Status == ReservationStatus.DaXacNhan ||
                  reservation.Status == ReservationStatus.DaNhanBan))
             .ToListAsync();
 
@@ -143,8 +142,7 @@ public class MobileDiningController : ControllerBase
                 var nextReservation = reservations
                     .Where(item =>
                         physicalTableIds.Contains(item.TableId) &&
-                        (item.Status == ReservationStatus.ChoXacNhan ||
-                         item.Status == ReservationStatus.DaXacNhan) &&
+                        item.Status == ReservationStatus.DaXacNhan &&
                         item.ReservationTime.AddMinutes(item.DurationMinutes) >= now)
                     .OrderBy(item => item.ReservationTime)
                     .ThenBy(item => item.ReservationId)
@@ -160,11 +158,21 @@ public class MobileDiningController : ControllerBase
                 var startedAt = order?.OrderTime ??
                                 currentReservation?.ReservationTime;
 
-                var displayStatus =
-                    table.Status == TableStatus.Trong &&
-                    nextReservation is not null
-                        ? TableStatus.DaDat
-                        : table.Status;
+                var displayStatus = table.Status;
+
+                if (displayStatus == TableStatus.DaDat &&
+                    nextReservation is null &&
+                    currentReservation is null)
+                {
+                    // Không để trạng thái cũ từ lượt Chờ xác nhận xuất hiện trên Mobile.
+                    displayStatus = TableStatus.Trong;
+                }
+
+                if (displayStatus == TableStatus.Trong &&
+                    nextReservation is not null)
+                {
+                    displayStatus = TableStatus.DaDat;
+                }
 
                 var currentSessionType =
                     table.Status == TableStatus.DangPhucVu
