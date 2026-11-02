@@ -45,6 +45,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
   StreamSubscription<TableStatusRealtimeEvent>? _tableStatusSubscription;
+  StreamSubscription<void>? _reservationSubscription;
   Timer? _relativeTimeTimer;
 
   bool _isLoading = true;
@@ -252,6 +253,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableStatusSubscription?.cancel();
+    _reservationSubscription?.cancel();
     _relativeTimeTimer?.cancel();
     _realtimeService.stop();
     super.dispose();
@@ -295,6 +297,10 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     });
 
     _tableStatusSubscription = _realtimeService.tableStatusChanges.listen(
+      (_) => _requestRealtimeRefresh(),
+    );
+
+    _reservationSubscription = _realtimeService.reservationChanges.listen(
       (_) => _requestRealtimeRefresh(),
     );
 
