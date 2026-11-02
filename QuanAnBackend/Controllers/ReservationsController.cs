@@ -71,15 +71,24 @@ public class ReservationsController : ControllerBase
         if (!userId.HasValue)
             return "Khách hàng";
 
-        return await _db.Users
+        var actor = await _db.Users
             .AsNoTracking()
             .Where(user => user.UserId == userId.Value)
-            .Select(user => string.IsNullOrWhiteSpace(user.FullName)
-                ? user.Username
-                : user.FullName)
-            .FirstOrDefaultAsync()
-            ?? User.Identity?.Name
-            ?? "Nhân viên";
+            .Select(user => new
+            {
+                user.FullName,
+                user.Username
+            })
+            .FirstOrDefaultAsync();
+
+        if (actor is not null)
+        {
+            return string.IsNullOrWhiteSpace(actor.FullName)
+                ? actor.Username
+                : actor.FullName;
+        }
+
+        return User.Identity?.Name ?? "Nhân viên";
     }
 
     private async Task NotifyReservationDecisionAsync(
@@ -961,6 +970,29 @@ public class ReservationsController : ControllerBase
             await BroadcastTableStatusesAsync(changedTables);
         }
 
+        await _hub.Clients.All.SendAsync(
+            "ReservationUpdated",
+            new
+            {
+                ReservationId = reservation.ReservationId,
+                Status = ReservationStatus.DaHuy.ToString(),
+                Stage = "CancelledLegacy",
+                reservation.ReservationTime,
+                HoldUntil = reservation.ReservationTime.AddMinutes(reservation.DurationMinutes)
+            });
+
+        foreach (var role in await GetAdminNotificationRolesAsync())
+        {
+            await _notifications.CreateAsync(
+                "Khách hàng đã hủy đặt bàn",
+                $"{reservation.CustomerName ?? "Khách"} đã hủy {reservation.Table?.TableName ?? $"Bàn #{reservation.TableId}"} lúc {reservation.ReservationTime:HH:mm dd/MM/yyyy}.",
+                NotificationType.DatBan,
+                targetRole: role,
+                relatedEntityType: "Reservation",
+                relatedEntityId: reservation.ReservationId,
+                eventKey: $"reservation-admin-legacy-cancel:{reservation.ReservationId}:{role}");
+        }
+
         if (reservation.CustomerId.HasValue)
         {
             await _notifications.CreateForCustomerAsync(
@@ -1179,6 +1211,19 @@ public class ReservationsController : ControllerBase
                 Status = ReservationStatus.KhongDen.ToString(),
                 Stage = "ReleasedOverdue"
             });
+
+        var firstOverdue = activeRows[0];
+        foreach (var role in await GetAdminNotificationRolesAsync())
+        {
+            await _notifications.CreateAsync(
+                "Đặt bàn đã quá giờ - khách không đến",
+                $"{firstOverdue.CustomerName ?? "Khách"} không đến nhận {firstOverdue.Table?.TableName ?? $"Bàn #{firstOverdue.TableId}"}; lượt đặt lúc {firstOverdue.ReservationTime:HH:mm dd/MM/yyyy} đã được giải phóng.",
+                NotificationType.DatBan,
+                targetRole: role,
+                relatedEntityType: "Reservation",
+                relatedEntityId: groupId,
+                eventKey: $"reservation-admin-no-show:{groupId}:{role}");
+        }
 
         var customerId = rows.Select(row => row.CustomerId)
             .FirstOrDefault(value => value.HasValue);
