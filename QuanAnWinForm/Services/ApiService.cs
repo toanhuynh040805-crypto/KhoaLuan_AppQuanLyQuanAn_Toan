@@ -309,8 +309,12 @@ public class ApiService
     public async Task<List<TableDto>> GetTablesAsync(int? areaId = null)
     {
         var url = areaId.HasValue ? $"/api/tables?areaId={areaId}" : "/api/tables";
-        var res = await _http.GetFromJsonAsync<List<TableDto>>(url, JsonOpts);
-        return res ?? new List<TableDto>();
+
+        using var response = await _http.GetAsync(url);
+        await EnsureSuccessOrThrowMessageAsync(response);
+
+        var tables = await response.Content.ReadFromJsonAsync<List<TableDto>>(JsonOpts);
+        return tables ?? new List<TableDto>();
     }
 
     public async Task<List<AreaDto>> GetAreasAsync()
