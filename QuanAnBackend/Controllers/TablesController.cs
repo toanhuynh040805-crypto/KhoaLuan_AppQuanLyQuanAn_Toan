@@ -567,7 +567,7 @@ public class TablesController : ControllerBase
         if (table.Status == TableStatus.DaDat)
         {
             var reservations = await _db.Reservations
-                .Where(r => r.TableId == id && (r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.ChoXacNhan))
+                .Where(r => r.TableId == id && r.Status == ReservationStatus.DaXacNhan)
                 .ToListAsync();
             var nearest = reservations
                 .OrderBy(r => Math.Abs((r.ReservationTime - DateTime.Now).TotalMinutes))
