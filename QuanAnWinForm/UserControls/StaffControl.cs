@@ -1158,6 +1158,8 @@ public partial class StaffControl : UserControl, IRefreshableContent
             CheckOnClick = true,
             Font = AppFonts.BodyMd,
             IntegralHeight = false,
+            DisplayMember = "Name",
+            ValueMember = "Id",
         };
 
         var selectedIds = assignment.AreaIds.Count > 0
@@ -1350,6 +1352,8 @@ public partial class StaffControl : UserControl, IRefreshableContent
             CheckOnClick = true,
             Font = AppFonts.BodyMd,
             IntegralHeight = false,
+            DisplayMember = "Name",
+            ValueMember = "Id",
         };
 
         foreach (var area in _areas)
