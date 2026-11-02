@@ -87,6 +87,12 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         _refreshTimer.Tick += async (s, e) => await OnRefreshTimerTickAsync();
 
+        // Designer được tạo ở kích thước lớn hơn một số cửa sổ thực tế.
+        // Tự co vùng sơ đồ theo chiều cao hiện tại để hàng cuối không bị che/cắt.
+        Resize += (s, e) => LayoutTableViewport();
+        panelDetail.VisibleChanged += (s, e) => LayoutTableViewport();
+        LayoutTableViewport();
+
         // Sự kiện realtime là static -> bắt buộc hủy đăng ký khi control bị Dispose để tránh rò rỉ
         Disposed += (s, e) =>
         {
@@ -94,6 +100,33 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             _refreshTimer.Stop();
             _refreshTimer.Dispose();
         };
+    }
+
+    private void LayoutTableViewport()
+    {
+        if (flowTables is null || flowLegend is null)
+            return;
+
+        const int top = 130;
+        const int bottomGap = 8;
+        const int rightGap = 8;
+        const int detailGap = 12;
+
+        var rightEdge = panelDetail.Visible
+            ? ClientSize.Width - panelDetail.Width - detailGap
+            : ClientSize.Width - rightGap;
+
+        rightEdge = Math.Max(320, rightEdge);
+
+        flowLegend.Width = rightEdge;
+        flowTables.SetBounds(
+            0,
+            top,
+            rightEdge,
+            Math.Max(140, ClientSize.Height - top - bottomGap));
+
+        flowTables.AutoScroll = true;
+        flowTables.Padding = new Padding(0, 0, 0, 18);
     }
 
     private async Task LoadAllAsync()
@@ -253,7 +286,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         var tile = new Panel
         {
-            Size = new Size(156, 142),
+            Size = new Size(156, 154),
             BackColor = bg,
             Margin = new Padding(8),
             Cursor = Cursors.Hand,
@@ -275,8 +308,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             Text = table.TableName,
             Font = AppFonts.HeadlineSm,
             Location = new Point(12, 10),
-            Size = new Size(132, 22),
-            AutoEllipsis = true
+            Size = new Size(132, 28),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
         };
 
         var lblCapacity = new Label
@@ -284,12 +318,13 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             Text = $"{table.Capacity} khách",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(12, 36),
-            Size = new Size(132, 18),
-            AutoEllipsis = true
+            Location = new Point(12, 40),
+            Size = new Size(132, 20),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
         };
 
-        var y = 58;
+        var y = 64;
 
         if (table.Status == (int)TableStatusEnum.DangPhucVu)
         {
@@ -343,7 +378,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             Text = label,
             Font = AppFonts.LabelMd,
             ForeColor = border,
-            Location = new Point(12, Math.Min(y + 2, 118)),
+            Location = new Point(12, Math.Min(y + 4, 132)),
             Size = new Size(132, 18),
             AutoEllipsis = true
         };
