@@ -116,7 +116,14 @@ public sealed class MobileTableReceiveController : ControllerBase
                         FROM dbo.Reservations
                         WHERE TableId = @TableId
                           AND CONVERT(NVARCHAR(50), Status) IN
-                              (N'DaXacNhan', N'Đã xác nhận', N'Da Xac Nhan')
+                              (
+                                  N'ChoXacNhan',
+                                  N'Chờ xác nhận',
+                                  N'Cho Xac Nhan',
+                                  N'DaXacNhan',
+                                  N'Đã xác nhận',
+                                  N'Da Xac Nhan'
+                              )
                           AND DATEADD(
                                 MINUTE,
                                 ISNULL(DurationMinutes, 30),
@@ -131,7 +138,14 @@ public sealed class MobileTableReceiveController : ControllerBase
                         SET Status = N'DaNhanBan'
                         WHERE ReservationId = @SelectedReservationId
                           AND CONVERT(NVARCHAR(50), Status) IN
-                              (N'DaXacNhan', N'Đã xác nhận', N'Da Xac Nhan');
+                              (
+                                  N'ChoXacNhan',
+                                  N'Chờ xác nhận',
+                                  N'Cho Xac Nhan',
+                                  N'DaXacNhan',
+                                  N'Đã xác nhận',
+                                  N'Da Xac Nhan'
+                              );
 
                         IF @@ROWCOUNT = 0
                             SET @SelectedReservationId = NULL;
