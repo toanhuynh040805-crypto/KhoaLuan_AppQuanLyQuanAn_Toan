@@ -472,33 +472,14 @@ public class ReservationsController : ControllerBase
         };
         _db.Reservations.Add(reservation);
 
-        var tableStatusChanged = false;
-        if (table.Status == TableStatus.Trong && isUpcoming)
-        {
-            table.Status = TableStatus.DaDat;
-            tableStatusChanged = true;
-        }
-
         await _db.SaveChangesAsync();
         await reservationTransaction.CommitAsync();
 
-        if (tableStatusChanged)
-        {
-            await _hub.Clients.All.SendAsync(
-                "TableStatusUpdated",
-                new
-                {
-                    TableId = table.TableId,
-                    table.TableName,
-                    Status = table.Status
-                });
-        }
-
         await _notifications.CreateForRolesAsync(
-            "Có đặt bàn mới",
-            $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} đặt {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM}",
+            "Có yêu cầu đặt bàn mới - chờ xác nhận",
+            $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} yêu cầu đặt {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM}",
             NotificationType.DatBan,
-            new[] { "ThuNgan", "PhucVu" },
+            new[] { "QuanLy", "ThuNgan", "PhucVu" },
             relatedEntityType: "Reservation",
             relatedEntityId: reservation.ReservationId);
 
@@ -517,9 +498,8 @@ public class ReservationsController : ControllerBase
         {
             await _notifications.CreateForCustomerAsync(
                 reservation.CustomerId.Value,
-                "Đặt bàn đã được tiếp nhận",
-                $"Yêu cầu đặt bàn tại {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận. " +
-                $"Bàn được giữ tối đa đến {request.ReservationTime.AddMinutes(durationMinutes):HH:mm}.",
+                "Yêu cầu đặt bàn đã được tiếp nhận",
+                $"Yêu cầu đặt bàn tại {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận và đang chờ Quản lý xác nhận.",
                 NotificationType.DatBan,
                 $"reservation-created:{reservation.ReservationId}",
                 "Reservation",
@@ -654,7 +634,6 @@ public class ReservationsController : ControllerBase
         var note = string.Join(" ", new[] { request.Note?.Trim(), groupNote }.Where(x => !string.IsNullOrWhiteSpace(x)));
 
         var created = new List<Reservation>();
-        var changedTables = new List<DiningTable>();
         var first = true;
         var customerId = await ResolveCustomerIdAsync(request.CustomerPhone);
         var source = CurrentReservationSource();
@@ -679,12 +658,6 @@ public class ReservationsController : ControllerBase
             };
             created.Add(reservation);
             first = false;
-
-            if (table.Status == TableStatus.Trong && isUpcoming)
-            {
-                table.Status = TableStatus.DaDat;
-                changedTables.Add(table);
-            }
         }
 
         _db.Reservations.AddRange(created);
@@ -703,14 +676,11 @@ public class ReservationsController : ControllerBase
 
         await batchTransaction.CommitAsync();
 
-        foreach (var t in changedTables)
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new { TableId = t.TableId, t.TableName, Status = t.Status });
-
         await _notifications.CreateForRolesAsync(
-            "Có đặt bàn mới",
-            $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} đặt {names} lúc {request.ReservationTime:HH:mm dd/MM}",
+            "Có yêu cầu đặt bàn mới - chờ xác nhận",
+            $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} yêu cầu đặt {names} lúc {request.ReservationTime:HH:mm dd/MM}",
             NotificationType.DatBan,
-            new[] { "ThuNgan", "PhucVu" },
+            new[] { "QuanLy", "ThuNgan", "PhucVu" },
             relatedEntityType: "Reservation",
             relatedEntityId: created[0].ReservationId);
 
@@ -729,9 +699,8 @@ public class ReservationsController : ControllerBase
         {
             await _notifications.CreateForCustomerAsync(
                 customerId.Value,
-                "Đặt bàn đã được tiếp nhận",
-                $"Yêu cầu đặt bàn tại {names} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận. " +
-                $"Bàn được giữ tối đa đến {request.ReservationTime.AddMinutes(durationMinutes):HH:mm}.",
+                "Yêu cầu đặt bàn đã được tiếp nhận",
+                $"Yêu cầu đặt bàn tại {names} lúc {request.ReservationTime:HH:mm dd/MM} đã được tiếp nhận và đang chờ Quản lý xác nhận.",
                 NotificationType.DatBan,
                 $"reservation-batch:{created[0].ReservationId}",
                 "Reservation",
