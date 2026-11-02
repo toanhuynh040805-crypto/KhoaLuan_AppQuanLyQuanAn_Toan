@@ -82,6 +82,12 @@ public class TablesController : ControllerBase
         if (shouldClose)
             await connection.OpenAsync();
 
+        var canViewOrderDetails =
+            User.IsInRole("QuanLy") ||
+            User.IsInRole("ThuNgan") ||
+            User.IsInRole("PhucVu") ||
+            User.IsInRole("Bep");
+
         try
         {
             await using var command = connection.CreateCommand();
@@ -173,11 +179,6 @@ public class TablesController : ControllerBase
             command.Parameters.Add(areaParameter);
 
             var result = new List<TableListItem>();
-            var canViewOrderDetails =
-                User.IsInRole("QuanLy") ||
-                User.IsInRole("ThuNgan") ||
-                User.IsInRole("PhucVu") ||
-                User.IsInRole("Bep");
 
             await using var reader = await command.ExecuteReaderAsync();
 
@@ -239,7 +240,9 @@ public class TablesController : ControllerBase
                 .ThenBy(table => table.tableName)
                 .ToList();
 
-            normalized = await EnrichTableReservationInfoAsync(normalized);
+            normalized = await EnrichTableReservationInfoAsync(
+                normalized,
+                canViewOrderDetails);
 
             if (TryParseStatusFilter(statusFilter, out var requestedStatus))
             {
@@ -292,7 +295,9 @@ public class TablesController : ControllerBase
                     null))
                 .ToList();
 
-            normalized = await EnrichTableReservationInfoAsync(normalized);
+            normalized = await EnrichTableReservationInfoAsync(
+                normalized,
+                canViewOrderDetails);
 
             if (TryParseStatusFilter(statusFilter, out var requestedStatus))
             {
@@ -311,7 +316,8 @@ public class TablesController : ControllerBase
     }
 
     private async Task<List<TableListItem>> EnrichTableReservationInfoAsync(
-        List<TableListItem> tables)
+        List<TableListItem> tables,
+        bool includeCustomerDetails)
     {
         if (tables.Count == 0)
             return tables;
@@ -393,7 +399,9 @@ public class TablesController : ControllerBase
                 currentSessionType = currentSessionType,
                 nextReservationId = nextReservation?.ReservationId,
                 nextReservationTime = nextReservation?.ReservationTime,
-                nextReservationCustomerName = nextReservation?.CustomerName,
+                nextReservationCustomerName = includeCustomerDetails
+                    ? nextReservation?.CustomerName
+                    : null,
                 nextReservationGuestCount = nextReservation?.NumberOfGuests
             };
         }).ToList();
