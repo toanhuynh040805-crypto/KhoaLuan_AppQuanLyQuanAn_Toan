@@ -545,6 +545,92 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<bool> _cancelUpcomingReservation(
+    RestaurantTable table,
+  ) async {
+    final int? reservationId = table.nextReservationId;
+    if (reservationId == null) {
+      if (mounted) {
+        TopMessage.show(
+          context,
+          message: 'Không tìm thấy lượt đặt bàn để hủy.',
+          type: TopMessageType.warning,
+        );
+      }
+      return false;
+    }
+
+    if (!_canManageTables) {
+      _showRoleDenied('hủy đặt bàn');
+      return false;
+    }
+
+    final String reservationWhen =
+        _reservationDateTimeLabel(table.nextReservationTime);
+    final String customer =
+        (table.nextReservationCustomerName ?? table.customerName ?? 'Khách')
+            .trim();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xác nhận hủy đặt bàn'),
+        content: Text(
+          '${table.name}\n'
+          'Lịch đặt: $reservationWhen\n'
+          'Khách: $customer\n\n'
+          'Sau khi hủy, lượt đặt sẽ được lưu trong lịch sử cùng '
+          'tài khoản nhân viên và thời gian thực hiện.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Không'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+            ),
+            icon: const Icon(Icons.cancel_outlined),
+            label: const Text('Hủy đặt bàn'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || confirmed != true) return false;
+
+    try {
+      await _tableService.cancelReservation(
+        reservationId: reservationId,
+      );
+
+      if (!mounted) return true;
+
+      TopMessage.show(
+        context,
+        message:
+            'Đã hủy lịch đặt $reservationWhen của $customer. '
+            'Lịch sử hủy đã được lưu.',
+        type: TopMessageType.success,
+      );
+
+      await _loadData();
+      return true;
+    } on ApiException catch (error) {
+      if (!mounted) return false;
+      TopMessage.show(
+        context,
+        message: error.message,
+        type: TopMessageType.error,
+        duration: const Duration(milliseconds: 3200),
+      );
+      return false;
+    }
+  }
+
   Future<void> _openTable(RestaurantTable table) async {
     if (!table.canOperate) {
       _showAreaNoticeForTable(table);
@@ -584,7 +670,16 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Hủy'),
+              child: const Text('Đóng'),
+            ),
+            TextButton.icon(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, 'cancel_reservation'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.redAccent,
+              ),
+              icon: const Icon(Icons.cancel_outlined),
+              label: const Text('Hủy đặt bàn'),
             ),
             OutlinedButton.icon(
               onPressed: () => Navigator.pop(dialogContext, 'walkin'),
@@ -601,6 +696,11 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       );
 
       if (!mounted || receiveMode == null) return;
+
+      if (receiveMode == 'cancel_reservation') {
+        await _cancelUpcomingReservation(table);
+        return;
+      }
 
       acquiredLock = await _tryAcquireTableLock(table);
       if (acquiredLock == null) return;
@@ -2481,29 +2581,41 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
               ),
               if (table.hasUpcomingReservation) ...[
                 const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.event_outlined,
-                      size: 13,
-                      color: Color(0xFF2563EB),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        _reservationDateTimeLabel(
-                          table.nextReservationTime,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                InkWell(
+                  onTap: () => _cancelUpcomingReservation(table),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.event_outlined,
+                          size: 13,
                           color: Color(0xFF2563EB),
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
                         ),
-                      ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            _reservationDateTimeLabel(
+                              table.nextReservationTime,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF2563EB),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.more_horiz,
+                          size: 15,
+                          color: Color(0xFF2563EB),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ],
             ] else if (table.status == TableStatus.reserved ||
@@ -2527,29 +2639,41 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                   style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                 ),
               if (table.nextReservationTime != null)
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.event_outlined,
-                      size: 13,
-                      color: Color(0xFF2563EB),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        _reservationDateTimeLabel(
-                          table.nextReservationTime,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                InkWell(
+                  onTap: () => _cancelUpcomingReservation(table),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.event_outlined,
+                          size: 13,
                           color: Color(0xFF2563EB),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
                         ),
-                      ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            _reservationDateTimeLabel(
+                              table.nextReservationTime,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF2563EB),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.more_horiz,
+                          size: 15,
+                          color: Color(0xFF2563EB),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 )
               else if (table.time != null)
                 Text(
