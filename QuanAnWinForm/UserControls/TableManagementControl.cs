@@ -17,6 +17,22 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     private TableDto? _selectedTable;
     private HashSet<int> _paymentRequestedTableIds = new();
 
+    private bool CanConfirmReservations
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin";
+        }
+    }
+
     private bool CanCompletePayment
     {
         get
@@ -71,6 +87,12 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         _refreshTimer.Tick += async (s, e) => await OnRefreshTimerTickAsync();
 
+        // Designer được tạo ở kích thước lớn hơn một số cửa sổ thực tế.
+        // Tự co vùng sơ đồ theo chiều cao hiện tại để hàng cuối không bị che/cắt.
+        Resize += (s, e) => LayoutTableViewport();
+        panelDetail.VisibleChanged += (s, e) => LayoutTableViewport();
+        LayoutTableViewport();
+
         // Sự kiện realtime là static -> bắt buộc hủy đăng ký khi control bị Dispose để tránh rò rỉ
         Disposed += (s, e) =>
         {
@@ -78,6 +100,33 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             _refreshTimer.Stop();
             _refreshTimer.Dispose();
         };
+    }
+
+    private void LayoutTableViewport()
+    {
+        if (flowTables is null || flowLegend is null)
+            return;
+
+        const int top = 130;
+        const int bottomGap = 8;
+        const int rightGap = 8;
+        const int detailGap = 12;
+
+        var rightEdge = panelDetail.Visible
+            ? ClientSize.Width - panelDetail.Width - detailGap
+            : ClientSize.Width - rightGap;
+
+        rightEdge = Math.Max(320, rightEdge);
+
+        flowLegend.Width = rightEdge;
+        flowTables.SetBounds(
+            0,
+            top,
+            rightEdge,
+            Math.Max(140, ClientSize.Height - top - bottomGap));
+
+        flowTables.AutoScroll = true;
+        flowTables.Padding = new Padding(0, 0, 0, 18);
     }
 
     private async Task LoadAllAsync()
@@ -193,9 +242,24 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         _ => (AppColors.TableTrong, Color.FromArgb(235, 247, 243), "Trống"),
     };
 
+    private static string ReservationDateTimeLabel(DateTime? value)
+        => value.HasValue
+            ? value.Value.ToString("dd/MM • HH:mm")
+            : "";
+
+    private static string SessionLabel(TableDto table)
+        => table.IsReservationSession ? "📅 ĐẶT" : "👤 THƯỜNG";
+
+    private static bool IsIdleWithReservation(TableDto table)
+        => table.Status != (int)TableStatusEnum.DangPhucVu &&
+           table.HasUpcomingReservation;
+
     private Panel BuildTableTile(TableDto table)
     {
-        var (border, bg, label) = StyleFor(table.Status);
+        var visualStatus = IsIdleWithReservation(table)
+            ? (int)TableStatusEnum.DaDat
+            : table.Status;
+        var (border, bg, label) = StyleFor(visualStatus);
         var waitingPayment =
             CanCompletePayment &&
             _paymentRequestedTableIds.Contains(table.Id);
@@ -206,34 +270,93 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             bg = Color.FromArgb(255, 238, 233);
             label = "Chờ thanh toán";
         }
+        else if (table.Status == (int)TableStatusEnum.DangPhucVu)
+        {
+            // Giữ trạng thái chính là Có khách; reservation kế tiếp chỉ là badge phụ.
+            bg = Color.FromArgb(255, 247, 237);
+        }
+        else if (table.HasUpcomingReservation)
+        {
+            bg = Color.FromArgb(239, 246, 255);
+        }
 
         var linked = table.IsLinked;
         if (linked && !waitingPayment)
-            bg = Color.FromArgb(255, 244, 238); // nền kem nhạt = đang ghép
+            bg = Color.FromArgb(255, 244, 238);
 
         var tile = new Panel
         {
-            Size = new Size(140, 110),
+            Size = new Size(156, 154),
             BackColor = bg,
             Margin = new Padding(8),
             Cursor = Cursors.Hand,
             Tag = table,
         };
-        tile.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(border, 2), 1, 1, tile.Width - 3, tile.Height - 3);
+        tile.Paint += (s, e) =>
+        {
+            using var pen = new Pen(border, 2);
+            e.Graphics.DrawRectangle(
+                pen,
+                1,
+                1,
+                tile.Width - 3,
+                tile.Height - 3);
+        };
 
-        var lblName = new Label { Text = table.TableName, Font = AppFonts.HeadlineSm, Location = new Point(12, 10), AutoSize = true };
-        var lblCapacity = new Label { Text = $"{table.Capacity} khách", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(12, 36), AutoSize = true };
-        var lblStatus = new Label { Text = label, Font = AppFonts.LabelMd, ForeColor = border, Location = new Point(12, 78), AutoSize = true };
+        var lblName = new Label
+        {
+            Text = table.TableName,
+            Font = AppFonts.HeadlineSm,
+            Location = new Point(12, 10),
+            Size = new Size(132, 28),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
 
-        tile.Controls.Add(lblName);
-        tile.Controls.Add(lblCapacity);
-        tile.Controls.Add(lblStatus);
+        var lblCapacity = new Label
+        {
+            Text = $"{table.Capacity} khách",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(12, 40),
+            Size = new Size(132, 20),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
 
-        void onClick(object? s, EventArgs e) => ShowDetail(table);
-        tile.Click += onClick;
-        lblName.Click += onClick;
-        lblCapacity.Click += onClick;
-        lblStatus.Click += onClick;
+        var y = 64;
+
+        if (table.Status == (int)TableStatusEnum.DangPhucVu)
+        {
+            var lblSession = new Label
+            {
+                Text = SessionLabel(table),
+                Font = AppFonts.LabelMd,
+                ForeColor = table.IsReservationSession
+                    ? Color.FromArgb(37, 99, 235)
+                    : Color.FromArgb(75, 85, 99),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
+                AutoEllipsis = true
+            };
+            tile.Controls.Add(lblSession);
+            y += 20;
+        }
+
+        if (table.HasUpcomingReservation)
+        {
+            var lblReservation = new Label
+            {
+                Text = $"📅 {ReservationDateTimeLabel(table.NextReservationTime)}",
+                Font = AppFonts.LabelMd,
+                ForeColor = Color.FromArgb(37, 99, 235),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
+                AutoEllipsis = true
+            };
+            tile.Controls.Add(lblReservation);
+            y += 20;
+        }
 
         if (linked)
         {
@@ -242,13 +365,42 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 Text = "Ghép: " + table.LinkedWith,
                 Font = AppFonts.LabelMd,
                 ForeColor = AppColors.OnSurfaceVariant,
-                Location = new Point(12, 58),
-                Size = new Size(120, 18),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
                 AutoEllipsis = true,
             };
-            lblLink.Click += onClick;
             tile.Controls.Add(lblLink);
+            y += 20;
         }
+
+        var lblStatus = new Label
+        {
+            Text = label,
+            Font = AppFonts.LabelMd,
+            ForeColor = border,
+            Location = new Point(12, Math.Min(y + 4, 132)),
+            Size = new Size(132, 18),
+            AutoEllipsis = true
+        };
+
+        tile.Controls.Add(lblName);
+        tile.Controls.Add(lblCapacity);
+        tile.Controls.Add(lblStatus);
+
+        void onClick(object? s, EventArgs e)
+        {
+            if (IsIdleWithReservation(table))
+            {
+                _ = ReceiveReservedOrWalkInFromTileAsync(table);
+                return;
+            }
+
+            ShowDetail(table);
+        }
+
+        tile.Click += onClick;
+        foreach (Control child in tile.Controls)
+            child.Click += onClick;
 
         return tile;
     }
@@ -266,8 +418,26 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     private void ApplyDetailHeader(TableDto table)
     {
         lblDetailName.Text = table.TableName;
-        lblDetailInfo.Text = $"{table.AreaName} · Sức chứa: {table.Capacity} khách";
-        var (_, _, label) = StyleFor(table.Status);
+
+        var infoParts = new List<string>
+        {
+            table.AreaName,
+            $"Sức chứa: {table.Capacity} khách"
+        };
+
+        if (table.Status == (int)TableStatusEnum.DangPhucVu)
+            infoParts.Add(SessionLabel(table));
+
+        if (table.HasUpcomingReservation)
+            infoParts.Add($"📅 {ReservationDateTimeLabel(table.NextReservationTime)}");
+
+        lblDetailInfo.Text = string.Join(" · ", infoParts.Where(part =>
+            !string.IsNullOrWhiteSpace(part)));
+
+        var visualStatus = IsIdleWithReservation(table)
+            ? (int)TableStatusEnum.DaDat
+            : table.Status;
+        var (_, _, label) = StyleFor(visualStatus);
 
         if (CanCompletePayment &&
             _paymentRequestedTableIds.Contains(table.Id))
@@ -329,7 +499,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             _btnCheckIn.Click += async (s, e) => await CheckInSelectedTableAsync();
             panelDetail.Controls.Add(_btnCheckIn);
         }
-        _btnCheckIn.Visible = _selectedTable!.Status == 0;
+        _btnCheckIn.Visible =
+            _selectedTable!.Status != (int)TableStatusEnum.DangPhucVu &&
+            _selectedTable.Status != (int)TableStatusEnum.DangDonDep;
 
         if (_btnGoToSales is null)
         {
@@ -354,20 +526,170 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     private async Task CheckInSelectedTableAsync()
     {
         if (_selectedTable is null) return;
-        if (_btnCheckIn is not null) _btnCheckIn.Enabled = false;
+
+        if (_selectedTable.HasUpcomingReservation)
+        {
+            await ReceiveReservedOrWalkInAsync(_selectedTable);
+            return;
+        }
+
+        await ReceiveTableAsync(_selectedTable, reservationId: null);
+    }
+
+    private async Task ReceiveReservedOrWalkInFromTileAsync(TableDto table)
+    {
+        _selectedTable = table;
+        ApplyDetailHeader(table);
+        panelDetail.Visible = true;
+        EnsureDetailActionButtons();
+
+        await ReceiveReservedOrWalkInAsync(table);
+    }
+
+    private async Task ReceiveReservedOrWalkInAsync(TableDto table)
+    {
+        if (!table.HasUpcomingReservation)
+        {
+            await ReceiveTableAsync(table, reservationId: null);
+            return;
+        }
+
+        using var dialog = new Form
+        {
+            Text = "Bàn có lịch đặt",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new Size(520, 245)
+        };
+
+        var customer = string.IsNullOrWhiteSpace(table.NextReservationCustomerName)
+            ? "Khách"
+            : table.NextReservationCustomerName.Trim();
+        var guest = table.NextReservationGuestCount.HasValue
+            ? Environment.NewLine + $"Số khách: {table.NextReservationGuestCount.Value}"
+            : "";
+
+        var content = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Padding = new Padding(22, 18, 22, 12),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Font = AppFonts.BodyMd,
+            Text =
+                $"{table.TableName} có lịch đặt tiếp theo:" +
+                Environment.NewLine +
+                $"{ReservationDateTimeLabel(table.NextReservationTime)}" +
+                Environment.NewLine +
+                $"Khách: {customer}{guest}" +
+                Environment.NewLine + Environment.NewLine +
+                "Chọn cách nhận bàn:"
+        };
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 62,
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(10),
+            WrapContents = false
+        };
+
+        var btnReservation = new Button
+        {
+            Text = "Nhận bàn đặt",
+            DialogResult = DialogResult.Yes,
+            Width = 130,
+            Height = 36,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat
+        };
+        btnReservation.FlatAppearance.BorderSize = 0;
+
+        var btnWalkIn = new Button
+        {
+            Text = "Nhận bàn thường",
+            DialogResult = DialogResult.No,
+            Width = 140,
+            Height = 36,
+            FlatStyle = FlatStyle.Flat
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy",
+            DialogResult = DialogResult.Cancel,
+            Width = 90,
+            Height = 36,
+            FlatStyle = FlatStyle.Flat
+        };
+
+        buttons.Controls.Add(btnReservation);
+        buttons.Controls.Add(btnWalkIn);
+        buttons.Controls.Add(btnCancel);
+        dialog.Controls.Add(content);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = btnReservation;
+        dialog.CancelButton = btnCancel;
+
+        var owner = FindForm();
+        var result = owner is null
+            ? dialog.ShowDialog()
+            : dialog.ShowDialog(owner);
+
+        if (result == DialogResult.Cancel)
+            return;
+
+        var reservationId = result == DialogResult.Yes
+            ? table.NextReservationId
+            : null;
+
+        await ReceiveTableAsync(table, reservationId);
+    }
+
+    private async Task ReceiveTableAsync(
+        TableDto table,
+        int? reservationId)
+    {
+        if (_btnCheckIn is not null)
+            _btnCheckIn.Enabled = false;
+
         try
         {
-            await _api.CheckInTableAsync(_selectedTable.Id, _userId);
+            await _api.CheckInTableAsync(
+                table.Id,
+                _userId,
+                reservationId);
+
             await LoadAllAsync();
+
+            if (reservationId.HasValue)
+            {
+                MessageBox.Show(
+                    "Đã nhận bàn đặt. Lượt đặt được chuyển sang Đã nhận bàn.",
+                    "Nhận bàn",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             panelDetail.Visible = false;
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không nhận bàn được: {ex.Message}");
+            MessageBox.Show(
+                $"Không nhận bàn được: {ex.Message}",
+                "Nhận bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
         finally
         {
-            if (_btnCheckIn is not null) _btnCheckIn.Enabled = true;
+            if (_btnCheckIn is not null)
+                _btnCheckIn.Enabled = true;
         }
     }
 
@@ -488,6 +810,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.PaymentRequested += OnPaymentRequested;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
         NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated += OnReservationUpdatedRealtime;
         NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
@@ -499,6 +822,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.PaymentRequested -= OnPaymentRequested;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
         NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated -= OnReservationUpdatedRealtime;
         NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
@@ -520,6 +844,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
     private void OnOrderUpdated(OrderUpdatedPayload p) =>
         QueueRefresh(tables: true, items: true);
+
+    private void OnReservationUpdatedRealtime(ReservationUpdatedPayload p) =>
+        QueueRefresh(tables: true, items: false);
 
     private void OnConnectionRestored() =>
         QueueRefresh(tables: true, items: true);
@@ -837,7 +1164,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         var lblFilter = new Label { Text = "Trạng thái:", Font = AppFonts.BodyMd, Location = new Point(16, 18), AutoSize = true };
         var cbStatusFilter = new ComboBox { Location = new Point(120, 14), Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
-        cbStatusFilter.Items.AddRange(new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" });
+        cbStatusFilter.Items.AddRange(new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" });
         cbStatusFilter.SelectedIndex = 0;
 
         var btnNew = new Button { Text = "+ Đặt bàn mới", Location = new Point(430, 12), Size = new Size(150, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
@@ -862,8 +1189,8 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
 
-        var upcomingStatusItems = new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" };
-        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất" };
+        var upcomingStatusItems = new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" };
+        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất", "Chờ xác nhận" };
 
         void ApplyModeToStatusCombo()
         {
@@ -883,18 +1210,28 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 int? statusFilter;
                 if (chkHistory.Checked)
                 {
-                    // Lich su: luon loc theo 1 ngay cu the (co the la qua khu),
-                    // muc 0 = "Tat ca" (khong loc trang thai), tu 1 tro di khop
-                    // thang voi ReservationStatusEnum (index-1).
                     dateFilter = dtpHistoryDate.Value;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? null : cbStatusFilter.SelectedIndex - 1;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        1 => 0, // Đã xác nhận
+                        2 => 1, // Đã nhận bàn
+                        3 => 2, // Đã hủy
+                        4 => 3, // Không đến
+                        5 => 4, // Hoàn tất
+                        6 => 5, // Chờ xác nhận
+                        _ => null
+                    };
                 }
                 else
                 {
-                    // Sap toi (mac dinh): khong loc ngay (Backend tu tra tu HOM
-                    // NAY tro di), muc 0 = "Dang cho" (DaXacNhan = 0).
+                    // Mặc định ưu tiên yêu cầu Web/nhân viên vừa tạo đang chờ Quản lý duyệt.
                     dateFilter = null;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? 0 : null;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        0 => 5, // Chờ quản lý xác nhận
+                        1 => 0, // Đã xác nhận
+                        _ => null
+                    };
                 }
 
                 var reservations = await _api.GetReservationsAsync(date: dateFilter, status: statusFilter);
@@ -1032,9 +1369,100 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             row.Controls.Add(lblCancelInfo);
         }
 
-        if (statusIndex == 0 || statusIndex == 5)
+        if (statusIndex == 5)
         {
-            var btnCheckIn = new Button { Text = "Nhận bàn", Location = new Point(320, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Tertiary, ForeColor = Color.White, Font = AppFonts.LabelMd };
+            if (CanConfirmReservations)
+            {
+                var btnConfirm = new Button
+                {
+                    Text = "Xác nhận",
+                    Location = new Point(320, 32),
+                    Size = new Size(100, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = AppColors.Success,
+                    ForeColor = Color.White,
+                    Font = AppFonts.LabelMd
+                };
+                btnConfirm.FlatAppearance.BorderSize = 0;
+                btnConfirm.Click += async (s, e) =>
+                {
+                    if (MessageBox.Show(
+                        $"Xác nhận đặt {r.TableName} lúc {r.ReservationTime:HH:mm dd/MM} cho \"{r.CustomerName}\"?",
+                        "Xác nhận đặt bàn",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question) != DialogResult.Yes)
+                    {
+                        return;
+                    }
+
+                    btnConfirm.Enabled = false;
+                    try
+                    {
+                        await _api.UpdateReservationStatusAsync(r.Id, 0);
+                        await onChanged();
+                        MessageBox.Show(
+                            "Đã xác nhận đặt bàn. Lịch đặt hiện đã được đồng bộ lên sơ đồ bàn Mobile và WinForms.",
+                            "Đặt bàn",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Không xác nhận được: {ex.Message}");
+                        btnConfirm.Enabled = true;
+                    }
+                };
+                row.Controls.Add(btnConfirm);
+            }
+
+            var btnReject = new Button
+            {
+                Text = "Hủy",
+                Location = new Point(430, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Error,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
+            btnReject.FlatAppearance.BorderSize = 0;
+            btnReject.Click += async (s, e) =>
+            {
+                if (MessageBox.Show(
+                    $"Hủy yêu cầu đặt bàn của \"{r.CustomerName}\"?",
+                    "Xác nhận",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                btnReject.Enabled = false;
+                try
+                {
+                    await _api.UpdateReservationStatusAsync(r.Id, 2);
+                    await onChanged();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Không hủy được: {ex.Message}");
+                    btnReject.Enabled = true;
+                }
+            };
+            row.Controls.Add(btnReject);
+        }
+        else if (statusIndex == 0)
+        {
+            var btnCheckIn = new Button
+            {
+                Text = "Nhận bàn",
+                Location = new Point(320, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Tertiary,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
             btnCheckIn.FlatAppearance.BorderSize = 0;
             btnCheckIn.Click += async (s, e) =>
             {
@@ -1069,7 +1497,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                     ? $"Đã quá thời gian giữ đến {holdUntil:HH:mm}. Đánh dấu \"{r.CustomerName}\" không đến và nhả bàn?"
                     : $"Hủy đặt bàn của \"{r.CustomerName}\"?";
 
-                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes)
+                    return;
+
                 btnCancel.Enabled = false;
                 try
                 {

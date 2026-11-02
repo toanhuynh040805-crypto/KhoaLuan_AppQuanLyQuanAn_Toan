@@ -599,6 +599,16 @@ public class OrdersController : ControllerBase
             var reservation = await _db.Reservations.FindAsync(request.ReservationId.Value);
             if (reservation is not null)
             {
+                if (reservation.Status != ReservationStatus.DaXacNhan)
+                {
+                    return Conflict(new
+                    {
+                        message = reservation.Status == ReservationStatus.ChoXacNhan
+                            ? "Lượt đặt bàn đang chờ Quản lý xác nhận."
+                            : "Lượt đặt bàn không còn ở trạng thái có thể nhận bàn."
+                    });
+                }
+
                 reservation.Status = ReservationStatus.DaNhanBan;
 
                 // Gắn khách thành viên của lượt đặt bàn vào đơn ngay khi nhận bàn
