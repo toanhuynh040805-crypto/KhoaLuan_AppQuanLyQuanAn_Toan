@@ -759,6 +759,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.PaymentRequested += OnPaymentRequested;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
         NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated += OnReservationUpdatedRealtime;
         NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
@@ -770,6 +771,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         NotificationHubClient.PaymentRequested -= OnPaymentRequested;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
         NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated -= OnReservationUpdatedRealtime;
         NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
@@ -791,6 +793,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
     private void OnOrderUpdated(OrderUpdatedPayload p) =>
         QueueRefresh(tables: true, items: true);
+
+    private void OnReservationUpdatedRealtime(ReservationUpdatedPayload p) =>
+        QueueRefresh(tables: true, items: false);
 
     private void OnConnectionRestored() =>
         QueueRefresh(tables: true, items: true);
