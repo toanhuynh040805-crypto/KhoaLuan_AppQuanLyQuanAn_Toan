@@ -180,50 +180,55 @@ public class TablesController : ControllerBase
 
             var result = new List<TableListItem>();
 
-            await using var reader = await command.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
+            // Đóng DataReader trước khi gọi EF Core ở bước enrich bên dưới.
+            // Nếu giữ reader mở rồi chạy thêm query trên cùng DbConnection,
+            // SQL Server (khi MARS tắt) sẽ trả lỗi 500:
+            // "There is already an open DataReader associated with this Connection".
+            await using (var reader = await command.ExecuteReaderAsync())
             {
-                var status = reader.GetString(3);
-                var amount = reader.GetDecimal(7);
-                var reservedCustomerName =
-                    reader.IsDBNull(8) ? null : reader.GetString(8);
-                var numberOfGuests =
-                    reader.IsDBNull(9) ? (int?)null : reader.GetInt32(9);
-                                var linkedOrderId =
-                    reader.IsDBNull(10) ? (int?)null : reader.GetInt32(10);
-                var isLinkPrimary =
-                    !reader.IsDBNull(11) && reader.GetBoolean(11);
-                var linkedWith =
-                    reader.IsDBNull(12) ? null : reader.GetString(12);
-                string? customerName = reservedCustomerName;
-
-                if (string.IsNullOrWhiteSpace(customerName) &&
-                    numberOfGuests.HasValue &&
-                    numberOfGuests.Value > 0)
+                while (await reader.ReadAsync())
                 {
-                    customerName = $"{numberOfGuests.Value} khách";
-                }
+                    var status = reader.GetString(3);
+                    var amount = reader.GetDecimal(7);
+                    var reservedCustomerName =
+                        reader.IsDBNull(8) ? null : reader.GetString(8);
+                    var numberOfGuests =
+                        reader.IsDBNull(9) ? (int?)null : reader.GetInt32(9);
+                    var linkedOrderId =
+                        reader.IsDBNull(10) ? (int?)null : reader.GetInt32(10);
+                    var isLinkPrimary =
+                        !reader.IsDBNull(11) && reader.GetBoolean(11);
+                    var linkedWith =
+                        reader.IsDBNull(12) ? null : reader.GetString(12);
+                    string? customerName = reservedCustomerName;
 
-                result.Add(new TableListItem(
-                    reader.GetInt32(0),
-                    reader.GetString(1),
-                    reader.GetInt32(2),
-                    StatusToNumber(status),
-                    reader.GetInt32(4),
-                    reader.GetString(5),
-                    reader.GetString(6),
-                    canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
-                    canViewOrderDetails ? customerName : null,
-                    canViewOrderDetails ? linkedOrderId : null,
-                    canViewOrderDetails && isLinkPrimary,
-                    canViewOrderDetails ? linkedWith : null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null
-                ));
+                    if (string.IsNullOrWhiteSpace(customerName) &&
+                        numberOfGuests.HasValue &&
+                        numberOfGuests.Value > 0)
+                    {
+                        customerName = $"{numberOfGuests.Value} khách";
+                    }
+
+                    result.Add(new TableListItem(
+                        reader.GetInt32(0),
+                        reader.GetString(1),
+                        reader.GetInt32(2),
+                        StatusToNumber(status),
+                        reader.GetInt32(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
+                        canViewOrderDetails ? customerName : null,
+                        canViewOrderDetails ? linkedOrderId : null,
+                        canViewOrderDetails && isLinkPrimary,
+                        canViewOrderDetails ? linkedWith : null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                    ));
+                }
             }
 
             var normalized = result
