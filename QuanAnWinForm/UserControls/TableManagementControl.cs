@@ -17,6 +17,22 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     private TableDto? _selectedTable;
     private HashSet<int> _paymentRequestedTableIds = new();
 
+    private bool CanConfirmReservations
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin";
+        }
+    }
+
     private bool CanCompletePayment
     {
         get
@@ -1113,7 +1129,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         var lblFilter = new Label { Text = "Trạng thái:", Font = AppFonts.BodyMd, Location = new Point(16, 18), AutoSize = true };
         var cbStatusFilter = new ComboBox { Location = new Point(120, 14), Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
-        cbStatusFilter.Items.AddRange(new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" });
+        cbStatusFilter.Items.AddRange(new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" });
         cbStatusFilter.SelectedIndex = 0;
 
         var btnNew = new Button { Text = "+ Đặt bàn mới", Location = new Point(430, 12), Size = new Size(150, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
@@ -1138,8 +1154,8 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
 
-        var upcomingStatusItems = new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" };
-        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất" };
+        var upcomingStatusItems = new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" };
+        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất", "Chờ xác nhận" };
 
         void ApplyModeToStatusCombo()
         {
@@ -1159,18 +1175,28 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 int? statusFilter;
                 if (chkHistory.Checked)
                 {
-                    // Lich su: luon loc theo 1 ngay cu the (co the la qua khu),
-                    // muc 0 = "Tat ca" (khong loc trang thai), tu 1 tro di khop
-                    // thang voi ReservationStatusEnum (index-1).
                     dateFilter = dtpHistoryDate.Value;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? null : cbStatusFilter.SelectedIndex - 1;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        1 => 0, // Đã xác nhận
+                        2 => 1, // Đã nhận bàn
+                        3 => 2, // Đã hủy
+                        4 => 3, // Không đến
+                        5 => 4, // Hoàn tất
+                        6 => 5, // Chờ xác nhận
+                        _ => null
+                    };
                 }
                 else
                 {
-                    // Sap toi (mac dinh): khong loc ngay (Backend tu tra tu HOM
-                    // NAY tro di), muc 0 = "Dang cho" (DaXacNhan = 0).
+                    // Mặc định ưu tiên yêu cầu Web/nhân viên vừa tạo đang chờ Quản lý duyệt.
                     dateFilter = null;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? 0 : null;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        0 => 5, // Chờ quản lý xác nhận
+                        1 => 0, // Đã xác nhận
+                        _ => null
+                    };
                 }
 
                 var reservations = await _api.GetReservationsAsync(date: dateFilter, status: statusFilter);
@@ -1308,9 +1334,100 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             row.Controls.Add(lblCancelInfo);
         }
 
-        if (statusIndex == 0 || statusIndex == 5)
+        if (statusIndex == 5)
         {
-            var btnCheckIn = new Button { Text = "Nhận bàn", Location = new Point(320, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Tertiary, ForeColor = Color.White, Font = AppFonts.LabelMd };
+            if (CanConfirmReservations)
+            {
+                var btnConfirm = new Button
+                {
+                    Text = "Xác nhận",
+                    Location = new Point(320, 32),
+                    Size = new Size(100, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = AppColors.Success,
+                    ForeColor = Color.White,
+                    Font = AppFonts.LabelMd
+                };
+                btnConfirm.FlatAppearance.BorderSize = 0;
+                btnConfirm.Click += async (s, e) =>
+                {
+                    if (MessageBox.Show(
+                        $"Xác nhận đặt {r.TableName} lúc {r.ReservationTime:HH:mm dd/MM} cho \"{r.CustomerName}\"?",
+                        "Xác nhận đặt bàn",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question) != DialogResult.Yes)
+                    {
+                        return;
+                    }
+
+                    btnConfirm.Enabled = false;
+                    try
+                    {
+                        await _api.UpdateReservationStatusAsync(r.Id, 0);
+                        await onChanged();
+                        MessageBox.Show(
+                            "Đã xác nhận đặt bàn. Lịch đặt hiện đã được đồng bộ lên sơ đồ bàn Mobile và WinForms.",
+                            "Đặt bàn",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Không xác nhận được: {ex.Message}");
+                        btnConfirm.Enabled = true;
+                    }
+                };
+                row.Controls.Add(btnConfirm);
+            }
+
+            var btnReject = new Button
+            {
+                Text = "Hủy",
+                Location = new Point(430, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Error,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
+            btnReject.FlatAppearance.BorderSize = 0;
+            btnReject.Click += async (s, e) =>
+            {
+                if (MessageBox.Show(
+                    $"Hủy yêu cầu đặt bàn của \"{r.CustomerName}\"?",
+                    "Xác nhận",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                btnReject.Enabled = false;
+                try
+                {
+                    await _api.UpdateReservationStatusAsync(r.Id, 2);
+                    await onChanged();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Không hủy được: {ex.Message}");
+                    btnReject.Enabled = true;
+                }
+            };
+            row.Controls.Add(btnReject);
+        }
+        else if (statusIndex == 0)
+        {
+            var btnCheckIn = new Button
+            {
+                Text = "Nhận bàn",
+                Location = new Point(320, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Tertiary,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
             btnCheckIn.FlatAppearance.BorderSize = 0;
             btnCheckIn.Click += async (s, e) =>
             {
@@ -1345,7 +1462,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                     ? $"Đã quá thời gian giữ đến {holdUntil:HH:mm}. Đánh dấu \"{r.CustomerName}\" không đến và nhả bàn?"
                     : $"Hủy đặt bàn của \"{r.CustomerName}\"?";
 
-                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes)
+                    return;
+
                 btnCancel.Enabled = false;
                 try
                 {
