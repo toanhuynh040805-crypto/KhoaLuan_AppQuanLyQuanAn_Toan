@@ -167,17 +167,6 @@ class TableService {
     );
   }
 
-  Future<void> cancelReservation({
-    required int reservationId,
-  }) async {
-    // ReservationStatus.DaHuy = 2. Dùng chung endpoint với WinForms để
-    // Backend lưu CancelledByUserId + CancelledAt và phát realtime.
-    await _apiClient.putValue(
-      '/reservations/$reservationId/status',
-      2,
-    );
-  }
-
   Future<int?> updateGuestCount({
     required int tableId,
     required int? guestCount,
