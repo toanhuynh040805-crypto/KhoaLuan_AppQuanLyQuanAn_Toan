@@ -117,9 +117,6 @@ public sealed class MobileTableReceiveController : ControllerBase
                         WHERE TableId = @TableId
                           AND CONVERT(NVARCHAR(50), Status) IN
                               (
-                                  N'ChoXacNhan',
-                                  N'Chờ xác nhận',
-                                  N'Cho Xac Nhan',
                                   N'DaXacNhan',
                                   N'Đã xác nhận',
                                   N'Da Xac Nhan'
@@ -139,9 +136,6 @@ public sealed class MobileTableReceiveController : ControllerBase
                         WHERE ReservationId = @SelectedReservationId
                           AND CONVERT(NVARCHAR(50), Status) IN
                               (
-                                  N'ChoXacNhan',
-                                  N'Chờ xác nhận',
-                                  N'Cho Xac Nhan',
                                   N'DaXacNhan',
                                   N'Đã xác nhận',
                                   N'Da Xac Nhan'
