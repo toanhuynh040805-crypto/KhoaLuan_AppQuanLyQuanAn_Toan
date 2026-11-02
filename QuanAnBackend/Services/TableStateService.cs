@@ -78,8 +78,7 @@ public sealed class TableStateService
             .AnyAsync(reservation =>
                 physicalTableIds.Contains(reservation.TableId) &&
                 reservation.ReservationTime >= current.AddDays(-1) &&
-                (reservation.Status == ReservationStatus.ChoXacNhan ||
-                 reservation.Status == ReservationStatus.DaXacNhan) &&
+                reservation.Status == ReservationStatus.DaXacNhan &&
                 reservation.ReservationTime <= current.Add(UpcomingReservationWindow),
                 cancellationToken);
 
