@@ -1155,6 +1155,19 @@ public class ReservationsController : ControllerBase
             return accessError;
 
         var previousStatus = reservation.Status;
+
+        if (previousStatus == ReservationStatus.ChoXacNhan &&
+            status == ReservationStatus.DaXacNhan &&
+            !User.IsInRole("QuanLy"))
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new
+                {
+                    message = "Chỉ tài khoản Quản lý mới được xác nhận yêu cầu đặt bàn."
+                });
+        }
+
         reservation.Status = status;
 
         if (status == ReservationStatus.DaHuy || status == ReservationStatus.KhongDen)
