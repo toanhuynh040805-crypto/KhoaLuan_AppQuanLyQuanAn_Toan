@@ -83,13 +83,15 @@ public class MobileDiningController : ControllerBase
                     item => item.OrderId,
                     item => item.Amount);
 
+        var now = DateTime.Now;
         var reservations = await _db.Reservations
             .AsNoTracking()
             .Where(reservation =>
                 tableIds.Contains(reservation.TableId) &&
-                (reservation.Status == ReservationStatus.DaXacNhan ||
+                reservation.ReservationTime >= now.AddDays(-1) &&
+                (reservation.Status == ReservationStatus.ChoXacNhan ||
+                 reservation.Status == ReservationStatus.DaXacNhan ||
                  reservation.Status == ReservationStatus.DaNhanBan))
-            .OrderByDescending(reservation => reservation.ReservationTime)
             .ToListAsync();
 
         var physicalGroups = tables
@@ -120,9 +122,32 @@ public class MobileDiningController : ControllerBase
                     .OrderByDescending(item => item.OrderTime)
                     .FirstOrDefault();
 
-                var reservation = reservations
-                    .Where(item => item.TableId == table.TableId)
+                var physicalTableIds = tables
+                    .Where(candidate =>
+                        candidate.AreaId == table.AreaId &&
+                        string.Equals(
+                            candidate.TableName?.Trim(),
+                            table.TableName?.Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                    .Select(candidate => candidate.TableId)
+                    .ToHashSet();
+
+                var currentReservation = reservations
+                    .Where(item =>
+                        physicalTableIds.Contains(item.TableId) &&
+                        item.Status == ReservationStatus.DaNhanBan)
                     .OrderByDescending(item => item.ReservationTime)
+                    .ThenByDescending(item => item.ReservationId)
+                    .FirstOrDefault();
+
+                var nextReservation = reservations
+                    .Where(item =>
+                        physicalTableIds.Contains(item.TableId) &&
+                        (item.Status == ReservationStatus.ChoXacNhan ||
+                         item.Status == ReservationStatus.DaXacNhan) &&
+                        item.ReservationTime.AddMinutes(item.DurationMinutes) >= now)
+                    .OrderBy(item => item.ReservationTime)
+                    .ThenBy(item => item.ReservationId)
                     .FirstOrDefault();
 
                 var amount = order is not null &&
@@ -133,27 +158,47 @@ public class MobileDiningController : ControllerBase
                     : 0m;
 
                 var startedAt = order?.OrderTime ??
-                                reservation?.ReservationTime;
+                                currentReservation?.ReservationTime;
+
+                var displayStatus =
+                    table.Status == TableStatus.Trong &&
+                    nextReservation is not null
+                        ? TableStatus.DaDat
+                        : table.Status;
+
+                var currentSessionType =
+                    table.Status == TableStatus.DangPhucVu
+                        ? currentReservation is not null
+                            ? "Reservation"
+                            : "WalkIn"
+                        : null;
 
                 return new
                 {
                     id = table.TableId,
                     tableName = table.TableName,
                     capacity = table.Capacity,
-                    status = table.Status.ToString(),
+                    status = displayStatus.ToString(),
                     areaId = table.AreaId,
                     areaName = table.Area?.AreaName ?? "",
                     tableType = table.TableType.ToString(),
                     amount = table.Status == TableStatus.DangPhucVu
                         ? amount
                         : (decimal?)null,
-                    customerName = reservation?.CustomerName,
-                    guestCount = reservation is not null &&
-                                 (table.Status == TableStatus.DangPhucVu ||
-                                  table.Status == TableStatus.DaDat)
-                        ? reservation.NumberOfGuests
-                        : (int?)null,
-                    time = startedAt?.ToString("HH:mm")
+                    customerName = currentReservation?.CustomerName ??
+                        (table.Status == TableStatus.DangPhucVu
+                            ? null
+                            : nextReservation?.CustomerName),
+                    guestCount = currentReservation?.NumberOfGuests ??
+                        (table.Status == TableStatus.DangPhucVu
+                            ? (int?)null
+                            : nextReservation?.NumberOfGuests),
+                    time = startedAt?.ToString("HH:mm"),
+                    currentSessionType,
+                    nextReservationId = nextReservation?.ReservationId,
+                    nextReservationTime = nextReservation?.ReservationTime,
+                    nextReservationCustomerName = nextReservation?.CustomerName,
+                    nextReservationGuestCount = nextReservation?.NumberOfGuests
                 };
             })
             .ToList();
