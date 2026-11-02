@@ -154,11 +154,15 @@ class TableService {
   Future<void> receiveTable({
     required int tableId,
     int customerCount = 0,
+    String mode = 'walkin',
+    int? reservationId,
   }) async {
     await _apiClient.put(
       '/mobile/dining/tables/$tableId/receive',
       body: {
         'customerCount': customerCount,
+        'mode': mode,
+        'reservationId': reservationId,
       },
     );
   }

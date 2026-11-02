@@ -42,7 +42,12 @@ internal sealed record TableListItem(
     string? customerName,
     int? linkedOrderId,
     bool isLinkPrimary,
-    string? linkedWith
+    string? linkedWith,
+    string? currentSessionType,
+    int? nextReservationId,
+    DateTime? nextReservationTime,
+    string? nextReservationCustomerName,
+    int? nextReservationGuestCount
 );
 
 [ApiController]
@@ -76,6 +81,12 @@ public class TablesController : ControllerBase
 
         if (shouldClose)
             await connection.OpenAsync();
+
+        var canViewOrderDetails =
+            User.IsInRole("QuanLy") ||
+            User.IsInRole("ThuNgan") ||
+            User.IsInRole("PhucVu") ||
+            User.IsInRole("Bep");
 
         try
         {
@@ -168,11 +179,6 @@ public class TablesController : ControllerBase
             command.Parameters.Add(areaParameter);
 
             var result = new List<TableListItem>();
-            var canViewOrderDetails =
-                User.IsInRole("QuanLy") ||
-                User.IsInRole("ThuNgan") ||
-                User.IsInRole("PhucVu") ||
-                User.IsInRole("Bep");
 
             await using var reader = await command.ExecuteReaderAsync();
 
@@ -211,7 +217,12 @@ public class TablesController : ControllerBase
                     canViewOrderDetails ? customerName : null,
                     canViewOrderDetails ? linkedOrderId : null,
                     canViewOrderDetails && isLinkPrimary,
-                    canViewOrderDetails ? linkedWith : null
+                    canViewOrderDetails ? linkedWith : null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
                 ));
             }
 
@@ -228,6 +239,10 @@ public class TablesController : ControllerBase
                 .OrderBy(table => table.areaName)
                 .ThenBy(table => table.tableName)
                 .ToList();
+
+            normalized = await EnrichTableReservationInfoAsync(
+                normalized,
+                canViewOrderDetails);
 
             if (TryParseStatusFilter(statusFilter, out var requestedStatus))
             {
@@ -272,8 +287,17 @@ public class TablesController : ControllerBase
                     null,
                     null,
                     false,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     null))
                 .ToList();
+
+            normalized = await EnrichTableReservationInfoAsync(
+                normalized,
+                canViewOrderDetails);
 
             if (TryParseStatusFilter(statusFilter, out var requestedStatus))
             {
@@ -289,6 +313,105 @@ public class TablesController : ControllerBase
             if (shouldClose)
                 await connection.CloseAsync();
         }
+    }
+
+    private async Task<List<TableListItem>> EnrichTableReservationInfoAsync(
+        List<TableListItem> tables,
+        bool includeCustomerDetails)
+    {
+        if (tables.Count == 0)
+            return tables;
+
+        var now = DateTime.Now;
+        var activeReservations = await _db.Reservations
+            .AsNoTracking()
+            .Include(reservation => reservation.Table)
+            .Where(reservation =>
+                reservation.ReservationTime >= now.AddDays(-1) &&
+                (reservation.Status == ReservationStatus.DaXacNhan ||
+                 reservation.Status == ReservationStatus.DaNhanBan))
+            .ToListAsync();
+
+        string Key(int areaId, string? tableName) =>
+            $"{areaId}|{NormalizeTableName(tableName)}";
+
+        var reservationsByPhysicalTable = activeReservations
+            .Where(reservation => reservation.Table is not null)
+            .GroupBy(reservation =>
+                Key(reservation.Table!.AreaId, reservation.Table.TableName))
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        return tables.Select(table =>
+        {
+            reservationsByPhysicalTable.TryGetValue(
+                Key(table.areaId, table.tableName),
+                out var reservations);
+
+            reservations ??= new List<Reservation>();
+
+            var currentReservation = reservations
+                .Where(reservation =>
+                    reservation.Status == ReservationStatus.DaNhanBan)
+                .OrderByDescending(reservation => reservation.ReservationTime)
+                .ThenByDescending(reservation => reservation.ReservationId)
+                .FirstOrDefault();
+
+            var nextReservation = reservations
+                .Where(reservation =>
+                    reservation.Status == ReservationStatus.DaXacNhan &&
+                    reservation.ReservationTime
+                        .AddMinutes(reservation.DurationMinutes) >= now)
+                .OrderBy(reservation => reservation.ReservationTime)
+                .ThenBy(reservation => reservation.ReservationId)
+                .FirstOrDefault();
+
+            var displayStatus = table.status;
+
+            if (displayStatus == (int)TableStatus.DaDat &&
+                nextReservation is null &&
+                currentReservation is null)
+            {
+                // Dữ liệu cũ có thể đã đánh dấu Đã đặt ngay từ lúc Chờ xác nhận.
+                // Không để trạng thái cũ làm reservation chưa duyệt xuất hiện trên sơ đồ.
+                displayStatus = (int)TableStatus.Trong;
+            }
+
+            if (displayStatus == (int)TableStatus.Trong &&
+                nextReservation is not null)
+            {
+                // Chỉ reservation đã được Quản lý xác nhận mới xuất hiện trên sơ đồ.
+                displayStatus = (int)TableStatus.DaDat;
+            }
+
+            var currentSessionType =
+                table.status == (int)TableStatus.DangPhucVu
+                    ? currentReservation is not null
+                        ? "Reservation"
+                        : "WalkIn"
+                    : null;
+
+            var displayCustomerName = currentReservation?.CustomerName;
+            if (string.IsNullOrWhiteSpace(displayCustomerName) &&
+                table.status != (int)TableStatus.DangPhucVu)
+            {
+                displayCustomerName = nextReservation?.CustomerName;
+            }
+
+            return table with
+            {
+                status = displayStatus,
+                customerName = string.IsNullOrWhiteSpace(displayCustomerName)
+                    ? table.customerName
+                    : displayCustomerName,
+                currentSessionType = currentSessionType,
+                nextReservationId = nextReservation?.ReservationId,
+                nextReservationTime = nextReservation?.ReservationTime,
+                nextReservationCustomerName = includeCustomerDetails
+                    ? nextReservation?.CustomerName
+                    : null,
+                nextReservationGuestCount = nextReservation?.NumberOfGuests
+            };
+        }).ToList();
     }
 
     private static string NormalizeTableName(string? value)
@@ -444,7 +567,7 @@ public class TablesController : ControllerBase
         if (table.Status == TableStatus.DaDat)
         {
             var reservations = await _db.Reservations
-                .Where(r => r.TableId == id && (r.Status == ReservationStatus.DaXacNhan || r.Status == ReservationStatus.ChoXacNhan))
+                .Where(r => r.TableId == id && r.Status == ReservationStatus.DaXacNhan)
                 .ToListAsync();
             var nearest = reservations
                 .OrderBy(r => Math.Abs((r.ReservationTime - DateTime.Now).TotalMinutes))

@@ -143,6 +143,9 @@ class RealtimeService {
   final StreamController<TableStatusRealtimeEvent> _tableStatusController =
       StreamController<TableStatusRealtimeEvent>.broadcast();
 
+  final StreamController<void> _reservationController =
+      StreamController<void>.broadcast();
+
   final StreamController<TableLockTakenOverRealtimeEvent>
       _tableLockTakeoverController =
       StreamController<TableLockTakenOverRealtimeEvent>.broadcast();
@@ -161,6 +164,9 @@ class RealtimeService {
 
   Stream<TableStatusRealtimeEvent> get tableStatusChanges =>
       _tableStatusController.stream;
+
+  Stream<void> get reservationChanges =>
+      _reservationController.stream;
 
   Stream<TableLockTakenOverRealtimeEvent> get tableLockTakeovers =>
       _tableLockTakeoverController.stream;
@@ -288,6 +294,11 @@ class RealtimeService {
           TableLockTakenOverRealtimeEvent.fromJson(data),
         );
       },
+    );
+
+    connection.on(
+      'ReservationUpdated',
+      (_) => _reservationController.add(null),
     );
 
     connection.on(
