@@ -92,6 +92,29 @@ public class TableDto
     public int AreaId { get; set; }
     public string AreaName { get; set; } = "";
 
+    // Phiên hiện tại và lịch đặt tiếp theo được Backend tách riêng.
+    // Nhờ vậy một bàn có thể vừa "Có khách" vừa vẫn hiện lịch đặt tương lai.
+    public string? CurrentSessionType { get; set; } // WalkIn | Reservation
+    public int? NextReservationId { get; set; }
+    public DateTime? NextReservationTime { get; set; }
+    public string? NextReservationCustomerName { get; set; }
+    public int? NextReservationGuestCount { get; set; }
+
+    public bool HasUpcomingReservation =>
+        NextReservationId.HasValue && NextReservationTime.HasValue;
+
+    public bool IsReservationSession =>
+        string.Equals(
+            CurrentSessionType,
+            "Reservation",
+            StringComparison.OrdinalIgnoreCase);
+
+    public bool IsWalkInSession =>
+        string.Equals(
+            CurrentSessionType,
+            "WalkIn",
+            StringComparison.OrdinalIgnoreCase);
+
     // Ghép bàn: null nếu bàn không nằm trong nhóm ghép
     public int? LinkedOrderId { get; set; }
     public bool IsLinkPrimary { get; set; }
