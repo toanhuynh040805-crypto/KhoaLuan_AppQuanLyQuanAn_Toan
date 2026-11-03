@@ -572,6 +572,45 @@ public class ApiService
         return res ?? new List<OrderItemStatusDto>();
     }
 
+    public async Task<KitchenPrioritySnapshotDto> GetKitchenPrioritiesAsync()
+    {
+        using var res = await _http.GetAsync("/api/mobile/ops/kitchen-priorities");
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        return await res.Content.ReadFromJsonAsync<KitchenPrioritySnapshotDto>(JsonOpts)
+            ?? new KitchenPrioritySnapshotDto();
+    }
+
+    public async Task SetKitchenItemPriorityAsync(
+        int orderItemId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/item/{orderItemId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    public async Task SetKitchenTablePriorityAsync(
+        int tableId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/table/{tableId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
     // Cập nhật trạng thái món ăn kèm userId, lý do hủy và RowVer - trả về trạng
     // thái THẬT SỰ đang có ở Backend sau khi cập nhật (dùng để đồng bộ lại UI,
     // tránh lệch trạng thái nếu có sự cố mạng/SignalR trong lúc gọi).
