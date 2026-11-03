@@ -459,13 +459,6 @@ public class MobileTablesCompatibilityController : ControllerBase
                 request.TargetTableId
             );
 
-            targetStatus = await NormalizeStaleReservedTargetAsync(
-                connection,
-                transaction,
-                request.TargetTableId,
-                targetStatus
-            );
-
             if (sourceStatus is null || targetStatus is null)
                 return NotFound(new { message = "Không tìm thấy bàn" });
 
@@ -771,6 +764,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                 connection,
                 transaction,
                 request.TargetTableId
+            );
+
+            targetStatus = await NormalizeStaleReservedTargetAsync(
+                connection,
+                transaction,
+                request.TargetTableId,
+                targetStatus
             );
 
             if (sourceStatus is null || targetStatus is null)
