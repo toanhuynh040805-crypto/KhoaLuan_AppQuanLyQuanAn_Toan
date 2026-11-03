@@ -1290,8 +1290,34 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
 
     try {
-      final PaymentPreview preview = await AppServices.paymentService
-          .getPreview(tableId: currentTable.id);
+      final PaymentPreview initialPreview =
+          await AppServices.paymentService.getPreview(
+        tableId: currentTable.id,
+        customerId: _memberCustomer?.id,
+      );
+
+      if (!mounted || _closingAfterPayment) return;
+
+      int redeemPoints = 0;
+      if (initialPreview.maxRedeemablePoints > 0) {
+        final int? selectedPoints =
+            await _selectRedeemPoints(initialPreview);
+
+        if (!mounted || selectedPoints == null || _closingAfterPayment) {
+          return;
+        }
+
+        redeemPoints = selectedPoints;
+      }
+
+      final PaymentPreview preview =
+          redeemPoints > 0
+              ? await AppServices.paymentService.getPreview(
+                  tableId: currentTable.id,
+                  customerId: initialPreview.customerId,
+                  redeemPoints: redeemPoints,
+                )
+              : initialPreview;
 
       if (!mounted || _closingAfterPayment) return;
 
@@ -1317,6 +1343,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
         tableId: currentTable.id,
         employeeCode: appEmployee.employeeCode,
         paymentMethod: payment.method,
+        customerId: preview.customerId,
+        redeemPoints: redeemPoints,
         transactionRef: payment.transactionRef,
       );
 
@@ -1332,6 +1360,141 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
   }
 
+  Future<int?> _selectRedeemPoints(
+    PaymentPreview preview,
+  ) async {
+    if (preview.maxRedeemablePoints <= 0) return 0;
+
+    final TextEditingController controller =
+        TextEditingController(text: '0');
+    int selectedPoints = 0;
+
+    try {
+      return await showDialog<int>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            void updatePoints(String value) {
+              final String digits =
+                  value.replaceAll(RegExp(r'[^0-9]'), '');
+              int next = int.tryParse(digits) ?? 0;
+
+              if (next > preview.maxRedeemablePoints) {
+                next = preview.maxRedeemablePoints;
+                controller.value = TextEditingValue(
+                  text: next.toString(),
+                  selection: TextSelection.collapsed(
+                    offset: next.toString().length,
+                  ),
+                );
+              }
+
+              selectedPoints = next;
+              setDialogState(() {});
+            }
+
+            final int discount =
+                selectedPoints * preview.loyaltyPointValue;
+            final int estimatedTotal =
+                (preview.totalAmount - discount)
+                    .clamp(0, 1 << 31)
+                    .toInt();
+
+            return AlertDialog(
+              title: const Text('Dùng điểm thành viên'),
+              content: SizedBox(
+                width: 360,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      preview.customerName?.trim().isNotEmpty == true
+                          ? preview.customerName!
+                          : 'Khách hàng thành viên',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Hiện có ${preview.loyaltyPointBalance} điểm · '
+                      '1 điểm = ${_formatMoney(preview.loyaltyPointValue)}',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Hóa đơn này dùng tối đa '
+                      '${preview.maxRedeemablePoints} điểm.',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: controller,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Số điểm muốn dùng',
+                        border: OutlineInputBorder(),
+                        suffixText: 'điểm',
+                      ),
+                      onChanged: updatePoints,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          controller.text =
+                              preview.maxRedeemablePoints.toString();
+                          updatePoints(controller.text);
+                        },
+                        child: const Text('Dùng tối đa'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Giảm: ${_formatMoney(discount)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.green,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tạm tính còn: ${_formatMoney(estimatedTotal)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Hủy thanh toán'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, 0),
+                  child: const Text('Không dùng điểm'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, selectedPoints),
+                  child: const Text('Áp dụng'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
   Future<void> _setTablePriority() async {
     if (!_canOrder) {
       _showRoleDenied('ưu tiên bàn');
