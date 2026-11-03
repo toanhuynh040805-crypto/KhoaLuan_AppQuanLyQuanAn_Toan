@@ -10,11 +10,9 @@ namespace QuanAnWinForm.UserControls;
 //
 // BỔ SUNG (khách hàng thân thiết): thêm ô tìm khách theo SĐT ngay trên gio
 // hàng - nếu tìm/gắn được khách, khách sẽ được TỰ ĐỘNG tích điểm khi thanh
-// toán thành công (xem PaymentsController.Create bên Backend). Đổi điểm lấy
-// giảm giá NGAY TẠI POS chưa làm ở bản này (API Backend đã hỗ trợ sẵn qua
-// tham số RedeemPoints - xem CreatePaymentAsync trong ApiService) - việc đổi
-// điểm hiện thực hiện ở màn Khách hàng (CustomerManagementControl) bằng
-// cộng/trừ điểm thủ công.
+// toán thành công (xem PaymentsController.Create bên Backend). Khi thanh toán,
+// Thu ngân/Quản lý có thể chọn số điểm khách muốn đổi; preview bill/QR và
+// CreatePayment đều dùng cùng dữ liệu Backend để không lệch số tiền.
 public partial class SalesControl : UserControl
 {
     private readonly ApiService _api = new();
@@ -2226,14 +2224,41 @@ public partial class SalesControl : UserControl
 
             var campaignId = GetSelectedCampaignId();
 
-            // Bước 2: chỉ PREVIEW số tiền/QR. Endpoint này không tạo Payment/Invoice.
-            var preview = await _api.GetPaymentPreviewAsync(
+            // Bước 2: preview lần đầu để lấy tổng tiền sau khuyến mãi + số điểm
+            // thành viên có thể dùng. Nếu Order đã gắn khách từ Mobile thì Backend
+            // tự trả đúng CustomerId ngay cả khi WinForms chưa tìm khách lại.
+            var initialPreview = await _api.GetPaymentPreviewAsync(
                 orderId.Value,
-                campaignId);
+                campaignId,
+                _selectedCustomer?.Id);
+
+            if (initialPreview is null)
+            {
+                MessageBox.Show("Không tải được thông tin xác nhận thanh toán.");
+                return;
+            }
+
+            var redeemPoints = PromptRedeemPoints(initialPreview);
+            if (!redeemPoints.HasValue)
+            {
+                RenderCart();
+                UpdateSendKitchenButton();
+                return;
+            }
+
+            // Có dùng điểm -> preview LẠI từ Backend để bill/QR hiển thị đúng số
+            // tiền sau đổi điểm. Không tự trừ ở UI.
+            var preview = redeemPoints.Value > 0
+                ? await _api.GetPaymentPreviewAsync(
+                    orderId.Value,
+                    campaignId,
+                    initialPreview.CustomerId ?? _selectedCustomer?.Id,
+                    redeemPoints.Value)
+                : initialPreview;
 
             if (preview is null)
             {
-                MessageBox.Show("Không tải được thông tin xác nhận thanh toán.");
+                MessageBox.Show("Không tải được số tiền sau khi áp dụng điểm.");
                 return;
             }
 
@@ -2248,7 +2273,7 @@ public partial class SalesControl : UserControl
             var confirmed = await ShowInvoiceReceiptDialogAsync(
                 confirmationInvoice,
                 $"XÁC NHẬN THANH TOÁN - {paymentLabel}",
-                showPaymentQr: method == 1,
+                showPaymentQr: method == 1 && preview.TotalAmount > 0,
                 requirePaymentConfirmation: true);
 
             if (!confirmed)
@@ -2263,8 +2288,12 @@ public partial class SalesControl : UserControl
                 orderId.Value,
                 method,
                 campaignId,
-                _selectedCustomer?.Id,
-                transactionRef: method == 1 ? preview.TransferContent : null);
+                preview.CustomerId ?? _selectedCustomer?.Id,
+                redeemPoints.Value > 0 ? redeemPoints.Value : null,
+                transactionRef:
+                    method == 1 && preview.TotalAmount > 0
+                        ? preview.TransferContent
+                        : null);
 
             if (payment is null)
             {
@@ -2282,17 +2311,32 @@ public partial class SalesControl : UserControl
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
-            // Báo riêng phần điểm tích lũy (nếu có gắn khách).
-            if (payment.CustomerId.HasValue && payment.PointsEarned > 0)
+            // Báo rõ cả điểm đã dùng và điểm vừa tích lại trên số tiền thực trả.
+            if (payment.CustomerId.HasValue)
             {
-                var emailNote = payment.EmailSent
-                    ? "\nĐã gửi hóa đơn qua email cho khách."
-                    : "";
+                var pointLines = new List<string>();
+
+                if (payment.PointsRedeemed > 0)
+                {
+                    pointLines.Add(
+                        $"Đã dùng {payment.PointsRedeemed:N0} điểm " +
+                        $"(-{payment.LoyaltyDiscount:N0}đ).");
+                }
+
+                if (payment.PointsEarned > 0)
+                    pointLines.Add($"Tích thêm {payment.PointsEarned:N0} điểm.");
+
+                pointLines.Add(
+                    $"Số điểm hiện có: {payment.LoyaltyPointBalance.GetValueOrDefault():N0} điểm.");
+
+                if (payment.EmailSent)
+                    pointLines.Add("Đã gửi hóa đơn qua email cho khách.");
 
                 MessageBox.Show(
-                    $"Đã tích {payment.PointsEarned:N0} điểm cho khách hàng.\n" +
-                    $"Số điểm hiện có: {payment.LoyaltyPointBalance:N0} điểm.{emailNote}",
-                    "Tích điểm thành công");
+                    string.Join("\n", pointLines),
+                    payment.PointsRedeemed > 0
+                        ? "Đổi điểm thành công"
+                        : "Tích điểm thành công");
             }
             else if (payment.EmailSent)
             {
@@ -2341,6 +2385,153 @@ public partial class SalesControl : UserControl
         }
     }
 
+    private int? PromptRedeemPoints(PaymentPreviewOrderDto preview)
+    {
+        if (!preview.CustomerId.HasValue ||
+            preview.MaxRedeemablePoints <= 0 ||
+            preview.LoyaltyPointBalance <= 0)
+        {
+            return 0;
+        }
+
+        using var dialog = new Form
+        {
+            Text = "Dùng điểm thành viên",
+            ClientSize = new Size(430, 300),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White,
+        };
+
+        var customerName = string.IsNullOrWhiteSpace(preview.CustomerName)
+            ? "Khách hàng thành viên"
+            : preview.CustomerName;
+
+        var lblCustomer = new Label
+        {
+            Text = customerName,
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 18),
+            Size = new Size(390, 24),
+        };
+
+        var lblBalance = new Label
+        {
+            Text =
+                $"Hiện có {preview.LoyaltyPointBalance:N0} điểm · " +
+                $"1 điểm = {preview.LoyaltyPointValue:N0}đ",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 50),
+            Size = new Size(390, 24),
+        };
+
+        var lblMax = new Label
+        {
+            Text = $"Hóa đơn này dùng tối đa {preview.MaxRedeemablePoints:N0} điểm.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 76),
+            Size = new Size(390, 24),
+        };
+
+        var numPoints = new NumericUpDown
+        {
+            Location = new Point(20, 112),
+            Size = new Size(190, 32),
+            Minimum = 0,
+            Maximum = preview.MaxRedeemablePoints,
+            Value = 0,
+            ThousandsSeparator = true,
+            Font = AppFonts.BodyMd,
+        };
+
+        var btnMax = new Button
+        {
+            Text = "Dùng tối đa",
+            Location = new Point(226, 111),
+            Size = new Size(120, 34),
+            FlatStyle = FlatStyle.Flat,
+        };
+        btnMax.Click += (s, e) =>
+            numPoints.Value = preview.MaxRedeemablePoints;
+
+        var lblEstimate = new Label
+        {
+            Font = AppFonts.LabelLg,
+            ForeColor = AppColors.Primary,
+            Location = new Point(20, 160),
+            Size = new Size(390, 46),
+        };
+
+        void RefreshEstimate()
+        {
+            var points = (int)numPoints.Value;
+            var loyaltyDiscount = points * preview.LoyaltyPointValue;
+            var amount = Math.Max(0m, preview.TotalAmount - loyaltyDiscount);
+            lblEstimate.Text =
+                $"Giảm {loyaltyDiscount:N0}đ  ·  Còn thanh toán {amount:N0}đ";
+        }
+
+        numPoints.ValueChanged += (s, e) => RefreshEstimate();
+        RefreshEstimate();
+
+        var btnNoPoints = new Button
+        {
+            Text = "Không dùng điểm",
+            DialogResult = DialogResult.No,
+            Location = new Point(20, 232),
+            Size = new Size(130, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy thanh toán",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(158, 232),
+            Size = new Size(120, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnApply = new Button
+        {
+            Text = "Áp dụng",
+            DialogResult = DialogResult.OK,
+            Location = new Point(286, 232),
+            Size = new Size(120, 38),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnApply.FlatAppearance.BorderSize = 0;
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblCustomer,
+            lblBalance,
+            lblMax,
+            numPoints,
+            btnMax,
+            lblEstimate,
+            btnNoPoints,
+            btnCancel,
+            btnApply,
+        });
+
+        dialog.AcceptButton = btnApply;
+        dialog.CancelButton = btnCancel;
+
+        var result = dialog.ShowDialog(FindForm());
+        if (result == DialogResult.OK)
+            return (int)numPoints.Value;
+        if (result == DialogResult.No)
+            return 0;
+
+        return null;
+    }
     // Hiển thị QR ngân hàng thật theo số tiền Backend vừa preview.
     // Chỉ khi Thu ngân xác nhận đã nhận chuyển khoản thì mới tạo Payment/Invoice.
     private async Task<bool> ShowVietQrDialogAsync(
