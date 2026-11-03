@@ -927,6 +927,12 @@ public partial class SalesControl : UserControl
                 active);
 
             _tablePriorityActive = active;
+            if (active)
+            {
+                // Backend tự bỏ các ưu tiên món riêng khi chuyển sang ưu tiên bàn.
+                _priorityItemIds.Clear();
+                RenderCart();
+            }
             UpdatePriorityTableButton();
 
             MessageBox.Show(
@@ -971,9 +977,16 @@ public partial class SalesControl : UserControl
             await _api.SetKitchenItemPriorityAsync(item.Id, active);
 
             if (active)
+            {
                 _priorityItemIds.Add(item.Id);
+                // Backend tự bỏ ưu tiên bàn khi chuyển sang ưu tiên món.
+                _tablePriorityActive = false;
+                UpdatePriorityTableButton();
+            }
             else
+            {
                 _priorityItemIds.Remove(item.Id);
+            }
 
             RenderCart();
         }
