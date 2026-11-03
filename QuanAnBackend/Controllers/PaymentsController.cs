@@ -882,7 +882,7 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId = order.OrderId
             });
