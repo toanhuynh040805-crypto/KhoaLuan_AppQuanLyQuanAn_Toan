@@ -408,7 +408,7 @@ public class OrdersController : ControllerBase
                             x.Quantity,
                             x.Note,
                             x.IsTakeaway,
-                            CreatedAt = DateTime.Now
+                            CreatedAt = batchCreatedAt
                         }).ToList()
                     });
             }
