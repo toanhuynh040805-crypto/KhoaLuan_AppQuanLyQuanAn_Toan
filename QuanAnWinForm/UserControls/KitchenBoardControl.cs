@@ -234,7 +234,7 @@ public partial class KitchenBoardControl : UserControl
 
     private void WireRealtimeHandlers()
     {
-        _signalR.OnNewTicket += _ =>
+        _signalR.OnNewTicket += ticket =>
         {
             if (_isDisposed || IsDisposed) return;
 
