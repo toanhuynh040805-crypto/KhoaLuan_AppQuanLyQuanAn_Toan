@@ -35,6 +35,7 @@ public class NotificationHubClient
     public static event Action<OrderUpdatedPayload>? OrderUpdated;
     public static event Action<ReservationUpdatedPayload>? ReservationUpdated;
     public static event Action<TableLockTakenOverPayload>? TableLockTakenOver;
+    public static event Action? KitchenPriorityUpdated;
     public static event Action? ConnectionRestored;
 
     public async Task ConnectAsync(int userId, string roleName)
@@ -138,6 +139,11 @@ public class NotificationHubClient
                 raw.GetRawText(),
                 JsonOpts);
             if (payload is not null) TableLockTakenOver?.Invoke(payload);
+        });
+
+        connection.On<JsonElement>("KitchenPriorityUpdated", _ =>
+        {
+            KitchenPriorityUpdated?.Invoke();
         });
 
         // AutomaticReconnect chỉ chạy sau khi đã kết nối thành công.
