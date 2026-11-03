@@ -153,6 +153,9 @@ class RealtimeService {
   final StreamController<void> _kitchenQueueController =
       StreamController<void>.broadcast();
 
+  final StreamController<void> _orderController =
+      StreamController<void>.broadcast();
+
   Stream<AppNotification> get notifications =>
       _notificationController.stream;
 
@@ -173,6 +176,9 @@ class RealtimeService {
 
   Stream<void> get kitchenQueueChanges =>
       _kitchenQueueController.stream;
+
+  Stream<void> get orderChanges =>
+      _orderController.stream;
 
   bool get _isCashierOrManager =>
       MobileAccessPolicy.canCompletePayment(_roleKey ?? '');
@@ -225,22 +231,36 @@ class RealtimeService {
     // biết hàng đợi đã thay đổi rồi tải lại đúng StationId của tài khoản.
     connection.on(
       'NewTicket',
-      (_) => _kitchenQueueController.add(null),
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
     );
 
     connection.on(
       'ItemStatusUpdated',
-      (_) => _kitchenQueueController.add(null),
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
     );
 
     connection.on(
       'OrderItemCancelled',
-      (_) => _kitchenQueueController.add(null),
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
     );
 
     connection.on(
       'KitchenPriorityUpdated',
       (_) => _kitchenQueueController.add(null),
+    );
+
+    connection.on(
+      'OrderUpdated',
+      (_) => _orderController.add(null),
     );
 
     connection.on(
