@@ -252,6 +252,7 @@ public class LoginResultDto
 public class NewTicketPayload
 {
     public int OrderId { get; set; }
+    public int? TableId { get; set; }
     public string TableName { get; set; } = "";
     public string Department { get; set; } = "";
     public List<TicketItem> Items { get; set; } = new();
