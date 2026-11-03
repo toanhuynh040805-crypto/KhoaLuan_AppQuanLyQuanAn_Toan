@@ -114,37 +114,10 @@ public partial class KitchenBoardControl : UserControl
                 _priorityTableIds.Clear();
             }
 
-            // Mỗi lần bấm Xác nhận/Gọi món có cùng CreatedAt. Không gom toàn bộ
-            // OrderId thành một phiếu vì cùng bàn có thể gọi thêm nhiều đợt.
-            var batches = items
-                .GroupBy(item => new
-                {
-                    item.OrderId,
-                    item.TableId,
-                    item.TableName,
-                    item.CreatedAt
-                })
-                .Select(group => new NewTicketPayload
-                {
-                    OrderId = group.Key.OrderId,
-                    TableId = group.Key.TableId,
-                    TableName = group.Key.TableName,
-                    Department = _departmentName,
-                    Items = group
-                        .OrderBy(item => item.Id)
-                        .Select(item => new TicketItem
-                        {
-                            Id = item.Id,
-                            MenuItemName = item.MenuItemName,
-                            Quantity = item.Quantity,
-                            Note = item.Note,
-                            IsTakeaway = item.IsTakeaway,
-                            Status = item.KitchenStatus,
-                            CreatedAt = item.CreatedAt,
-                        })
-                        .ToList(),
-                })
-                .ToList();
+            // Một lần Xác nhận/Gọi món phải hiển thị thành MỘT phiếu.
+            // Dữ liệu cũ có thể lệch CreatedAt vài mili-giây/giây giữa các món,
+            // nên không GroupBy trực tiếp DateTime chính xác nữa.
+            var batches = BuildKitchenBatches(items);
 
             batches = OrderKitchenBatches(batches);
 
@@ -179,58 +152,131 @@ public partial class KitchenBoardControl : UserControl
         }
     }
 
+    private List<NewTicketPayload> BuildKitchenBatches(
+        List<OrderItemStatusDto> items)
+    {
+        const double SameBatchGapSeconds = 12;
+
+        var result = new List<NewTicketPayload>();
+
+        foreach (var orderGroup in items
+                     .GroupBy(item => new
+                     {
+                         item.OrderId,
+                         item.TableId,
+                         item.TableName
+                     }))
+        {
+            var orderedItems = orderGroup
+                .OrderBy(item => item.CreatedAt)
+                .ThenBy(item => item.Id)
+                .ToList();
+
+            var currentBatch = new List<OrderItemStatusDto>();
+            DateTime? previousCreatedAt = null;
+
+            void FlushBatch()
+            {
+                if (currentBatch.Count == 0) return;
+
+                result.Add(new NewTicketPayload
+                {
+                    OrderId = orderGroup.Key.OrderId,
+                    TableId = orderGroup.Key.TableId,
+                    TableName = orderGroup.Key.TableName,
+                    Department = _departmentName,
+                    Items = currentBatch
+                        .OrderBy(item => item.Id)
+                        .Select(item => new TicketItem
+                        {
+                            Id = item.Id,
+                            MenuItemName = item.MenuItemName,
+                            Quantity = item.Quantity,
+                            Note = item.Note,
+                            IsTakeaway = item.IsTakeaway,
+                            Status = item.KitchenStatus,
+                            CreatedAt = item.CreatedAt,
+                        })
+                        .ToList(),
+                });
+
+                currentBatch = new List<OrderItemStatusDto>();
+                previousCreatedAt = null;
+            }
+
+            foreach (var item in orderedItems)
+            {
+                if (previousCreatedAt.HasValue &&
+                    Math.Abs(
+                        (item.CreatedAt - previousCreatedAt.Value)
+                            .TotalSeconds) > SameBatchGapSeconds)
+                {
+                    FlushBatch();
+                }
+
+                currentBatch.Add(item);
+                previousCreatedAt = item.CreatedAt;
+            }
+
+            FlushBatch();
+        }
+
+        return result;
+    }
+
     private List<NewTicketPayload> OrderKitchenBatches(
         List<NewTicketPayload> batches)
     {
-        static string GroupKey(NewTicketPayload payload)
-            => payload.TableId is > 0
-                ? $"table:{payload.TableId.Value}"
-                : $"order:{payload.OrderId}";
-
-        // Nếu một đợt của bàn được ưu tiên, cả nhóm bàn được kéo lên trước.
-        // Bên trong cùng bàn vẫn luôn giữ đợt gọi cũ -> mới.
-        var priorityGroups = batches
-            .Where(IsBatchPriority)
-            .Select(GroupKey)
-            .ToHashSet(StringComparer.Ordinal);
-
-        var firstCallByGroup = batches
-            .GroupBy(GroupKey)
-            .ToDictionary(
-                group => group.Key,
-                group => group.Min(BatchCreatedAt),
-                StringComparer.Ordinal);
-
         return batches
+            // Ưu tiên bàn: toàn bộ phiếu của bàn lên trước.
+            // Ưu tiên món: chỉ phiếu có món được đánh cờ lên trước.
             .OrderBy(batch =>
-                priorityGroups.Contains(GroupKey(batch)) ? 0 : 1)
-            .ThenBy(batch => firstCallByGroup[GroupKey(batch)])
-            .ThenBy(GroupKey, StringComparer.Ordinal)
+                IsTablePriority(batch)
+                    ? 0
+                    : HasPriorityItem(batch)
+                        ? 1
+                        : 2)
             .ThenBy(BatchCreatedAt)
+            .ThenBy(batch => batch.TableName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(batch => batch.Items.Count == 0
                 ? 0
                 : batch.Items.Min(item => item.Id))
             .ToList();
     }
 
-    private bool IsBatchPriority(NewTicketPayload payload)
-    {
-        if (payload.TableId.HasValue &&
-            _priorityTableIds.Contains(payload.TableId.Value))
-        {
-            return true;
-        }
+    private bool IsTablePriority(NewTicketPayload payload)
+        => payload.TableId.HasValue &&
+           _priorityTableIds.Contains(payload.TableId.Value);
 
-        return payload.Items.Any(item => _priorityItemIds.Contains(item.Id));
-    }
+    private bool HasPriorityItem(NewTicketPayload payload)
+        => payload.Items.Any(item =>
+            _priorityItemIds.Contains(item.Id));
+
+    private bool IsBatchPriority(NewTicketPayload payload)
+        => IsTablePriority(payload) || HasPriorityItem(payload);
 
     private static DateTime BatchCreatedAt(NewTicketPayload payload)
         => payload.Items.Count == 0
             ? DateTime.MinValue
             : payload.Items.Min(item => item.CreatedAt);
 
+    private static DateTime BatchMinute(NewTicketPayload payload)
+    {
+        var value = BatchCreatedAt(payload);
+        return value == DateTime.MinValue
+            ? value
+            : new DateTime(
+                value.Year,
+                value.Month,
+                value.Day,
+                value.Hour,
+                value.Minute,
+                0,
+                value.Kind);
+    }
+
     private static string BatchKey(NewTicketPayload payload)
-        => $"{payload.OrderId}:{payload.TableId.GetValueOrDefault()}:{BatchCreatedAt(payload).Ticks}";
+        => $"{payload.OrderId}:{payload.TableId.GetValueOrDefault()}:{BatchMinute(payload).Ticks}:{payload.Items.Min(item => item.Id)}";
 
     private void WireRealtimeHandlers()
     {
@@ -475,7 +521,9 @@ public partial class KitchenBoardControl : UserControl
     {
         var batchKey = BatchKey(payload);
         var batchCreatedAt = BatchCreatedAt(payload);
-        var isPriority = IsBatchPriority(payload);
+        var isTablePriority = IsTablePriority(payload);
+        var hasPriorityItem = HasPriorityItem(payload);
+        var isPriority = isTablePriority || hasPriorityItem;
 
         var card = new TicketCard
         {
@@ -496,22 +544,38 @@ public partial class KitchenBoardControl : UserControl
         };
         column.Paint += (s, e) =>
         {
+            // Chỉ ưu tiên BÀN mới nhấn cả phiếu. Ưu tiên MÓN chỉ gắn cờ
+            // đúng dòng món đó để tránh hiểu nhầm cả bàn đang được ưu tiên.
             using var pen = new Pen(
-                isPriority ? Color.FromArgb(220, 53, 69) : AppColors.OutlineVariant,
-                isPriority ? 3 : 1);
-            e.Graphics.DrawRectangle(pen, 0, 0, column.Width - 1, column.Height - 1);
+                isTablePriority
+                    ? Color.FromArgb(220, 53, 69)
+                    : AppColors.OutlineVariant,
+                isTablePriority ? 3 : 1);
+            e.Graphics.DrawRectangle(
+                pen,
+                0,
+                0,
+                column.Width - 1,
+                column.Height - 1);
         };
 
         var header = new Panel { Size = new Size(CardWidth, HeaderHeight), Location = new Point(0, 0), BackColor = AppColors.Success };
-        var lblTable = new Label { Text = payload.TableName, Font = AppFonts.HeadlineSm, Location = new Point(14, 10), AutoSize = true };
-        var priorityPrefix = isPriority ? "🚩 ƯU TIÊN · " : "";
+        var lblTable = new Label
+        {
+            Text = isTablePriority
+                ? $"🚩 {payload.TableName}"
+                : payload.TableName,
+            Font = AppFonts.HeadlineSm,
+            Location = new Point(14, 10),
+            AutoSize = true
+        };
         var lblOrderId = new Label
         {
-            Text = $"{priorityPrefix}Đợt {batchCreatedAt:HH:mm} · {payload.Items.Count} món",
+            Text = $"Đợt {batchCreatedAt:HH:mm} · {payload.Items.Count} món",
             Font = AppFonts.BodyMd,
             Location = new Point(14, 38),
             AutoSize = true,
-            ForeColor = isPriority ? Color.FromArgb(185, 28, 28) : AppColors.OnSurface
+            ForeColor = AppColors.OnSurface
         };
         var elapsedBadge = new Label
         {
@@ -656,10 +720,16 @@ public partial class KitchenBoardControl : UserControl
         };
 
         var lblQty = new Label { Text = $"{item.Quantity}x", Font = AppFonts.HeadlineSm, ForeColor = AppColors.Primary, Location = new Point(RowPadX, 8), AutoSize = true };
+        var isItemPriority = _priorityItemIds.Contains(item.Id);
         var lblName = new Label
         {
-            Text = item.MenuItemName,
+            Text = isItemPriority
+                ? $"🚩 {item.MenuItemName}"
+                : item.MenuItemName,
             Font = AppFonts.LabelLg,
+            ForeColor = isItemPriority
+                ? Color.FromArgb(185, 28, 28)
+                : AppColors.OnSurface,
             Location = new Point(NameX, 10),
             Size = new Size(nameWidth, nameLines * 20),
             AutoEllipsis = true,

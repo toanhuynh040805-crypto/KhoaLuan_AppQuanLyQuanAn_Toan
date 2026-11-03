@@ -161,6 +161,8 @@ class _KitchenRequestsScreenState extends State<KitchenRequestsScreen> {
       setState(() {
         if (active) {
           _priorityItemIds.add(id);
+          // Bật ưu tiên món sẽ tự bỏ chế độ ưu tiên bàn ở Backend.
+          _tablePriority = false;
         } else {
           _priorityItemIds.remove(id);
         }
@@ -197,7 +199,13 @@ class _KitchenRequestsScreenState extends State<KitchenRequestsScreen> {
         active: active,
       );
       if (!mounted) return;
-      setState(() => _tablePriority = active);
+      setState(() {
+        _tablePriority = active;
+        if (active) {
+          // Bật ưu tiên bàn sẽ bỏ toàn bộ cờ ưu tiên món của bàn này ở Backend.
+          _priorityItemIds.clear();
+        }
+      });
       TopMessage.show(
         context,
         message: active

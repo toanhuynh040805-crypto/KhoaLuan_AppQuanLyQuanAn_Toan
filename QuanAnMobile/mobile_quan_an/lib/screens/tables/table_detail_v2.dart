@@ -231,6 +231,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
           (sum, item) => sum + item.totalPrice,
         );
       });
+
+      unawaited(_loadMemberCustomer());
     } catch (_) {
       // Realtime là tăng cường. Nếu request tải lại tạm lỗi, giữ dữ liệu hiện tại;
       // event tiếp theo hoặc thao tác refresh sẽ tự đồng bộ lại.
@@ -2137,6 +2139,69 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ],
           ),
           if (!currentTable.isTakeaway) ...[
+            if ((currentTable.customerName ?? '').trim().isNotEmpty ||
+                (currentTable.customerPhone ?? '').trim().isNotEmpty) ...[
+              const Divider(height: 28),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.person_outline,
+                    size: 20,
+                    color: AppTheme.orangeColor,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          currentTable.isReservationSession
+                              ? 'Khách đặt bàn'
+                              : 'Khách hàng',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          (currentTable.customerName ?? '').trim().isNotEmpty
+                              ? currentTable.customerName!.trim()
+                              : 'Khách',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if ((currentTable.customerPhone ?? '')
+                            .trim()
+                            .isNotEmpty)
+                          Text(
+                            currentTable.customerPhone!.trim(),
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        if (_memberCustomer != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              '${_memberCustomer!.memberLevel} · '
+                              '${_memberCustomer!.loyaltyPoint} điểm',
+                              style: const TextStyle(
+                                color: Color(0xFF2E9B65),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const Divider(height: 28),
             InkWell(
               onTap: _savingGuestCount ? null : _editGuestCount,

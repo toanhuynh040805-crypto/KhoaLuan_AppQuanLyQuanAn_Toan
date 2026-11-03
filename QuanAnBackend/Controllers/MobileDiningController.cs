@@ -193,10 +193,18 @@ public class MobileDiningController : ControllerBase
                     amount = table.Status == TableStatus.DangPhucVu
                         ? amount
                         : (decimal?)null,
+                    customerId = currentReservation?.CustomerId ??
+                        (table.Status == TableStatus.DangPhucVu
+                            ? (int?)null
+                            : nextReservation?.CustomerId),
                     customerName = currentReservation?.CustomerName ??
                         (table.Status == TableStatus.DangPhucVu
                             ? null
                             : nextReservation?.CustomerName),
+                    customerPhone = currentReservation?.CustomerPhone ??
+                        (table.Status == TableStatus.DangPhucVu
+                            ? null
+                            : nextReservation?.CustomerPhone),
                     guestCount = currentReservation?.NumberOfGuests ??
                         (table.Status == TableStatus.DangPhucVu
                             ? (int?)null

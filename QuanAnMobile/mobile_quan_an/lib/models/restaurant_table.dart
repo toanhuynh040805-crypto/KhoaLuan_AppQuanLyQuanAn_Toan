@@ -8,7 +8,9 @@ class RestaurantTable {
   final int id;
   final String name;
   final TableStatus status;
+  final int? customerId;
   final String? customerName;
+  final String? customerPhone;
   final String? time;
   final int? amount;
   final int? capacity;
@@ -27,7 +29,9 @@ class RestaurantTable {
     required this.id,
     required this.name,
     required this.status,
+    this.customerId,
     this.customerName,
+    this.customerPhone,
     this.time,
     this.amount,
     this.capacity,
@@ -67,8 +71,12 @@ class RestaurantTable {
   RestaurantTable copyWith({
     String? name,
     TableStatus? status,
+    int? customerId,
+    bool clearCustomerId = false,
     String? customerName,
     bool clearCustomerName = false,
+    String? customerPhone,
+    bool clearCustomerPhone = false,
     String? time,
     bool clearTime = false,
     int? amount,
@@ -95,8 +103,12 @@ class RestaurantTable {
       id: id,
       name: name ?? this.name,
       status: status ?? this.status,
+      customerId:
+          clearCustomerId ? null : customerId ?? this.customerId,
       customerName:
           clearCustomerName ? null : customerName ?? this.customerName,
+      customerPhone:
+          clearCustomerPhone ? null : customerPhone ?? this.customerPhone,
       time: clearTime ? null : time ?? this.time,
       amount: clearAmount ? null : amount ?? this.amount,
       capacity: capacity ?? this.capacity,
@@ -139,8 +151,13 @@ class RestaurantTable {
               json['tableName']?.toString() ??
               '',
       status: _parseStatus(json['status']),
+      customerId: json['customerId'] == null
+          ? null
+          : _parseNullableInt(json['customerId']),
       customerName:
           json['customerName']?.toString(),
+      customerPhone:
+          json['customerPhone']?.toString(),
       time: json['time']?.toString(),
       amount: json['amount'] == null
           ? null
@@ -181,7 +198,9 @@ class RestaurantTable {
       'id': id,
       'name': name,
       'status': _statusToJson(status),
+      'customerId': customerId,
       'customerName': customerName,
+      'customerPhone': customerPhone,
       'time': time,
       'amount': amount,
       'capacity': capacity,
