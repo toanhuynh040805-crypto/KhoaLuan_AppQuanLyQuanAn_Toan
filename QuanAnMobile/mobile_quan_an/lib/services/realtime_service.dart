@@ -239,6 +239,11 @@ class RealtimeService {
     );
 
     connection.on(
+      'KitchenPriorityUpdated',
+      (_) => _kitchenQueueController.add(null),
+    );
+
+    connection.on(
       'DishStatusChanged',
       (arguments) {
         final Map<String, dynamic>? data = _firstMap(arguments);
