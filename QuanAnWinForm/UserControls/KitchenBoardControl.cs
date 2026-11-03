@@ -146,7 +146,7 @@ public partial class KitchenBoardControl : UserControl
                 })
                 .ToList();
 
-            batches.Sort(CompareKitchenBatches);
+            batches = OrderKitchenBatches(batches);
 
             // Reload là nguồn sự thật: giữ đúng thứ tự ưu tiên và đúng từng đợt gọi.
             foreach (var card in _cardsByBatchKey.Values.ToList())
@@ -179,39 +179,38 @@ public partial class KitchenBoardControl : UserControl
         }
     }
 
-    private int CompareKitchenBatches(
-        NewTicketPayload left,
-        NewTicketPayload right)
+    private List<NewTicketPayload> OrderKitchenBatches(
+        List<NewTicketPayload> batches)
     {
-        var leftTime = BatchCreatedAt(left);
-        var rightTime = BatchCreatedAt(right);
+        static string GroupKey(NewTicketPayload payload)
+            => payload.TableId is > 0
+                ? $"table:{payload.TableId.Value}"
+                : $"order:{payload.OrderId}";
 
-        // Cùng một bàn: luôn xử lý đợt gọi cũ trước đợt gọi mới.
-        if (left.TableId.HasValue &&
-            right.TableId.HasValue &&
-            left.TableId.Value == right.TableId.Value)
-        {
-            var sameTableTime = leftTime.CompareTo(rightTime);
-            if (sameTableTime != 0) return sameTableTime;
-            return string.Compare(
-                BatchKey(left),
-                BatchKey(right),
-                StringComparison.Ordinal);
-        }
+        // Nếu một đợt của bàn được ưu tiên, cả nhóm bàn được kéo lên trước.
+        // Bên trong cùng bàn vẫn luôn giữ đợt gọi cũ -> mới.
+        var priorityGroups = batches
+            .Where(IsBatchPriority)
+            .Select(GroupKey)
+            .ToHashSet(StringComparer.Ordinal);
 
-        // Khác bàn: phiếu có ưu tiên được đưa lên trước.
-        var leftPriority = IsBatchPriority(left);
-        var rightPriority = IsBatchPriority(right);
-        if (leftPriority != rightPriority)
-            return leftPriority ? -1 : 1;
+        var firstCallByGroup = batches
+            .GroupBy(GroupKey)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Min(BatchCreatedAt),
+                StringComparer.Ordinal);
 
-        var timeCompare = leftTime.CompareTo(rightTime);
-        if (timeCompare != 0) return timeCompare;
-
-        return string.Compare(
-            left.TableName,
-            right.TableName,
-            StringComparison.OrdinalIgnoreCase);
+        return batches
+            .OrderBy(batch =>
+                priorityGroups.Contains(GroupKey(batch)) ? 0 : 1)
+            .ThenBy(batch => firstCallByGroup[GroupKey(batch)])
+            .ThenBy(GroupKey, StringComparer.Ordinal)
+            .ThenBy(BatchCreatedAt)
+            .ThenBy(batch => batch.Items.Count == 0
+                ? 0
+                : batch.Items.Min(item => item.Id))
+            .ToList();
     }
 
     private bool IsBatchPriority(NewTicketPayload payload)
