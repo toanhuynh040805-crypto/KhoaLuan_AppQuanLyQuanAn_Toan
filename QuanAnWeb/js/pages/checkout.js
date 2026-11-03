@@ -15,6 +15,7 @@ const cartElement = document.querySelector('[data-checkout-cart]');
 const customerElement = document.querySelector('[data-checkout-customer]');
 const tableSelect = document.querySelector('[data-checkout-table]');
 const tableGridContainer = document.getElementById('checkout-table-selector');
+const tablePaginationContainer = document.getElementById('checkout-table-pagination');
 const tableCountBadge = document.getElementById('checkout-available-tables-count');
 const tableAlertContainer = document.getElementById('checkout-table-alert');
 const statusElement = document.querySelector('[data-checkout-status]');
