@@ -302,7 +302,7 @@ public class OrderItemsController : ControllerBase
 
             try
             {
-                await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+                await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
                 {
                     orderId = item.OrderId
                 });
@@ -414,7 +414,7 @@ public class OrderItemsController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId
             });
