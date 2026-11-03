@@ -169,8 +169,9 @@ public class PaymentsController : ControllerBase
         var loyaltyDiscount =
             requestedRedeemPoints * CustomerLoyaltyHelper.PointValueVnd;
         var totalAmount = Math.Max(0, subTotal - loyaltyDiscount);
+        // Điểm tích thêm dựa trên giá trị món trước mọi giảm giá/đổi điểm.
         var estimatedEarnedPoints =
-            CustomerLoyaltyHelper.CalculateEarnedPoints(totalAmount);
+            CustomerLoyaltyHelper.CalculateEarnedPoints(subTotal);
 
         // Phục vụ chỉ là người thực sự bấm "Gọi thanh toán".
         // Không fallback sang người tạo Order vì có thể là Quản lý mở bàn hộ.
@@ -473,8 +474,10 @@ public class PaymentsController : ControllerBase
         var totalAmount = Math.Max(
             0,
             afterCampaignTotal - loyaltyDiscount);
+        // Điểm tích thêm dựa trên Tạm tính, không giảm theo khuyến mãi
+        // hoặc số điểm khách vừa dùng cho hóa đơn này.
         var estimatedEarnedPoints =
-            CustomerLoyaltyHelper.CalculateEarnedPoints(totalAmount);
+            CustomerLoyaltyHelper.CalculateEarnedPoints(subTotal);
 
         return Ok(new
         {
@@ -831,7 +834,9 @@ public class PaymentsController : ControllerBase
                 });
             }
 
-            earnedPoints = CustomerLoyaltyHelper.CalculateEarnedPoints(netTotal);
+            // Tích điểm theo giá trị món trước giảm giá/đổi điểm.
+            // Ví dụ Tạm tính 834.000đ, giảm còn 784.000đ vẫn tích 83 điểm.
+            earnedPoints = CustomerLoyaltyHelper.CalculateEarnedPoints(total);
             if (earnedPoints > 0)
             {
                 customer.LoyaltyPoint += earnedPoints;
