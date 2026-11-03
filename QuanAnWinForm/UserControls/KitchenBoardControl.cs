@@ -92,21 +92,27 @@ public partial class KitchenBoardControl : UserControl
         {
             var stationId = await ResolveStationIdAsync();
 
-            var itemsTask = _api.GetOrderItemsAsync(stationId);
-            var prioritiesTask = _api.GetKitchenPrioritiesAsync();
-
-            await Task.WhenAll(itemsTask, prioritiesTask);
+            var items = await _api.GetOrderItemsAsync(stationId);
 
             if (_isDisposed || IsDisposed)
                 return;
 
-            var items = await itemsTask;
-            var priorities = await prioritiesTask;
-
             _priorityItemIds.Clear();
-            _priorityItemIds.UnionWith(priorities.ItemIds);
             _priorityTableIds.Clear();
-            _priorityTableIds.UnionWith(priorities.TableIds);
+
+            // Ưu tiên là lớp bổ sung giống Mobile: nếu endpoint ưu tiên tạm lỗi,
+            // danh sách Bếp/Quầy nước vẫn phải hoạt động bình thường.
+            try
+            {
+                var priorities = await _api.GetKitchenPrioritiesAsync();
+                _priorityItemIds.UnionWith(priorities.ItemIds);
+                _priorityTableIds.UnionWith(priorities.TableIds);
+            }
+            catch
+            {
+                _priorityItemIds.Clear();
+                _priorityTableIds.Clear();
+            }
 
             // Mỗi lần bấm Xác nhận/Gọi món có cùng CreatedAt. Không gom toàn bộ
             // OrderId thành một phiếu vì cùng bàn có thể gọi thêm nhiều đợt.
