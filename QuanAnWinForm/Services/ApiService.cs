@@ -199,11 +199,21 @@ public class ApiService
 
     public async Task<PaymentPreviewOrderDto?> GetPaymentPreviewAsync(
         int orderId,
-        int? campaignId = null)
+        int? campaignId = null,
+        int? customerId = null,
+        int? redeemPoints = null)
     {
-        var url = $"/api/payments/preview/order/{orderId}";
+        var query = new List<string>();
         if (campaignId.HasValue)
-            url += $"?campaignId={campaignId.Value}";
+            query.Add($"campaignId={campaignId.Value}");
+        if (customerId.HasValue && customerId.Value > 0)
+            query.Add($"customerId={customerId.Value}");
+        if (redeemPoints.HasValue && redeemPoints.Value > 0)
+            query.Add($"redeemPoints={redeemPoints.Value}");
+
+        var url = $"/api/payments/preview/order/{orderId}";
+        if (query.Count > 0)
+            url += "?" + string.Join("&", query);
 
         return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
             url,
@@ -570,6 +580,45 @@ public class ApiService
         var url = departmentId.HasValue ? $"/api/orderitems?departmentId={departmentId}" : "/api/orderitems";
         var res = await _http.GetFromJsonAsync<List<OrderItemStatusDto>>(url, JsonOpts);
         return res ?? new List<OrderItemStatusDto>();
+    }
+
+    public async Task<KitchenPrioritySnapshotDto> GetKitchenPrioritiesAsync()
+    {
+        using var res = await _http.GetAsync("/api/mobile/ops/kitchen-priorities");
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        return await res.Content.ReadFromJsonAsync<KitchenPrioritySnapshotDto>(JsonOpts)
+            ?? new KitchenPrioritySnapshotDto();
+    }
+
+    public async Task SetKitchenItemPriorityAsync(
+        int orderItemId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/item/{orderItemId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    public async Task SetKitchenTablePriorityAsync(
+        int tableId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/table/{tableId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
     }
 
     // Cập nhật trạng thái món ăn kèm userId, lý do hủy và RowVer - trả về trạng

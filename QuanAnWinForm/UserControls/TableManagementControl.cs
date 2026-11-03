@@ -828,7 +828,8 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
     // Các handler này chạy trên luồng nền của SignalR -> phải đẩy về luồng giao diện
     private void OnTableStatusUpdated(TableStatusUpdatedPayload p) =>
-        QueueRefresh(tables: true, items: false);
+        // Chuyển/gộp/ghép/tách bàn có thể đổi cả món của bàn, không chỉ trạng thái.
+        QueueRefresh(tables: true, items: true);
 
     private void OnItemStatusUpdated(ItemStatusUpdatedPayload p) =>
         QueueRefresh(tables: true, items: true);

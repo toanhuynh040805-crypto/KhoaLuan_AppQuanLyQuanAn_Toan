@@ -94,6 +94,85 @@ public sealed class ReservationAudienceService
         return result;
     }
 
+    public async Task<HashSet<int>> GetOperationalRecipientUserIdsAsync(
+        IEnumerable<int> areaIds,
+        DateTime at,
+        CancellationToken cancellationToken = default)
+    {
+        var areas = areaIds
+            .Where(id => id > 0)
+            .Distinct()
+            .ToHashSet();
+
+        var result = new HashSet<int>();
+        if (areas.Count == 0)
+            return result;
+
+        // Thông báo vận hành theo khu vực chỉ gửi cho Phục vụ đang được
+        // phân đúng ca + đúng khu. Quản lý/Thu ngân vẫn có quyền xử lý ở
+        // CanHandleOverdueAsync nhưng không bị spam các thông báo khu vực.
+        var servers = await _db.Employees
+            .AsNoTracking()
+            .Where(employee =>
+                employee.Status == EmployeeStatus.DangLamViec &&
+                employee.User != null &&
+                employee.User.IsActive &&
+                employee.User.UserRoles.Any(ur =>
+                    ur.IsActive &&
+                    ur.Role != null &&
+                    ur.Role.RoleName == "PhucVu"))
+            .Select(employee => new
+            {
+                employee.EmployeeId,
+                employee.UserId
+            })
+            .ToListAsync(cancellationToken);
+
+        if (servers.Count == 0)
+            return result;
+
+        var employeeIds = servers
+            .Select(item => item.EmployeeId)
+            .ToList();
+
+        var workDate = DateOnly.FromDateTime(at.Date);
+        var previousDate = DateOnly.FromDateTime(
+            at.Date.AddDays(-1));
+
+        var assignments = await _db.ShiftAssignments
+            .AsNoTracking()
+            .Include(assignment => assignment.Shift)
+            .Include(assignment => assignment.AssignedAreas)
+            .Where(assignment =>
+                employeeIds.Contains(assignment.EmployeeId) &&
+                (assignment.WorkDate == workDate ||
+                 assignment.WorkDate == previousDate) &&
+                (assignment.Status == AssignmentStatus.DaXepLich ||
+                 assignment.Status == AssignmentStatus.DaDiemDanh))
+            .ToListAsync(cancellationToken);
+
+        foreach (var server in servers)
+        {
+            var activeAssignments = assignments
+                .Where(assignment =>
+                    assignment.EmployeeId == server.EmployeeId &&
+                    assignment.Shift is not null &&
+                    IsAssignmentActiveAt(assignment, at))
+                .ToList();
+
+            var worksInArea = activeAssignments.Any(assignment =>
+                (assignment.AreaId.HasValue &&
+                 areas.Contains(assignment.AreaId.Value)) ||
+                assignment.AssignedAreas.Any(area =>
+                    areas.Contains(area.AreaId)));
+
+            if (worksInArea)
+                result.Add(server.UserId);
+        }
+
+        return result;
+    }
+
     public async Task<bool> CanHandleOverdueAsync(
         int userId,
         int areaId,

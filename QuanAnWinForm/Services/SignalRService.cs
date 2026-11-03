@@ -20,6 +20,7 @@ public sealed class SignalRService
     public event Action<NewTicketPayload>? OnNewTicket;
     public event Action<ItemStatusUpdatedPayload>? OnItemStatusUpdated;
     public event Action<OrderItemCancelledPayload>? OnOrderItemCancelled;
+    public event Action? OnKitchenPriorityUpdated;
 
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
@@ -138,6 +139,11 @@ public sealed class SignalRService
                 JsonOpts);
             if (payload is not null)
                 OnOrderItemCancelled?.Invoke(payload);
+        });
+
+        connection.On<JsonElement>("KitchenPriorityUpdated", _ =>
+        {
+            OnKitchenPriorityUpdated?.Invoke();
         });
     }
 
