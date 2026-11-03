@@ -2155,6 +2155,47 @@ public partial class SalesControl : UserControl
             return;
         }
 
+        if (!_isTakeaway)
+        {
+            // Không cho nút Thanh toán kiêm luôn chức năng gửi món mới xuống bếp.
+            // Món mới phải Xác nhận Order trước, sau đó Bếp/Phục vụ xử lý xong.
+            if (!CartIsEmpty)
+            {
+                MessageBox.Show(
+                    "Vẫn còn món mới chưa xác nhận. Hãy bấm Xác nhận Order và chờ các món được phục vụ trước khi thanh toán.",
+                    "Chưa thể thanh toán",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            var unservedItems = (_existingOrder?.Items ?? new List<OpenTableOrderItemDto>())
+                .Where(item =>
+                    item.Status != (int)KitchenStatus.DaPhucVu &&
+                    item.Status != (int)KitchenStatus.DaHuy)
+                .ToList();
+
+            if (unservedItems.Count > 0)
+            {
+                var sampleNames = string.Join(
+                    ", ",
+                    unservedItems
+                        .Take(3)
+                        .Select(item => item.Name));
+
+                var extra = unservedItems.Count > 3
+                    ? $" và {unservedItems.Count - 3} món khác"
+                    : "";
+
+                MessageBox.Show(
+                    $"Còn {unservedItems.Count} món chưa được phục vụ: {sampleNames}{extra}.\n\nChỉ được thanh toán khi tất cả món đã ở trạng thái Đã phục vụ.",
+                    "Chưa thể thanh toán",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+        }
+
         btnThanhToan.Enabled = false;
         btnVietQr.Enabled = false;
 
