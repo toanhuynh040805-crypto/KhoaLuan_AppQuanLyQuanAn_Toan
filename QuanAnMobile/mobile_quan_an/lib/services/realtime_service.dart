@@ -124,13 +124,6 @@ class RealtimeService {
   String? _roleKey;
   String? _departmentName;
 
-  // Khi Thu ngân/Quản lý vừa tự thanh toán, backend phát PaymentCompleted và
-  // TableStatusUpdated gần như cùng lúc. TableScreen nằm dưới route chi tiết
-  // không cần reload trong vài giây đó vì sau Navigator.pop nó sẽ tự _loadData.
-  // Giữ mốc theo tableId để bỏ qua các event trạng thái bàn thuộc chính giao
-  // dịch vừa hoàn tất, tránh rebuild màn phía dưới trong lúc route đang tháo.
-  final Map<int, DateTime> _recentLocalPaymentTables = <int, DateTime>{};
-
   final StreamController<AppNotification> _notificationController =
       StreamController<AppNotification>.broadcast();
 
@@ -179,9 +172,6 @@ class RealtimeService {
 
   Stream<void> get orderChanges =>
       _orderController.stream;
-
-  bool get _isCashierOrManager =>
-      MobileAccessPolicy.canCompletePayment(_roleKey ?? '');
 
   Future<void> start({
     required String employeeCode,
@@ -290,18 +280,10 @@ class RealtimeService {
         final PaymentCompletedRealtimeEvent event =
             PaymentCompletedRealtimeEvent.fromJson(data);
 
-        // Thu ngân/Quản lý tự gửi POST /payments. Không phát lại event này vào
-        // chính màn chi tiết vì HTTP response sẽ là nguồn duy nhất đóng route.
-        // Đồng thời đánh dấu tableId để TableStatusUpdated kế tiếp của cùng giao
-        // dịch không làm TableScreen bên dưới rebuild giữa animation Navigator.
-        if (_isCashierOrManager) {
-          if (event.tableId > 0) {
-            _recentLocalPaymentTables[event.tableId] = DateTime.now();
-          }
-          return;
-        }
-
-        // Phục vụ vẫn cần realtime để biết Thu ngân ở thiết bị khác đã thanh toán.
+        // Luôn phát cho Mobile, kể cả tài khoản Quản lý/Thu ngân.
+        // Nếu chính Mobile vừa thanh toán thì màn chi tiết có guard
+        // _closingAfterPayment để không đóng route hai lần; nếu WinForms thanh
+        // toán thì Mobile nhận ngay và tự cập nhật/đóng bàn.
         _paymentController.add(event);
       },
     );
@@ -337,24 +319,6 @@ class RealtimeService {
 
         final TableStatusRealtimeEvent event =
             TableStatusRealtimeEvent.fromJson(data);
-
-        if (_isCashierOrManager) {
-          final DateTime now = DateTime.now();
-
-          _recentLocalPaymentTables.removeWhere(
-            (_, createdAt) =>
-                now.difference(createdAt) > const Duration(seconds: 3),
-          );
-
-          final DateTime? localPaymentAt =
-              _recentLocalPaymentTables[event.tableId];
-
-          if (localPaymentAt != null &&
-              now.difference(localPaymentAt) <=
-                  const Duration(seconds: 3)) {
-            return;
-          }
-        }
 
         _tableStatusController.add(event);
       },
@@ -424,7 +388,6 @@ class RealtimeService {
     _employeeCode = null;
     _roleKey = null;
     _departmentName = null;
-    _recentLocalPaymentTables.clear();
 
     if (connection != null) {
       try {
