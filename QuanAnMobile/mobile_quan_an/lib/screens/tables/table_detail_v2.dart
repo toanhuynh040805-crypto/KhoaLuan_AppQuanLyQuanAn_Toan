@@ -71,6 +71,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
   Timer? _relativeTimeTimer;
+  Timer? _realtimeReloadTimer;
   bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
@@ -78,6 +79,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
   StreamSubscription<TableLockTakenOverRealtimeEvent>?
       _tableLockTakeoverSubscription;
+  StreamSubscription<void>? _orderSubscription;
+  StreamSubscription<TableStatusRealtimeEvent>? _tableStatusSubscription;
+  StreamSubscription<void>? _reservationSubscription;
 
   bool get _canManageTables =>
       MobileAccessPolicy.canManageTables(appEmployee.role);
@@ -129,6 +133,19 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _paymentSubscription = AppServices.realtimeService.paymentCompletions
         .listen(_handlePaymentCompleted);
 
+    _orderSubscription = AppServices.realtimeService.orderChanges
+        .listen((_) => _scheduleRealtimeReload());
+
+    _tableStatusSubscription = AppServices.realtimeService.tableStatusChanges
+        .listen((event) {
+      if (event.tableId == currentTable.id) {
+        _scheduleRealtimeReload();
+      }
+    });
+
+    _reservationSubscription = AppServices.realtimeService.reservationChanges
+        .listen((_) => _scheduleRealtimeReload());
+
     _tableLockTakeoverSubscription =
         AppServices.realtimeService.tableLockTakeovers
             .listen(_handleTableLockTakenOver);
@@ -154,10 +171,70 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _tableLockHeartbeatTimer?.cancel();
     _paymentRequestLockTimer?.cancel();
     _relativeTimeTimer?.cancel();
+    _realtimeReloadTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
+    _orderSubscription?.cancel();
+    _tableStatusSubscription?.cancel();
+    _reservationSubscription?.cancel();
     super.dispose();
+  }
+
+  void _scheduleRealtimeReload() {
+    if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+    _realtimeReloadTimer?.cancel();
+    _realtimeReloadTimer = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_reloadCurrentTableRealtime()),
+    );
+  }
+
+  Future<void> _reloadCurrentTableRealtime() async {
+    if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+    try {
+      final results = await Future.wait<dynamic>([
+        AppServices.tableService.getTables(),
+        AppServices.tableService.getInitialOrders(),
+      ]);
+
+      if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+      final List<RestaurantTable> latestTables =
+          results[0] as List<RestaurantTable>;
+      final Map<int, List<OrderItem>> latestOrders =
+          results[1] as Map<int, List<OrderItem>>;
+
+      RestaurantTable? latestTable;
+      for (final table in latestTables) {
+        if (table.id == currentTable.id) {
+          latestTable = table;
+          break;
+        }
+      }
+
+      final List<OrderItem> latestItems =
+          (latestOrders[currentTable.id] ?? const <OrderItem>[])
+              .where((item) => item.status != 'Đã hủy')
+              .toList();
+
+      setState(() {
+        if (latestTable != null) {
+          currentTable = latestTable!;
+        }
+
+        orderItems = latestItems;
+        currentAmount = latestItems.fold<int>(
+          0,
+          (sum, item) => sum + item.totalPrice,
+        );
+      });
+    } catch (_) {
+      // Realtime là tăng cường. Nếu request tải lại tạm lỗi, giữ dữ liệu hiện tại;
+      // event tiếp theo hoặc thao tác refresh sẽ tự đồng bộ lại.
+    }
   }
 
   Future<void> _loadPaymentRequestLock() async {
