@@ -330,13 +330,15 @@ public class OrderItemsController : ControllerBase
                 await BroadcastItemStatusAsync(item);
                 if (request.NewStatus == KitchenStatus.DaCheBien)
                 {
-                    await _notifications.CreateForPermissionAsync(
+                    await _notifications.CreateForOrderResponsibleAsync(
+                        item.OrderId,
                         "Món đã chế biến xong",
                         $"{item.MenuItem?.ItemName} - {OrderLabel(item.Order)} đã sẵn sàng phục vụ",
                         NotificationType.DonHang,
-                        "order.serve",
                         relatedEntityType: "OrderItem",
-                        relatedEntityId: item.OrderItemId);
+                        relatedEntityId: item.OrderItemId,
+                        eventKeyPrefix:
+                            $"order-item-ready:{item.OrderItemId}:{(int)request.NewStatus}");
                 }
             }
 

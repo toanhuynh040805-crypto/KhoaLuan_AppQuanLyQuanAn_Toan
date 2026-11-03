@@ -580,7 +580,7 @@ public class ReservationsController : ControllerBase
             "Có yêu cầu đặt bàn mới - chờ xác nhận",
             $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} yêu cầu đặt {table.TableName} lúc {request.ReservationTime:HH:mm dd/MM}",
             NotificationType.DatBan,
-            new[] { "QuanLy", "ThuNgan", "PhucVu" },
+            new[] { "QuanLy" },
             relatedEntityType: "Reservation",
             relatedEntityId: reservation.ReservationId);
 
@@ -781,7 +781,7 @@ public class ReservationsController : ControllerBase
             "Có yêu cầu đặt bàn mới - chờ xác nhận",
             $"{(string.IsNullOrWhiteSpace(request.CustomerName) ? "Khách" : request.CustomerName)} yêu cầu đặt {names} lúc {request.ReservationTime:HH:mm dd/MM}",
             NotificationType.DatBan,
-            new[] { "QuanLy", "ThuNgan", "PhucVu" },
+            new[] { "QuanLy" },
             relatedEntityType: "Reservation",
             relatedEntityId: created[0].ReservationId);
 

@@ -15,15 +15,21 @@ public class NotificationService
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly ILogger<NotificationService> _logger;
+    private readonly ReservationAudienceService _audience;
+    private readonly TableEditLockService _tableLocks;
 
     public NotificationService(
         AppDbContext db,
         IHubContext<OrderHub> hub,
-        ILogger<NotificationService> logger)
+        ILogger<NotificationService> logger,
+        ReservationAudienceService audience,
+        TableEditLockService tableLocks)
     {
         _db = db;
         _hub = hub;
         _logger = logger;
+        _audience = audience;
+        _tableLocks = tableLocks;
     }
 
     public async Task CreateAsync(
@@ -223,6 +229,108 @@ public class NotificationService
                 relatedEntityType: relatedEntityType,
                 relatedEntityId: relatedEntityId
             );
+        }
+    }
+
+    /// <summary>
+    /// Thông báo gắn với một Order chỉ gửi cho đúng nhân viên đang sở hữu Order.
+    /// Nếu Order chưa có EmployeeId/UserId thì fallback về Phục vụ đang được
+    /// phân đúng ca + đúng khu vực của bàn.
+    /// </summary>
+    public async Task CreateForOrderResponsibleAsync(
+        int orderId,
+        string title,
+        string content,
+        NotificationType type,
+        string? relatedEntityType = null,
+        int? relatedEntityId = null,
+        string? eventKeyPrefix = null)
+    {
+        var orderInfo = await _db.Orders
+            .AsNoTracking()
+            .Where(order => order.OrderId == orderId)
+            .Select(order => new
+            {
+                TableId = order.TableId,
+                OwnerUserId = order.Employee != null
+                    ? (int?)order.Employee.UserId
+                    : null,
+                AreaId = order.Table != null
+                    ? (int?)order.Table.AreaId
+                    : null
+            })
+            .FirstOrDefaultAsync();
+
+        if (orderInfo is null)
+            return;
+
+        var recipients = new HashSet<int>();
+
+        // 1) Người đang thực sự giữ bàn/thao tác hiện tại có ưu tiên cao nhất.
+        if (orderInfo.TableId.HasValue &&
+            orderInfo.TableId.Value > 0)
+        {
+            var activeLock = _tableLocks.GetActive(
+                orderInfo.TableId.Value);
+
+            if (activeLock is not null &&
+                !string.IsNullOrWhiteSpace(activeLock.EmployeeCode))
+            {
+                var activeUserId = await _db.Employees
+                    .AsNoTracking()
+                    .Where(employee =>
+                        employee.EmployeeCode ==
+                            activeLock.EmployeeCode &&
+                        employee.Status ==
+                            EmployeeStatus.DangLamViec &&
+                        employee.User != null &&
+                        employee.User.IsActive)
+                    .Select(employee => (int?)employee.UserId)
+                    .FirstOrDefaultAsync();
+
+                if (activeUserId.HasValue)
+                    recipients.Add(activeUserId.Value);
+            }
+        }
+
+        // 2) Không có lock thì gửi cho nhân viên sở hữu/tạo Order.
+        if (recipients.Count == 0 &&
+            orderInfo.OwnerUserId.HasValue &&
+            orderInfo.OwnerUserId.Value > 0)
+        {
+            var active = await _db.Users
+                .AsNoTracking()
+                .AnyAsync(user =>
+                    user.UserId == orderInfo.OwnerUserId.Value &&
+                    user.IsActive);
+
+            if (active)
+                recipients.Add(orderInfo.OwnerUserId.Value);
+        }
+
+        // 3) Order legacy/chưa gắn nhân viên -> đúng Phục vụ của khu + ca hiện tại.
+        if (recipients.Count == 0 &&
+            orderInfo.AreaId.HasValue &&
+            orderInfo.AreaId.Value > 0)
+        {
+            recipients =
+                await _audience.GetOperationalRecipientUserIdsAsync(
+                    new[] { orderInfo.AreaId.Value },
+                    DateTime.Now);
+        }
+
+        foreach (var userId in recipients)
+        {
+            await CreateAsync(
+                title,
+                content,
+                type,
+                targetUserId: userId,
+                relatedEntityType: relatedEntityType,
+                relatedEntityId: relatedEntityId,
+                eventKey: string.IsNullOrWhiteSpace(eventKeyPrefix)
+                    ? null
+                    : $"{eventKeyPrefix}:user:{userId}");
         }
     }
 

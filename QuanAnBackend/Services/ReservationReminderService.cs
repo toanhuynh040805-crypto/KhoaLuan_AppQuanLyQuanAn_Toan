@@ -207,7 +207,7 @@ public sealed class ReservationReminderService : BackgroundService
         bool broadcastStage,
         CancellationToken cancellationToken)
     {
-        var userIds = await audience.GetRecipientUserIdsAsync(
+        var userIds = await audience.GetOperationalRecipientUserIdsAsync(
             areaIds,
             reservationTime,
             cancellationToken);
@@ -266,7 +266,7 @@ public sealed class ReservationReminderService : BackgroundService
         bool broadcastStage,
         CancellationToken cancellationToken)
     {
-        var userIds = await audience.GetRecipientUserIdsAsync(
+        var userIds = await audience.GetOperationalRecipientUserIdsAsync(
             areaIds,
             now,
             cancellationToken);
