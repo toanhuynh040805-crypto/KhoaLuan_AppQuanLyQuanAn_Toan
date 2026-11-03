@@ -286,6 +286,7 @@ public class PaymentsController : ControllerBase
         var order = await _db.Orders
             .AsNoTracking()
             .Include(o => o.PaymentRequestedByUser)
+            .Include(o => o.Table)!.ThenInclude(t => t!.Area)
             .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
         if (order is null)
@@ -293,6 +294,25 @@ public class PaymentsController : ControllerBase
 
         if (order.Status == OrderStatus.DaThanhToan)
             return Conflict(new { message = "Đơn hàng đã được thanh toán" });
+
+        if (!IsTakeawayOrder(order))
+        {
+            var unservedCount = await _db.OrderItems
+                .AsNoTracking()
+                .CountAsync(item =>
+                    item.OrderId == order.OrderId &&
+                    item.Status != KitchenStatus.DaPhucVu &&
+                    item.Status != KitchenStatus.DaHuy);
+
+            if (unservedCount > 0)
+            {
+                return Conflict(new
+                {
+                    message =
+                        $"Còn {unservedCount} món chưa được phục vụ. Chưa thể thanh toán bàn này."
+                });
+            }
+        }
 
         var subTotal = await _db.OrderItems
             .Where(oi =>
@@ -534,6 +554,29 @@ public class PaymentsController : ControllerBase
 
         if (currentOrderStatus == OrderStatus.DaThanhToan)
             return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
+
+        // Bàn tại chỗ chỉ được thanh toán khi tất cả món còn hiệu lực đã được
+        // phục vụ. Đây là chốt Backend cuối cùng để WinForms/API trực tiếp
+        // không thể bỏ qua quy tắc mà Mobile đã áp dụng ở bước gọi thanh toán.
+        if (!IsTakeawayOrder(order))
+        {
+            var unservedCount = await _db.OrderItems
+                .AsNoTracking()
+                .CountAsync(item =>
+                    item.OrderId == order.OrderId &&
+                    item.Status != KitchenStatus.DaPhucVu &&
+                    item.Status != KitchenStatus.DaHuy);
+
+            if (unservedCount > 0)
+            {
+                await paymentTransaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        $"Còn {unservedCount} món chưa được phục vụ. Chưa thể xác nhận thanh toán."
+                });
+            }
+        }
 
         // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
         // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
