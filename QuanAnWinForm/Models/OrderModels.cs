@@ -297,6 +297,15 @@ public class PaymentPreviewOrderDto
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
     public decimal TotalAmount { get; set; }
+    public decimal CampaignDiscount { get; set; }
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
+    public int LoyaltyPointBalance { get; set; }
+    public int MaxRedeemablePoints { get; set; }
+    public int RedeemedPoints { get; set; }
+    public decimal LoyaltyPointValue { get; set; } = 1000m;
+    public decimal LoyaltyDiscount { get; set; }
+    public int EstimatedEarnedPoints { get; set; }
     public string QrImageUrl { get; set; } = "";
     public string QrPayload { get; set; } = "";
     public string BankName { get; set; } = "";
