@@ -58,6 +58,9 @@ public partial class SalesControl : UserControl
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
     private readonly Button btnConfirmOrder = new() { Text = "Xác nhận" };
+    private readonly Button btnPriorityTable = new() { Text = "⚑ Ưu tiên bàn" };
+    private readonly HashSet<int> _priorityItemIds = new();
+    private bool _tablePriorityActive;
 
     private bool CanViewPaymentReceiptQr
     {
@@ -95,6 +98,7 @@ public partial class SalesControl : UserControl
         InitializeComponent();
         BuildModeBar();
         BuildReceiptPreviewButton();
+        BuildKitchenPriorityControls();
 
         btnAllCategory.Click += (s, e) => FilterCategory(null);
 
@@ -192,6 +196,7 @@ public partial class SalesControl : UserControl
         NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
         NotificationHubClient.TableLockTakenOver += OnTableLockTakenOver;
+        NotificationHubClient.KitchenPriorityUpdated += OnKitchenPriorityUpdated;
         NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
@@ -203,6 +208,7 @@ public partial class SalesControl : UserControl
         NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
         NotificationHubClient.TableLockTakenOver -= OnTableLockTakenOver;
+        NotificationHubClient.KitchenPriorityUpdated -= OnKitchenPriorityUpdated;
         NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
@@ -577,6 +583,9 @@ public partial class SalesControl : UserControl
 
                 ClearCart();
                 _existingOrder = null;
+                _priorityItemIds.Clear();
+                _tablePriorityActive = false;
+                UpdatePriorityTableButton();
                 _selectedCustomer = null;
                 txtCustomerPhone.Clear();
                 UpdateCustomerInfoLabel();
@@ -587,6 +596,8 @@ public partial class SalesControl : UserControl
         }
         catch (InvalidOperationException) { }
     }
+
+    private void OnKitchenPriorityUpdated() => QueueRealtimeRefresh();
 
     private void OnConnectionRestored() => QueueRealtimeRefresh();
 
@@ -739,7 +750,10 @@ public partial class SalesControl : UserControl
         if (cbTable.SelectedItem is not TableDto table)
         {
             _selectedTableId = null;
+            _priorityItemIds.Clear();
+            _tablePriorityActive = false;
             lblTableName.Text = "Chưa chọn bàn";
+            UpdatePriorityTableButton();
             return;
         }
 
@@ -788,6 +802,9 @@ public partial class SalesControl : UserControl
         lblTableName.Text = table.TableName;
         ClearCart();
         _existingOrder = null;
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         if (cbCampaign.Items.Count > 0)
             cbCampaign.SelectedIndex = 0;
 
@@ -813,15 +830,167 @@ public partial class SalesControl : UserControl
 
             _existingOrder = order;
 
+            _priorityItemIds.Clear();
+            _tablePriorityActive = false;
+
+            // Ưu tiên dùng chung endpoint với Mobile. Nếu endpoint ưu tiên tạm lỗi,
+            // vẫn phải tải được đơn và cho nhân viên tiếp tục bán hàng.
+            try
+            {
+                var priorities = await _api.GetKitchenPrioritiesAsync();
+                if (_selectedTableId != tableId) return;
+
+                _priorityItemIds.UnionWith(priorities.ItemIds);
+                _tablePriorityActive = priorities.TableIds.Contains(tableId);
+            }
+            catch
+            {
+                _priorityItemIds.Clear();
+                _tablePriorityActive = false;
+            }
+
             // Khách thành viên đã gắn với đơn/lượt đặt bàn -> tự điền SĐT, tên, điểm, email.
             ApplyOrderCustomer(order?.Customer);
 
+            UpdatePriorityTableButton();
             RenderCart();
         }
         catch (Exception ex)
         {
             if (!silent && !IsDisposed && Visible)
                 MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
+        }
+    }
+
+    private void BuildKitchenPriorityControls()
+    {
+        // BuildModeBar đã dời các control Designer xuống 40px. Nút ưu tiên nằm
+        // cùng hàng với tên bàn, không chiếm thêm chiều cao giỏ hàng.
+        lblTableName.AutoSize = false;
+        lblTableName.Size = new Size(218, 30);
+
+        btnPriorityTable.SetBounds(244, lblTableName.Top + 1, 142, 28);
+        btnPriorityTable.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+        btnPriorityTable.FlatStyle = FlatStyle.Flat;
+        btnPriorityTable.Cursor = Cursors.Hand;
+        btnPriorityTable.Visible = false;
+        btnPriorityTable.Click += async (s, e) => await ToggleTablePriorityAsync();
+        panelRight.Controls.Add(btnPriorityTable);
+        btnPriorityTable.BringToFront();
+
+        UpdatePriorityTableButton();
+    }
+
+    private void UpdatePriorityTableButton()
+    {
+        var hasPendingKitchenItems =
+            _existingOrder?.Items.Any(item =>
+                item.Status is (int)KitchenStatus.MoiGoi or
+                    (int)KitchenStatus.DangCheBien) == true;
+
+        btnPriorityTable.Visible =
+            !_isTakeaway &&
+            _selectedTableId.HasValue &&
+            _existingOrder is not null &&
+            hasPendingKitchenItems;
+
+        btnPriorityTable.Text = _tablePriorityActive
+            ? "🚩 Đang ưu tiên"
+            : "⚑ Ưu tiên bàn";
+
+        btnPriorityTable.UseVisualStyleBackColor = false;
+        if (_tablePriorityActive)
+        {
+            btnPriorityTable.BackColor = Color.FromArgb(220, 53, 69);
+            btnPriorityTable.ForeColor = Color.White;
+            btnPriorityTable.FlatAppearance.BorderSize = 0;
+        }
+        else
+        {
+            btnPriorityTable.BackColor = Color.White;
+            btnPriorityTable.ForeColor = Color.FromArgb(185, 28, 28);
+            btnPriorityTable.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
+            btnPriorityTable.FlatAppearance.BorderSize = 1;
+        }
+    }
+
+    private async Task ToggleTablePriorityAsync()
+    {
+        if (_isTakeaway || !_selectedTableId.HasValue || _existingOrder is null)
+            return;
+
+        var active = !_tablePriorityActive;
+        btnPriorityTable.Enabled = false;
+
+        try
+        {
+            await _api.SetKitchenTablePriorityAsync(
+                _selectedTableId.Value,
+                active);
+
+            _tablePriorityActive = active;
+            UpdatePriorityTableButton();
+
+            MessageBox.Show(
+                active
+                    ? $"Đã ưu tiên {lblTableName.Text} xuống Bếp/Quầy nước."
+                    : $"Đã bỏ ưu tiên {lblTableName.Text}.",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không cập nhật được ưu tiên bàn: {ex.Message}",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnPriorityTable.IsDisposed)
+                btnPriorityTable.Enabled = true;
+        }
+    }
+
+    private async Task ToggleItemPriorityAsync(
+        OpenTableOrderItemDto item,
+        Button button)
+    {
+        if (_isTakeaway ||
+            item.Status is not ((int)KitchenStatus.MoiGoi) and
+                not ((int)KitchenStatus.DangCheBien))
+        {
+            return;
+        }
+
+        var active = !_priorityItemIds.Contains(item.Id);
+        button.Enabled = false;
+
+        try
+        {
+            await _api.SetKitchenItemPriorityAsync(item.Id, active);
+
+            if (active)
+                _priorityItemIds.Add(item.Id);
+            else
+                _priorityItemIds.Remove(item.Id);
+
+            RenderCart();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không cập nhật được ưu tiên món: {ex.Message}",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!button.IsDisposed)
+                button.Enabled = true;
         }
     }
 
@@ -1013,6 +1182,9 @@ public partial class SalesControl : UserControl
 
         ClearCart();
         _existingOrder = null;
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         if (cbCampaign.Items.Count > 0) cbCampaign.SelectedIndex = 0;
         _selectedCustomer = null;
         txtCustomerPhone.Clear();
@@ -1088,6 +1260,9 @@ public partial class SalesControl : UserControl
         };
 
         lblTableName.Text = $"Mang về (đơn #{order.Id})";
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         RenderCart();
         UpdateSendKitchenButton();
     }
@@ -1462,15 +1637,86 @@ public partial class SalesControl : UserControl
     // Dòng món ĐÃ GỌI (chỉ đọc, không có nút +/-)
     private Panel BuildExistingRow(OpenTableOrderItemDto item)
     {
-        var row = new Panel { Size = new Size(360, 56), Margin = new Padding(0, 0, 0, 6) };
+        var canPrioritize =
+            !_isTakeaway &&
+            item.Status is (int)KitchenStatus.MoiGoi or
+                (int)KitchenStatus.DangCheBien;
+        var isPriority = _priorityItemIds.Contains(item.Id);
 
-        var lblName = new Label { Text = $"{item.Quantity}x {item.Name}", Font = AppFonts.LabelLg, Location = new Point(0, 4), Size = new Size(270, 20), AutoEllipsis = true };
-        var lblStatus = new Label { Text = KitchenStatusText(item.Status) + (item.IsTakeaway && !_isTakeaway ? " · Mang về" : ""), Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 26), AutoSize = true };
-        var lblSum = new Label { Text = $"{item.UnitPrice * item.Quantity:N0}đ", Font = AppFonts.LabelLg, Location = new Point(280, 16), Size = new Size(80, 20), TextAlign = ContentAlignment.MiddleRight };
+        var row = new Panel
+        {
+            Size = new Size(360, 60),
+            Margin = new Padding(0, 0, 0, 6)
+        };
+
+        var lblName = new Label
+        {
+            Text = $"{item.Quantity}x {item.Name}",
+            Font = AppFonts.LabelLg,
+            Location = new Point(0, 4),
+            Size = new Size(canPrioritize ? 218 : 270, 20),
+            AutoEllipsis = true
+        };
+
+        var statusText =
+            KitchenStatusText(item.Status) +
+            (item.IsTakeaway && !_isTakeaway ? " · Mang về" : "");
+        if (isPriority)
+            statusText = "🚩 ƯU TIÊN · " + statusText;
+
+        var lblStatus = new Label
+        {
+            Text = statusText,
+            Font = AppFonts.BodyMd,
+            ForeColor = isPriority
+                ? Color.FromArgb(185, 28, 28)
+                : AppColors.OnSurfaceVariant,
+            Location = new Point(0, 28),
+            Size = new Size(canPrioritize ? 218 : 270, 24),
+            AutoEllipsis = true
+        };
+
+        var lblSum = new Label
+        {
+            Text = $"{item.UnitPrice * item.Quantity:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(280, 17),
+            Size = new Size(80, 20),
+            TextAlign = ContentAlignment.MiddleRight
+        };
 
         row.Controls.Add(lblName);
         row.Controls.Add(lblStatus);
         row.Controls.Add(lblSum);
+
+        if (canPrioritize)
+        {
+            var btnPriority = new Button
+            {
+                Text = isPriority ? "🚩" : "⚑",
+                Font = new Font("Segoe UI Emoji", 9F, FontStyle.Bold),
+                Location = new Point(224, 17),
+                Size = new Size(46, 28),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = isPriority
+                    ? Color.FromArgb(220, 53, 69)
+                    : Color.White,
+                ForeColor = isPriority
+                    ? Color.White
+                    : Color.FromArgb(185, 28, 28),
+                UseVisualStyleBackColor = false
+            };
+            btnPriority.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
+            btnPriority.FlatAppearance.BorderSize = isPriority ? 0 : 1;
+            _tip.SetToolTip(
+                btnPriority,
+                isPriority ? "Bỏ ưu tiên món" : "Ưu tiên món xuống Bếp/Quầy nước");
+            btnPriority.Click += async (s, e) =>
+                await ToggleItemPriorityAsync(item, btnPriority);
+            row.Controls.Add(btnPriority);
+        }
+
         return row;
     }
 
