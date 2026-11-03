@@ -199,11 +199,21 @@ public class ApiService
 
     public async Task<PaymentPreviewOrderDto?> GetPaymentPreviewAsync(
         int orderId,
-        int? campaignId = null)
+        int? campaignId = null,
+        int? customerId = null,
+        int? redeemPoints = null)
     {
-        var url = $"/api/payments/preview/order/{orderId}";
+        var query = new List<string>();
         if (campaignId.HasValue)
-            url += $"?campaignId={campaignId.Value}";
+            query.Add($"campaignId={campaignId.Value}");
+        if (customerId.HasValue && customerId.Value > 0)
+            query.Add($"customerId={customerId.Value}");
+        if (redeemPoints.HasValue && redeemPoints.Value > 0)
+            query.Add($"redeemPoints={redeemPoints.Value}");
+
+        var url = $"/api/payments/preview/order/{orderId}";
+        if (query.Count > 0)
+            url += "?" + string.Join("&", query);
 
         return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
             url,
