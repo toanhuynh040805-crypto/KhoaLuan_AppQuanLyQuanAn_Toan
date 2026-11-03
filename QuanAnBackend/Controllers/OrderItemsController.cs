@@ -238,6 +238,48 @@ public class OrderItemsController : ControllerBase
         {
             await _db.SaveChangesAsync();
 
+            // Đồng bộ với Mobile: khi món rời trạng thái chờ/đang chế biến,
+            // cờ ưu tiên riêng của món phải được gỡ tự động. Sau đó phát realtime
+            // để Bếp/Quầy nước và màn Bán hàng sắp xếp lại ngay.
+            if (item.Status is KitchenStatus.DaCheBien or
+                KitchenStatus.DaPhucVu or
+                KitchenStatus.DaHuy)
+            {
+                try
+                {
+                    await _db.Database.ExecuteSqlRawAsync(
+                        """
+                        IF OBJECT_ID(N'MobileKitchenPriorities', N'U') IS NOT NULL
+                        BEGIN
+                            UPDATE MobileKitchenPriorities
+                            SET IsActive = 0,
+                                UpdatedAt = GETDATE()
+                            WHERE PriorityScope = N'Item'
+                              AND OrderItemId = {0}
+                              AND IsActive = 1;
+                        END
+                        """,
+                        item.OrderItemId);
+
+                    await _hub.Clients.All.SendAsync(
+                        "KitchenPriorityUpdated",
+                        new
+                        {
+                            scope = "Item",
+                            orderItemId = item.OrderItemId,
+                            tableId = item.Order?.TableId,
+                            active = false
+                        });
+                }
+                catch (Exception priorityException)
+                {
+                    _logger.LogWarning(
+                        priorityException,
+                        "Could not clear kitchen priority for order item {OrderItemId}.",
+                        item.OrderItemId);
+                }
+            }
+
             if (item.Order?.CustomerId is int customerId)
             {
                 var statusLabel = request.NewStatus switch
@@ -260,7 +302,7 @@ public class OrderItemsController : ControllerBase
 
             try
             {
-                await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+                await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
                 {
                     orderId = item.OrderId
                 });
@@ -372,7 +414,7 @@ public class OrderItemsController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId
             });

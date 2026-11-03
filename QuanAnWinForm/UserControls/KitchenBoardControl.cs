@@ -17,7 +17,9 @@ public partial class KitchenBoardControl : UserControl
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 15_000 };
     private bool _isDisposed;
 
-    private readonly Dictionary<int, TicketCard> _cardsByOrderId = new();
+    private readonly Dictionary<string, TicketCard> _cardsByBatchKey = new();
+    private readonly HashSet<int> _priorityItemIds = new();
+    private readonly HashSet<int> _priorityTableIds = new();
 
     public KitchenBoardControl() : this(0, "Bep", "Màn hình Bếp", null) { }
 
@@ -84,42 +86,89 @@ public partial class KitchenBoardControl : UserControl
         return station.Id;
     }
 
-    private async Task LoadPendingTicketsAsync()
+    private async Task LoadPendingTicketsAsync(bool playSound = false)
     {
         try
         {
             var stationId = await ResolveStationIdAsync();
-            var items = await _api.GetOrderItemsAsync(stationId);
-            var groups = items
-                .GroupBy(i => new { i.OrderId, i.TableName })
-                .OrderBy(g => g.Min(i => i.CreatedAt));
 
-            foreach (var g in groups)
+            var items = await _api.GetOrderItemsAsync(stationId);
+
+            if (_isDisposed || IsDisposed)
+                return;
+
+            _priorityItemIds.Clear();
+            _priorityTableIds.Clear();
+
+            // Ưu tiên là lớp bổ sung giống Mobile: nếu endpoint ưu tiên tạm lỗi,
+            // danh sách Bếp/Quầy nước vẫn phải hoạt động bình thường.
+            try
             {
-                var payload = new NewTicketPayload
-                {
-                    OrderId = g.Key.OrderId,
-                    TableName = g.Key.TableName,
-                    Department = _departmentName,
-                    Items = g.Select(i => new TicketItem
-                    {
-                        Id = i.Id,
-                        MenuItemName = i.MenuItemName,
-                        Quantity = i.Quantity,
-                        Note = i.Note,
-                        IsTakeaway = i.IsTakeaway,
-                        Status = i.KitchenStatus,
-                        CreatedAt = i.CreatedAt,
-                    }).ToList(),
-                };
-                AddTicketColumn(payload, playSound: false);
+                var priorities = await _api.GetKitchenPrioritiesAsync();
+                _priorityItemIds.UnionWith(priorities.ItemIds);
+                _priorityTableIds.UnionWith(priorities.TableIds);
+            }
+            catch
+            {
+                _priorityItemIds.Clear();
+                _priorityTableIds.Clear();
             }
 
+            // Mỗi lần bấm Xác nhận/Gọi món có cùng CreatedAt. Không gom toàn bộ
+            // OrderId thành một phiếu vì cùng bàn có thể gọi thêm nhiều đợt.
+            var batches = items
+                .GroupBy(item => new
+                {
+                    item.OrderId,
+                    item.TableId,
+                    item.TableName,
+                    item.CreatedAt
+                })
+                .Select(group => new NewTicketPayload
+                {
+                    OrderId = group.Key.OrderId,
+                    TableId = group.Key.TableId,
+                    TableName = group.Key.TableName,
+                    Department = _departmentName,
+                    Items = group
+                        .OrderBy(item => item.Id)
+                        .Select(item => new TicketItem
+                        {
+                            Id = item.Id,
+                            MenuItemName = item.MenuItemName,
+                            Quantity = item.Quantity,
+                            Note = item.Note,
+                            IsTakeaway = item.IsTakeaway,
+                            Status = item.KitchenStatus,
+                            CreatedAt = item.CreatedAt,
+                        })
+                        .ToList(),
+                })
+                .ToList();
+
+            batches = OrderKitchenBatches(batches);
+
+            // Reload là nguồn sự thật: giữ đúng thứ tự ưu tiên và đúng từng đợt gọi.
+            foreach (var card in _cardsByBatchKey.Values.ToList())
+            {
+                flowColumns.Controls.Remove(card.Column);
+                card.Column.Dispose();
+            }
+            _cardsByBatchKey.Clear();
+
+            foreach (var batch in batches)
+                AddTicketColumn(batch, playSound: false);
+
             UpdateEmptyState();
+
+            if (playSound && batches.Count > 0)
+            {
+                try { SystemSounds.Asterisk.Play(); } catch { }
+            }
         }
         catch (OperationCanceledException)
         {
-            // Control đang đóng/chuyển trang: đây là hủy chủ động, không phải lỗi người dùng.
+            // Control đang đóng/chuyển màn hình.
         }
         catch (Exception ex)
         {
@@ -130,13 +179,79 @@ public partial class KitchenBoardControl : UserControl
         }
     }
 
+    private List<NewTicketPayload> OrderKitchenBatches(
+        List<NewTicketPayload> batches)
+    {
+        static string GroupKey(NewTicketPayload payload)
+            => payload.TableId is > 0
+                ? $"table:{payload.TableId.Value}"
+                : $"order:{payload.OrderId}";
+
+        // Nếu một đợt của bàn được ưu tiên, cả nhóm bàn được kéo lên trước.
+        // Bên trong cùng bàn vẫn luôn giữ đợt gọi cũ -> mới.
+        var priorityGroups = batches
+            .Where(IsBatchPriority)
+            .Select(GroupKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var firstCallByGroup = batches
+            .GroupBy(GroupKey)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Min(BatchCreatedAt),
+                StringComparer.Ordinal);
+
+        return batches
+            .OrderBy(batch =>
+                priorityGroups.Contains(GroupKey(batch)) ? 0 : 1)
+            .ThenBy(batch => firstCallByGroup[GroupKey(batch)])
+            .ThenBy(GroupKey, StringComparer.Ordinal)
+            .ThenBy(BatchCreatedAt)
+            .ThenBy(batch => batch.Items.Count == 0
+                ? 0
+                : batch.Items.Min(item => item.Id))
+            .ToList();
+    }
+
+    private bool IsBatchPriority(NewTicketPayload payload)
+    {
+        if (payload.TableId.HasValue &&
+            _priorityTableIds.Contains(payload.TableId.Value))
+        {
+            return true;
+        }
+
+        return payload.Items.Any(item => _priorityItemIds.Contains(item.Id));
+    }
+
+    private static DateTime BatchCreatedAt(NewTicketPayload payload)
+        => payload.Items.Count == 0
+            ? DateTime.MinValue
+            : payload.Items.Min(item => item.CreatedAt);
+
+    private static string BatchKey(NewTicketPayload payload)
+        => $"{payload.OrderId}:{payload.TableId.GetValueOrDefault()}:{BatchCreatedAt(payload).Ticks}";
+
     private void WireRealtimeHandlers()
     {
-        _signalR.OnNewTicket += payload =>
+        _signalR.OnNewTicket += _ =>
         {
             if (_isDisposed || IsDisposed) return;
-            if (InvokeRequired) BeginInvoke(() => AddTicketColumn(payload, playSound: true));
-            else AddTicketColumn(payload, playSound: true);
+
+            void Reload() => _ = LoadPendingTicketsAsync(playSound: true);
+
+            if (InvokeRequired) BeginInvoke((Action)Reload);
+            else Reload();
+        };
+
+        _signalR.OnKitchenPriorityUpdated += () =>
+        {
+            if (_isDisposed || IsDisposed) return;
+
+            void Reload() => _ = LoadPendingTicketsAsync();
+
+            if (InvokeRequired) BeginInvoke((Action)Reload);
+            else Reload();
         };
 
         _signalR.OnItemStatusUpdated += payload =>
@@ -176,10 +291,11 @@ public partial class KitchenBoardControl : UserControl
 
     private void AddTicketColumn(NewTicketPayload payload, bool playSound)
     {
-        if (_cardsByOrderId.ContainsKey(payload.OrderId)) return;
+        var key = BatchKey(payload);
+        if (_cardsByBatchKey.ContainsKey(key)) return;
 
         var card = BuildTicketCard(payload);
-        _cardsByOrderId[payload.OrderId] = card;
+        _cardsByBatchKey[key] = card;
         flowColumns.Controls.Add(card.Column);
 
         UpdateCardUrgency(card);
@@ -191,30 +307,30 @@ public partial class KitchenBoardControl : UserControl
         }
     }
 
-    private void RemoveTicket(int orderId)
+    private void RemoveTicket(string batchKey)
     {
-        if (!_cardsByOrderId.TryGetValue(orderId, out var card)) return;
+        if (!_cardsByBatchKey.TryGetValue(batchKey, out var card)) return;
         flowColumns.Controls.Remove(card.Column);
         card.Column.Dispose();
-        _cardsByOrderId.Remove(orderId);
+        _cardsByBatchKey.Remove(batchKey);
         UpdateEmptyState();
     }
 
-    private async Task RemoveTicketAfterDelayAsync(int orderId)
+    private async Task RemoveTicketAfterDelayAsync(string batchKey)
     {
         await Task.Delay(1200);
         if (IsDisposed) return;
-        RemoveTicket(orderId);
+        RemoveTicket(batchKey);
     }
 
     private void UpdateEmptyState()
     {
-        lblEmptyState.Visible = _cardsByOrderId.Count == 0;
+        lblEmptyState.Visible = _cardsByBatchKey.Count == 0;
     }
 
     private void HandleItemStatusUpdated(ItemStatusUpdatedPayload payload)
     {
-        foreach (var card in _cardsByOrderId.Values)
+        foreach (var card in _cardsByBatchKey.Values)
         {
             var row = card.Rows.FirstOrDefault(r => r.ItemId == payload.Id);
             if (row is null) continue;
@@ -232,7 +348,7 @@ public partial class KitchenBoardControl : UserControl
             ApplyBulkActionUI(card);
 
             if (card.Rows.All(r => r.CurrentStatus is (int)KitchenStatus.DaCheBien or (int)KitchenStatus.DaPhucVu or (int)KitchenStatus.DaHuy))
-                _ = RemoveTicketAfterDelayAsync(card.OrderId);
+                _ = RemoveTicketAfterDelayAsync(card.BatchKey);
 
             return;
         }
@@ -240,7 +356,7 @@ public partial class KitchenBoardControl : UserControl
 
     private void HandleOrderItemCancelled(OrderItemCancelledPayload payload)
     {
-        foreach (var card in _cardsByOrderId.Values)
+        foreach (var card in _cardsByBatchKey.Values)
         {
             var row = card.Rows.FirstOrDefault(r => r.ItemId == payload.Id);
             if (row is null) continue;
@@ -258,7 +374,7 @@ public partial class KitchenBoardControl : UserControl
                 Invoke(() =>
                 {
                     if (card.Rows.All(r => r.CurrentStatus is (int)KitchenStatus.DaCheBien or (int)KitchenStatus.DaPhucVu or (int)KitchenStatus.DaHuy))
-                        RemoveTicket(card.OrderId);
+                        RemoveTicket(card.BatchKey);
                 });
             });
 
@@ -268,7 +384,7 @@ public partial class KitchenBoardControl : UserControl
 
     private void RefreshAllUrgency()
     {
-        foreach (var card in _cardsByOrderId.Values)
+        foreach (var card in _cardsByBatchKey.Values)
             UpdateCardUrgency(card);
     }
 
@@ -357,18 +473,46 @@ public partial class KitchenBoardControl : UserControl
 
     private TicketCard BuildTicketCard(NewTicketPayload payload)
     {
-        var card = new TicketCard { OrderId = payload.OrderId, TableName = payload.TableName };
+        var batchKey = BatchKey(payload);
+        var batchCreatedAt = BatchCreatedAt(payload);
+        var isPriority = IsBatchPriority(payload);
 
-        var column = new Panel { Width = CardWidth, Margin = new Padding(10), BackColor = Color.White, Tag = payload.OrderId };
+        var card = new TicketCard
+        {
+            BatchKey = batchKey,
+            OrderId = payload.OrderId,
+            TableId = payload.TableId,
+            TableName = payload.TableName,
+            CreatedAt = batchCreatedAt,
+            IsPriority = isPriority
+        };
+
+        var column = new Panel
+        {
+            Width = CardWidth,
+            Margin = new Padding(10),
+            BackColor = Color.White,
+            Tag = batchKey
+        };
         column.Paint += (s, e) =>
         {
-            using var pen = new Pen(AppColors.OutlineVariant);
+            using var pen = new Pen(
+                isPriority ? Color.FromArgb(220, 53, 69) : AppColors.OutlineVariant,
+                isPriority ? 3 : 1);
             e.Graphics.DrawRectangle(pen, 0, 0, column.Width - 1, column.Height - 1);
         };
 
         var header = new Panel { Size = new Size(CardWidth, HeaderHeight), Location = new Point(0, 0), BackColor = AppColors.Success };
         var lblTable = new Label { Text = payload.TableName, Font = AppFonts.HeadlineSm, Location = new Point(14, 10), AutoSize = true };
-        var lblOrderId = new Label { Text = $"Đơn #{payload.OrderId}  ·  {payload.Items.Count} món", Font = AppFonts.BodyMd, Location = new Point(14, 38), AutoSize = true };
+        var priorityPrefix = isPriority ? "🚩 ƯU TIÊN · " : "";
+        var lblOrderId = new Label
+        {
+            Text = $"{priorityPrefix}Đợt {batchCreatedAt:HH:mm} · {payload.Items.Count} món",
+            Font = AppFonts.BodyMd,
+            Location = new Point(14, 38),
+            AutoSize = true,
+            ForeColor = isPriority ? Color.FromArgb(185, 28, 28) : AppColors.OnSurface
+        };
         var elapsedBadge = new Label
         {
             Font = AppFonts.LabelLg,
@@ -468,7 +612,7 @@ public partial class KitchenBoardControl : UserControl
                                 or (int)KitchenStatus.DaPhucVu
                                 or (int)KitchenStatus.DaHuy))
                     {
-                        await RemoveTicketAfterDelayAsync(card.OrderId);
+                        await RemoveTicketAfterDelayAsync(card.BatchKey);
                     }
                 }
                 catch (Exception ex)
@@ -597,7 +741,7 @@ public partial class KitchenBoardControl : UserControl
                 ApplyBulkActionUI(card);
 
                 if (card.Rows.All(r => r.CurrentStatus is (int)KitchenStatus.DaCheBien or (int)KitchenStatus.DaPhucVu or (int)KitchenStatus.DaHuy))
-                    await RemoveTicketAfterDelayAsync(card.OrderId);
+                    await RemoveTicketAfterDelayAsync(card.BatchKey);
             }
             catch (Exception ex)
             {
@@ -688,8 +832,12 @@ public partial class KitchenBoardControl : UserControl
 
     private class TicketCard
     {
+        public required string BatchKey;
         public required int OrderId;
+        public int? TableId;
         public required string TableName;
+        public required DateTime CreatedAt;
+        public bool IsPriority;
         public Panel Column = null!;
         public Panel Header = null!;
         public Label LblTable = null!;

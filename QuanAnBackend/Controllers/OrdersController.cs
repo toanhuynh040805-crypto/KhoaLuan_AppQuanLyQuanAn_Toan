@@ -388,7 +388,7 @@ public class OrdersController : ControllerBase
             });
 
             await _hub.Clients
-                .Group("order-management")
+                .Group("internal-users")
                 .SendAsync("OrderUpdated", new { orderId = orderId.Value });
 
             foreach (var stationGroup in realtimeTickets.GroupBy(x => x.StationName))
@@ -408,7 +408,7 @@ public class OrdersController : ControllerBase
                             x.Quantity,
                             x.Note,
                             x.IsTakeaway,
-                            CreatedAt = DateTime.Now
+                            CreatedAt = batchCreatedAt
                         }).ToList()
                     });
             }
@@ -841,7 +841,7 @@ public class OrdersController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId = order.OrderId
             });

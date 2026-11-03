@@ -10,11 +10,9 @@ namespace QuanAnWinForm.UserControls;
 //
 // BỔ SUNG (khách hàng thân thiết): thêm ô tìm khách theo SĐT ngay trên gio
 // hàng - nếu tìm/gắn được khách, khách sẽ được TỰ ĐỘNG tích điểm khi thanh
-// toán thành công (xem PaymentsController.Create bên Backend). Đổi điểm lấy
-// giảm giá NGAY TẠI POS chưa làm ở bản này (API Backend đã hỗ trợ sẵn qua
-// tham số RedeemPoints - xem CreatePaymentAsync trong ApiService) - việc đổi
-// điểm hiện thực hiện ở màn Khách hàng (CustomerManagementControl) bằng
-// cộng/trừ điểm thủ công.
+// toán thành công (xem PaymentsController.Create bên Backend). Khi thanh toán,
+// Thu ngân/Quản lý có thể chọn số điểm khách muốn đổi; preview bill/QR và
+// CreatePayment đều dùng cùng dữ liệu Backend để không lệch số tiền.
 public partial class SalesControl : UserControl
 {
     private readonly ApiService _api = new();
@@ -58,6 +56,9 @@ public partial class SalesControl : UserControl
     private readonly Button btnSendKitchen = new() { Text = "Gửi bếp - trả sau" };
     private readonly Button btnReceiptPreview = new() { Text = "🖨 Xem bill" };
     private readonly Button btnConfirmOrder = new() { Text = "Xác nhận" };
+    private readonly Button btnPriorityTable = new() { Text = "⚑ Ưu tiên bàn" };
+    private readonly HashSet<int> _priorityItemIds = new();
+    private bool _tablePriorityActive;
 
     private bool CanViewPaymentReceiptQr
     {
@@ -95,6 +96,7 @@ public partial class SalesControl : UserControl
         InitializeComponent();
         BuildModeBar();
         BuildReceiptPreviewButton();
+        BuildKitchenPriorityControls();
 
         btnAllCategory.Click += (s, e) => FilterCategory(null);
 
@@ -192,6 +194,7 @@ public partial class SalesControl : UserControl
         NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
         NotificationHubClient.TableLockTakenOver += OnTableLockTakenOver;
+        NotificationHubClient.KitchenPriorityUpdated += OnKitchenPriorityUpdated;
         NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
@@ -203,6 +206,7 @@ public partial class SalesControl : UserControl
         NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
         NotificationHubClient.TableLockTakenOver -= OnTableLockTakenOver;
+        NotificationHubClient.KitchenPriorityUpdated -= OnKitchenPriorityUpdated;
         NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
@@ -577,6 +581,9 @@ public partial class SalesControl : UserControl
 
                 ClearCart();
                 _existingOrder = null;
+                _priorityItemIds.Clear();
+                _tablePriorityActive = false;
+                UpdatePriorityTableButton();
                 _selectedCustomer = null;
                 txtCustomerPhone.Clear();
                 UpdateCustomerInfoLabel();
@@ -587,6 +594,8 @@ public partial class SalesControl : UserControl
         }
         catch (InvalidOperationException) { }
     }
+
+    private void OnKitchenPriorityUpdated() => QueueRealtimeRefresh();
 
     private void OnConnectionRestored() => QueueRealtimeRefresh();
 
@@ -739,7 +748,10 @@ public partial class SalesControl : UserControl
         if (cbTable.SelectedItem is not TableDto table)
         {
             _selectedTableId = null;
+            _priorityItemIds.Clear();
+            _tablePriorityActive = false;
             lblTableName.Text = "Chưa chọn bàn";
+            UpdatePriorityTableButton();
             return;
         }
 
@@ -788,6 +800,9 @@ public partial class SalesControl : UserControl
         lblTableName.Text = table.TableName;
         ClearCart();
         _existingOrder = null;
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         if (cbCampaign.Items.Count > 0)
             cbCampaign.SelectedIndex = 0;
 
@@ -813,15 +828,167 @@ public partial class SalesControl : UserControl
 
             _existingOrder = order;
 
+            _priorityItemIds.Clear();
+            _tablePriorityActive = false;
+
+            // Ưu tiên dùng chung endpoint với Mobile. Nếu endpoint ưu tiên tạm lỗi,
+            // vẫn phải tải được đơn và cho nhân viên tiếp tục bán hàng.
+            try
+            {
+                var priorities = await _api.GetKitchenPrioritiesAsync();
+                if (_selectedTableId != tableId) return;
+
+                _priorityItemIds.UnionWith(priorities.ItemIds);
+                _tablePriorityActive = priorities.TableIds.Contains(tableId);
+            }
+            catch
+            {
+                _priorityItemIds.Clear();
+                _tablePriorityActive = false;
+            }
+
             // Khách thành viên đã gắn với đơn/lượt đặt bàn -> tự điền SĐT, tên, điểm, email.
             ApplyOrderCustomer(order?.Customer);
 
+            UpdatePriorityTableButton();
             RenderCart();
         }
         catch (Exception ex)
         {
             if (!silent && !IsDisposed && Visible)
                 MessageBox.Show($"Không tải được các món của bàn: {ex.Message}");
+        }
+    }
+
+    private void BuildKitchenPriorityControls()
+    {
+        // BuildModeBar đã dời các control Designer xuống 40px. Nút ưu tiên nằm
+        // cùng hàng với tên bàn, không chiếm thêm chiều cao giỏ hàng.
+        lblTableName.AutoSize = false;
+        lblTableName.Size = new Size(218, 30);
+
+        btnPriorityTable.SetBounds(244, lblTableName.Top + 1, 142, 28);
+        btnPriorityTable.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+        btnPriorityTable.FlatStyle = FlatStyle.Flat;
+        btnPriorityTable.Cursor = Cursors.Hand;
+        btnPriorityTable.Visible = false;
+        btnPriorityTable.Click += async (s, e) => await ToggleTablePriorityAsync();
+        panelRight.Controls.Add(btnPriorityTable);
+        btnPriorityTable.BringToFront();
+
+        UpdatePriorityTableButton();
+    }
+
+    private void UpdatePriorityTableButton()
+    {
+        var hasPendingKitchenItems =
+            _existingOrder?.Items.Any(item =>
+                item.Status == (int)KitchenStatus.MoiGoi ||
+                item.Status == (int)KitchenStatus.DangCheBien) == true;
+
+        btnPriorityTable.Visible =
+            !_isTakeaway &&
+            _selectedTableId.HasValue &&
+            _existingOrder is not null &&
+            hasPendingKitchenItems;
+
+        btnPriorityTable.Text = _tablePriorityActive
+            ? "🚩 Đang ưu tiên"
+            : "⚑ Ưu tiên bàn";
+
+        btnPriorityTable.UseVisualStyleBackColor = false;
+        if (_tablePriorityActive)
+        {
+            btnPriorityTable.BackColor = Color.FromArgb(220, 53, 69);
+            btnPriorityTable.ForeColor = Color.White;
+            btnPriorityTable.FlatAppearance.BorderSize = 0;
+        }
+        else
+        {
+            btnPriorityTable.BackColor = Color.White;
+            btnPriorityTable.ForeColor = Color.FromArgb(185, 28, 28);
+            btnPriorityTable.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
+            btnPriorityTable.FlatAppearance.BorderSize = 1;
+        }
+    }
+
+    private async Task ToggleTablePriorityAsync()
+    {
+        if (_isTakeaway || !_selectedTableId.HasValue || _existingOrder is null)
+            return;
+
+        var active = !_tablePriorityActive;
+        btnPriorityTable.Enabled = false;
+
+        try
+        {
+            await _api.SetKitchenTablePriorityAsync(
+                _selectedTableId.Value,
+                active);
+
+            _tablePriorityActive = active;
+            UpdatePriorityTableButton();
+
+            MessageBox.Show(
+                active
+                    ? $"Đã ưu tiên {lblTableName.Text} xuống Bếp/Quầy nước."
+                    : $"Đã bỏ ưu tiên {lblTableName.Text}.",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không cập nhật được ưu tiên bàn: {ex.Message}",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!btnPriorityTable.IsDisposed)
+                btnPriorityTable.Enabled = true;
+        }
+    }
+
+    private async Task ToggleItemPriorityAsync(
+        OpenTableOrderItemDto item,
+        Button button)
+    {
+        if (_isTakeaway ||
+            (item.Status != (int)KitchenStatus.MoiGoi &&
+             item.Status != (int)KitchenStatus.DangCheBien))
+        {
+            return;
+        }
+
+        var active = !_priorityItemIds.Contains(item.Id);
+        button.Enabled = false;
+
+        try
+        {
+            await _api.SetKitchenItemPriorityAsync(item.Id, active);
+
+            if (active)
+                _priorityItemIds.Add(item.Id);
+            else
+                _priorityItemIds.Remove(item.Id);
+
+            RenderCart();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Không cập nhật được ưu tiên món: {ex.Message}",
+                "Ưu tiên chế biến",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!button.IsDisposed)
+                button.Enabled = true;
         }
     }
 
@@ -1013,6 +1180,9 @@ public partial class SalesControl : UserControl
 
         ClearCart();
         _existingOrder = null;
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         if (cbCampaign.Items.Count > 0) cbCampaign.SelectedIndex = 0;
         _selectedCustomer = null;
         txtCustomerPhone.Clear();
@@ -1088,6 +1258,9 @@ public partial class SalesControl : UserControl
         };
 
         lblTableName.Text = $"Mang về (đơn #{order.Id})";
+        _priorityItemIds.Clear();
+        _tablePriorityActive = false;
+        UpdatePriorityTableButton();
         RenderCart();
         UpdateSendKitchenButton();
     }
@@ -1462,15 +1635,86 @@ public partial class SalesControl : UserControl
     // Dòng món ĐÃ GỌI (chỉ đọc, không có nút +/-)
     private Panel BuildExistingRow(OpenTableOrderItemDto item)
     {
-        var row = new Panel { Size = new Size(360, 56), Margin = new Padding(0, 0, 0, 6) };
+        var canPrioritize =
+            !_isTakeaway &&
+            (item.Status == (int)KitchenStatus.MoiGoi ||
+             item.Status == (int)KitchenStatus.DangCheBien);
+        var isPriority = _priorityItemIds.Contains(item.Id);
 
-        var lblName = new Label { Text = $"{item.Quantity}x {item.Name}", Font = AppFonts.LabelLg, Location = new Point(0, 4), Size = new Size(270, 20), AutoEllipsis = true };
-        var lblStatus = new Label { Text = KitchenStatusText(item.Status) + (item.IsTakeaway && !_isTakeaway ? " · Mang về" : ""), Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 26), AutoSize = true };
-        var lblSum = new Label { Text = $"{item.UnitPrice * item.Quantity:N0}đ", Font = AppFonts.LabelLg, Location = new Point(280, 16), Size = new Size(80, 20), TextAlign = ContentAlignment.MiddleRight };
+        var row = new Panel
+        {
+            Size = new Size(360, 60),
+            Margin = new Padding(0, 0, 0, 6)
+        };
+
+        var lblName = new Label
+        {
+            Text = $"{item.Quantity}x {item.Name}",
+            Font = AppFonts.LabelLg,
+            Location = new Point(0, 4),
+            Size = new Size(canPrioritize ? 218 : 270, 20),
+            AutoEllipsis = true
+        };
+
+        var statusText =
+            KitchenStatusText(item.Status) +
+            (item.IsTakeaway && !_isTakeaway ? " · Mang về" : "");
+        if (isPriority)
+            statusText = "🚩 ƯU TIÊN · " + statusText;
+
+        var lblStatus = new Label
+        {
+            Text = statusText,
+            Font = AppFonts.BodyMd,
+            ForeColor = isPriority
+                ? Color.FromArgb(185, 28, 28)
+                : AppColors.OnSurfaceVariant,
+            Location = new Point(0, 28),
+            Size = new Size(canPrioritize ? 218 : 270, 24),
+            AutoEllipsis = true
+        };
+
+        var lblSum = new Label
+        {
+            Text = $"{item.UnitPrice * item.Quantity:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(280, 17),
+            Size = new Size(80, 20),
+            TextAlign = ContentAlignment.MiddleRight
+        };
 
         row.Controls.Add(lblName);
         row.Controls.Add(lblStatus);
         row.Controls.Add(lblSum);
+
+        if (canPrioritize)
+        {
+            var btnPriority = new Button
+            {
+                Text = isPriority ? "🚩" : "⚑",
+                Font = new Font("Segoe UI Emoji", 9F, FontStyle.Bold),
+                Location = new Point(224, 17),
+                Size = new Size(46, 28),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand,
+                BackColor = isPriority
+                    ? Color.FromArgb(220, 53, 69)
+                    : Color.White,
+                ForeColor = isPriority
+                    ? Color.White
+                    : Color.FromArgb(185, 28, 28),
+                UseVisualStyleBackColor = false
+            };
+            btnPriority.FlatAppearance.BorderColor = Color.FromArgb(220, 53, 69);
+            btnPriority.FlatAppearance.BorderSize = isPriority ? 0 : 1;
+            _tip.SetToolTip(
+                btnPriority,
+                isPriority ? "Bỏ ưu tiên món" : "Ưu tiên món xuống Bếp/Quầy nước");
+            btnPriority.Click += async (s, e) =>
+                await ToggleItemPriorityAsync(item, btnPriority);
+            row.Controls.Add(btnPriority);
+        }
+
         return row;
     }
 
@@ -1880,6 +2124,9 @@ public partial class SalesControl : UserControl
             Items = lines,
             SubTotal = preview.SubTotal,
             DiscountAmount = preview.DiscountAmount,
+            PointsRedeemed = preview.RedeemedPoints,
+            PointsEarned = preview.EstimatedEarnedPoints,
+            LoyaltyDiscount = preview.LoyaltyDiscount,
             TaxAmount = 0,
             TotalAmount = preview.TotalAmount,
             Status = 0,
@@ -1907,6 +2154,47 @@ public partial class SalesControl : UserControl
         {
             MessageBox.Show("Giỏ hàng đang trống");
             return;
+        }
+
+        if (!_isTakeaway)
+        {
+            // Không cho nút Thanh toán kiêm luôn chức năng gửi món mới xuống bếp.
+            // Món mới phải Xác nhận Order trước, sau đó Bếp/Phục vụ xử lý xong.
+            if (!CartIsEmpty)
+            {
+                MessageBox.Show(
+                    "Vẫn còn món mới chưa xác nhận. Hãy bấm Xác nhận Order và chờ các món được phục vụ trước khi thanh toán.",
+                    "Chưa thể thanh toán",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            var unservedItems = (_existingOrder?.Items ?? new List<OpenTableOrderItemDto>())
+                .Where(item =>
+                    item.Status != (int)KitchenStatus.DaPhucVu &&
+                    item.Status != (int)KitchenStatus.DaHuy)
+                .ToList();
+
+            if (unservedItems.Count > 0)
+            {
+                var sampleNames = string.Join(
+                    ", ",
+                    unservedItems
+                        .Take(3)
+                        .Select(item => item.Name));
+
+                var extra = unservedItems.Count > 3
+                    ? $" và {unservedItems.Count - 3} món khác"
+                    : "";
+
+                MessageBox.Show(
+                    $"Còn {unservedItems.Count} món chưa được phục vụ: {sampleNames}{extra}.\n\nChỉ được thanh toán khi tất cả món đã ở trạng thái Đã phục vụ.",
+                    "Chưa thể thanh toán",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
         }
 
         btnThanhToan.Enabled = false;
@@ -1939,14 +2227,41 @@ public partial class SalesControl : UserControl
 
             var campaignId = GetSelectedCampaignId();
 
-            // Bước 2: chỉ PREVIEW số tiền/QR. Endpoint này không tạo Payment/Invoice.
-            var preview = await _api.GetPaymentPreviewAsync(
+            // Bước 2: preview lần đầu để lấy tổng tiền sau khuyến mãi + số điểm
+            // thành viên có thể dùng. Nếu Order đã gắn khách từ Mobile thì Backend
+            // tự trả đúng CustomerId ngay cả khi WinForms chưa tìm khách lại.
+            var initialPreview = await _api.GetPaymentPreviewAsync(
                 orderId.Value,
-                campaignId);
+                campaignId,
+                _selectedCustomer?.Id);
+
+            if (initialPreview is null)
+            {
+                MessageBox.Show("Không tải được thông tin xác nhận thanh toán.");
+                return;
+            }
+
+            var redeemPoints = PromptRedeemPoints(initialPreview);
+            if (!redeemPoints.HasValue)
+            {
+                RenderCart();
+                UpdateSendKitchenButton();
+                return;
+            }
+
+            // Có dùng điểm -> preview LẠI từ Backend để bill/QR hiển thị đúng số
+            // tiền sau đổi điểm. Không tự trừ ở UI.
+            var preview = redeemPoints.Value > 0
+                ? await _api.GetPaymentPreviewAsync(
+                    orderId.Value,
+                    campaignId,
+                    initialPreview.CustomerId ?? _selectedCustomer?.Id,
+                    redeemPoints.Value)
+                : initialPreview;
 
             if (preview is null)
             {
-                MessageBox.Show("Không tải được thông tin xác nhận thanh toán.");
+                MessageBox.Show("Không tải được số tiền sau khi áp dụng điểm.");
                 return;
             }
 
@@ -1961,7 +2276,7 @@ public partial class SalesControl : UserControl
             var confirmed = await ShowInvoiceReceiptDialogAsync(
                 confirmationInvoice,
                 $"XÁC NHẬN THANH TOÁN - {paymentLabel}",
-                showPaymentQr: method == 1,
+                showPaymentQr: method == 1 && preview.TotalAmount > 0,
                 requirePaymentConfirmation: true);
 
             if (!confirmed)
@@ -1976,8 +2291,12 @@ public partial class SalesControl : UserControl
                 orderId.Value,
                 method,
                 campaignId,
-                _selectedCustomer?.Id,
-                transactionRef: method == 1 ? preview.TransferContent : null);
+                preview.CustomerId ?? _selectedCustomer?.Id,
+                redeemPoints.Value > 0 ? redeemPoints.Value : null,
+                transactionRef:
+                    method == 1 && preview.TotalAmount > 0
+                        ? preview.TransferContent
+                        : null);
 
             if (payment is null)
             {
@@ -1995,17 +2314,32 @@ public partial class SalesControl : UserControl
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
 
-            // Báo riêng phần điểm tích lũy (nếu có gắn khách).
-            if (payment.CustomerId.HasValue && payment.PointsEarned > 0)
+            // Báo rõ cả điểm đã dùng và điểm vừa tích lại trên số tiền thực trả.
+            if (payment.CustomerId.HasValue)
             {
-                var emailNote = payment.EmailSent
-                    ? "\nĐã gửi hóa đơn qua email cho khách."
-                    : "";
+                var pointLines = new List<string>();
+
+                if (payment.PointsRedeemed > 0)
+                {
+                    pointLines.Add(
+                        $"Đã dùng {payment.PointsRedeemed:N0} điểm " +
+                        $"(-{payment.LoyaltyDiscount:N0}đ).");
+                }
+
+                if (payment.PointsEarned > 0)
+                    pointLines.Add($"Tích thêm {payment.PointsEarned:N0} điểm.");
+
+                pointLines.Add(
+                    $"Số điểm hiện có: {payment.LoyaltyPointBalance.GetValueOrDefault():N0} điểm.");
+
+                if (payment.EmailSent)
+                    pointLines.Add("Đã gửi hóa đơn qua email cho khách.");
 
                 MessageBox.Show(
-                    $"Đã tích {payment.PointsEarned:N0} điểm cho khách hàng.\n" +
-                    $"Số điểm hiện có: {payment.LoyaltyPointBalance:N0} điểm.{emailNote}",
-                    "Tích điểm thành công");
+                    string.Join("\n", pointLines),
+                    payment.PointsRedeemed > 0
+                        ? "Đổi điểm thành công"
+                        : "Tích điểm thành công");
             }
             else if (payment.EmailSent)
             {
@@ -2054,6 +2388,153 @@ public partial class SalesControl : UserControl
         }
     }
 
+    private int? PromptRedeemPoints(PaymentPreviewOrderDto preview)
+    {
+        if (!preview.CustomerId.HasValue ||
+            preview.MaxRedeemablePoints <= 0 ||
+            preview.LoyaltyPointBalance <= 0)
+        {
+            return 0;
+        }
+
+        using var dialog = new Form
+        {
+            Text = "Dùng điểm thành viên",
+            ClientSize = new Size(430, 300),
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White,
+        };
+
+        var customerName = string.IsNullOrWhiteSpace(preview.CustomerName)
+            ? "Khách hàng thành viên"
+            : preview.CustomerName;
+
+        var lblCustomer = new Label
+        {
+            Text = customerName,
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 18),
+            Size = new Size(390, 24),
+        };
+
+        var lblBalance = new Label
+        {
+            Text =
+                $"Hiện có {preview.LoyaltyPointBalance:N0} điểm · " +
+                $"1 điểm = {preview.LoyaltyPointValue:N0}đ",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 50),
+            Size = new Size(390, 24),
+        };
+
+        var lblMax = new Label
+        {
+            Text = $"Hóa đơn này dùng tối đa {preview.MaxRedeemablePoints:N0} điểm.",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 76),
+            Size = new Size(390, 24),
+        };
+
+        var numPoints = new NumericUpDown
+        {
+            Location = new Point(20, 112),
+            Size = new Size(190, 32),
+            Minimum = 0,
+            Maximum = preview.MaxRedeemablePoints,
+            Value = 0,
+            ThousandsSeparator = true,
+            Font = AppFonts.BodyMd,
+        };
+
+        var btnMax = new Button
+        {
+            Text = "Dùng tối đa",
+            Location = new Point(226, 111),
+            Size = new Size(120, 34),
+            FlatStyle = FlatStyle.Flat,
+        };
+        btnMax.Click += (s, e) =>
+            numPoints.Value = preview.MaxRedeemablePoints;
+
+        var lblEstimate = new Label
+        {
+            Font = AppFonts.LabelLg,
+            ForeColor = AppColors.Primary,
+            Location = new Point(20, 160),
+            Size = new Size(390, 46),
+        };
+
+        void RefreshEstimate()
+        {
+            var points = (int)numPoints.Value;
+            var loyaltyDiscount = points * preview.LoyaltyPointValue;
+            var amount = Math.Max(0m, preview.TotalAmount - loyaltyDiscount);
+            lblEstimate.Text =
+                $"Giảm {loyaltyDiscount:N0}đ  ·  Còn thanh toán {amount:N0}đ";
+        }
+
+        numPoints.ValueChanged += (s, e) => RefreshEstimate();
+        RefreshEstimate();
+
+        var btnNoPoints = new Button
+        {
+            Text = "Không dùng điểm",
+            DialogResult = DialogResult.No,
+            Location = new Point(20, 232),
+            Size = new Size(130, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy thanh toán",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(158, 232),
+            Size = new Size(120, 38),
+            FlatStyle = FlatStyle.Flat,
+        };
+
+        var btnApply = new Button
+        {
+            Text = "Áp dụng",
+            DialogResult = DialogResult.OK,
+            Location = new Point(286, 232),
+            Size = new Size(120, 38),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+        };
+        btnApply.FlatAppearance.BorderSize = 0;
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblCustomer,
+            lblBalance,
+            lblMax,
+            numPoints,
+            btnMax,
+            lblEstimate,
+            btnNoPoints,
+            btnCancel,
+            btnApply,
+        });
+
+        dialog.AcceptButton = btnApply;
+        dialog.CancelButton = btnCancel;
+
+        var result = dialog.ShowDialog(FindForm());
+        if (result == DialogResult.OK)
+            return (int)numPoints.Value;
+        if (result == DialogResult.No)
+            return 0;
+
+        return null;
+    }
     // Hiển thị QR ngân hàng thật theo số tiền Backend vừa preview.
     // Chỉ khi Thu ngân xác nhận đã nhận chuyển khoản thì mới tạo Payment/Invoice.
     private async Task<bool> ShowVietQrDialogAsync(
@@ -2321,21 +2802,41 @@ public partial class SalesControl : UserControl
         }
 
         var totalQty = invoice.Items.Sum(x => x.Quantity);
-        var lblTotals = new Label
+        var campaignDiscount = Math.Max(
+            0m,
+            invoice.DiscountAmount - invoice.LoyaltyDiscount);
+
+        var totalLines = new List<string>
         {
-            Text =
-                $"Tổng số món: {totalQty:N0}\n" +
-                $"Tạm tính: {invoice.SubTotal:N0}đ\n" +
-                (invoice.DiscountAmount > 0
-                    ? $"Giảm giá: -{invoice.DiscountAmount:N0}đ\n"
-                    : "") +
-                $"TỔNG TIỀN: {invoice.TotalAmount:N0}đ",
-            Font = AppFonts.LabelLg,
-            Location = new Point(20, 454),
-            Size = new Size(384, invoice.DiscountAmount > 0 ? 82 : 64),
+            $"Tổng số món: {totalQty:N0}",
+            $"Tạm tính: {invoice.SubTotal:N0}đ"
         };
 
-        var qrTop = invoice.DiscountAmount > 0 ? 542 : 524;
+        if (campaignDiscount > 0)
+            totalLines.Add($"Khuyến mãi: -{campaignDiscount:N0}đ");
+
+        if (invoice.LoyaltyDiscount > 0 && invoice.PointsRedeemed > 0)
+        {
+            totalLines.Add(
+                $"Đổi {invoice.PointsRedeemed:N0} điểm: " +
+                $"-{invoice.LoyaltyDiscount:N0}đ");
+        }
+
+        totalLines.Add($"TỔNG TIỀN: {invoice.TotalAmount:N0}đ");
+
+        if (invoice.PointsEarned > 0)
+            totalLines.Add($"Điểm tích thêm: +{invoice.PointsEarned:N0}");
+
+        var totalsHeight = Math.Max(64, 22 * totalLines.Count + 12);
+        var lblTotals = new Label
+        {
+            Text = string.Join("\n", totalLines),
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 454),
+            Size = new Size(384, totalsHeight),
+        };
+
+        var qrTop = lblTotals.Bottom + 6;
         var picQr = new PictureBox
         {
             Location = new Point(122, qrTop),

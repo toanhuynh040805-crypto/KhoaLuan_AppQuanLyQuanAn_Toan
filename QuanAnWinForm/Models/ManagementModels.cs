@@ -134,6 +134,7 @@ public class OrderItemStatusDto
 {
     public int Id { get; set; }
     public int OrderId { get; set; }
+    public int? TableId { get; set; }
     public string TableName { get; set; } = "";
     public int MenuItemId { get; set; }
     public string MenuItemName { get; set; } = "";
@@ -144,6 +145,12 @@ public class OrderItemStatusDto
     public string? CancelReason { get; set; }
     public byte[]? RowVer { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+public class KitchenPrioritySnapshotDto
+{
+    public List<int> ItemIds { get; set; } = new();
+    public List<int> TableIds { get; set; } = new();
 }
 
 public class UpdateOrderItemStatusRequestDto

@@ -318,6 +318,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                 request.TargetTableId
             );
 
+            targetStatus = await NormalizeStaleReservedTargetAsync(
+                connection,
+                transaction,
+                request.TargetTableId,
+                targetStatus
+            );
+
             if (sourceStatus is null || targetStatus is null)
                 return NotFound(new { message = "Không tìm thấy bàn" });
 
@@ -667,6 +674,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                     ("@TableId", tableId)
                 );
 
+                status = await NormalizeStaleReservedTargetAsync(
+                    connection,
+                    transaction,
+                    tableId,
+                    status
+                );
+
                 if (status is null)
                     return NotFound(new { message = $"Không tìm thấy bàn #{tableId}" });
                 if (status != "Trong")
@@ -750,6 +764,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                 connection,
                 transaction,
                 request.TargetTableId
+            );
+
+            targetStatus = await NormalizeStaleReservedTargetAsync(
+                connection,
+                transaction,
+                request.TargetTableId,
+                targetStatus
             );
 
             if (sourceStatus is null || targetStatus is null)
@@ -998,6 +1019,86 @@ public class MobileTablesCompatibilityController : ControllerBase
         {
             // bỏ qua: realtime/thông báo chỉ là phần phụ
         }
+    }
+
+    private static async Task<string?> NormalizeStaleReservedTargetAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        int tableId,
+        string? rawStatus)
+    {
+        // Sơ đồ bàn đã coi một trạng thái DaDat cũ là Trống nếu không còn
+        // reservation hợp lệ. Các thao tác Chuyển/Ghép/Tách phải dùng cùng
+        // logic đó; nếu không UI chọn được bàn nhưng API lại báo "không trống".
+        if (!string.Equals(rawStatus, "DaDat", StringComparison.OrdinalIgnoreCase))
+            return rawStatus;
+
+        var hasActiveReservation = await ExecuteScalarIntAsync(
+            connection,
+            transaction,
+            """
+            ;WITH SelectedTable AS
+            (
+                SELECT AreaId, UPPER(LTRIM(RTRIM(TableName))) AS NormalizedName
+                FROM DiningTables
+                WHERE TableId = @TableId
+            ),
+            PhysicalTables AS
+            (
+                SELECT t.TableId
+                FROM DiningTables t
+                INNER JOIN SelectedTable s
+                    ON s.AreaId = t.AreaId
+                   AND UPPER(LTRIM(RTRIM(t.TableName))) = s.NormalizedName
+            )
+            SELECT COUNT(*)
+            FROM Reservations r
+            INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+            WHERE r.ReservationTime >= DATEADD(DAY, -1, GETDATE())
+              AND
+              (
+                  r.Status = N'DaNhanBan'
+                  OR
+                  (
+                      r.Status = N'DaXacNhan'
+                      AND DATEADD(
+                          MINUTE,
+                          ISNULL(r.DurationMinutes, 120),
+                          r.ReservationTime
+                      ) >= GETDATE()
+                  )
+              );
+            """,
+            ("@TableId", tableId)
+        ) > 0;
+
+        if (hasActiveReservation)
+            return rawStatus;
+
+        // Không còn reservation thật sự: dọn cờ DaDat cũ trên mọi TableId
+        // legacy đại diện cùng một bàn vật lý để lần tải sau cũng nhất quán.
+        await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            ;WITH SelectedTable AS
+            (
+                SELECT AreaId, UPPER(LTRIM(RTRIM(TableName))) AS NormalizedName
+                FROM DiningTables
+                WHERE TableId = @TableId
+            )
+            UPDATE t
+            SET Status = N'Trong'
+            FROM DiningTables t
+            INNER JOIN SelectedTable s
+                ON s.AreaId = t.AreaId
+               AND UPPER(LTRIM(RTRIM(t.TableName))) = s.NormalizedName
+            WHERE t.Status = N'DaDat';
+            """,
+            ("@TableId", tableId)
+        );
+
+        return "Trong";
     }
 
     private static async Task<string?> GetTableStatusAsync(

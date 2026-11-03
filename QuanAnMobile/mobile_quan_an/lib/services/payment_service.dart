@@ -135,10 +135,22 @@ class PaymentService {
 
   Future<PaymentPreview> getPreview({
     required int tableId,
+    int? customerId,
+    int redeemPoints = 0,
   }) async {
-    final dynamic response = await _apiClient.get(
-      '/payments/preview/table/$tableId',
-    );
+    final List<String> query = <String>[];
+    if (customerId != null && customerId > 0) {
+      query.add('customerId=$customerId');
+    }
+    if (redeemPoints > 0) {
+      query.add('redeemPoints=$redeemPoints');
+    }
+
+    final String url =
+        '/payments/preview/table/$tableId'
+        '${query.isEmpty ? '' : '?${query.join('&')}'}';
+
+    final dynamic response = await _apiClient.get(url);
 
     if (response is! Map) {
       throw const ApiException(
@@ -185,10 +197,15 @@ class PaymentService {
     required int tableId,
     required String employeeCode,
     required Object paymentMethod,
+    int? customerId,
+    int redeemPoints = 0,
     String? transactionRef,
   }) async {
-    final PaymentPreview preview =
-        await getPreview(tableId: tableId);
+    final PaymentPreview preview = await getPreview(
+      tableId: tableId,
+      customerId: customerId,
+      redeemPoints: redeemPoints,
+    );
     final int method = await _resolvePaymentMethod(paymentMethod);
 
     final dynamic response = await _apiClient.post(
@@ -196,6 +213,8 @@ class PaymentService {
       body: {
         'orderId': preview.orderId,
         'method': method,
+        'customerId': customerId,
+        'redeemPoints': redeemPoints > 0 ? redeemPoints : null,
         'transactionRef': transactionRef,
         // Thanh toán hoàn tất ở backend chung nhưng email được giữ lại để
         // WinForms/Thu ngân có thể bấm Gửi email sau khi kiểm tra hóa đơn.

@@ -2,8 +2,10 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Hubs;
 
 namespace QuanAnBackend.Controllers;
 
@@ -15,10 +17,14 @@ public record MobilePriorityRequest(bool Active, string? EmployeeCode);
 public class MobileOperationsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IHubContext<OrderHub> _hub;
 
-    public MobileOperationsController(AppDbContext db)
+    public MobileOperationsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub)
     {
         _db = db;
+        _hub = hub;
     }
 
     [HttpGet("recent-notes")]
@@ -256,6 +262,16 @@ public class MobileOperationsController : ControllerBase
                 userId: userId
             );
 
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Item",
+                    orderItemId,
+                    tableId,
+                    active = request.Active
+                });
+
             return Ok(new { orderItemId, tableId, active = request.Active });
         }
         finally
@@ -299,6 +315,16 @@ public class MobileOperationsController : ControllerBase
                 active: request.Active,
                 userId: userId
             );
+
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Table",
+                    tableId,
+                    orderItemId = (int?)null,
+                    active = request.Active
+                });
 
             return Ok(new { tableId, active = request.Active });
         }
