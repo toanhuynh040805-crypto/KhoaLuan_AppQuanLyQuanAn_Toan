@@ -16,17 +16,20 @@ public class NotificationService
     private readonly IHubContext<OrderHub> _hub;
     private readonly ILogger<NotificationService> _logger;
     private readonly ReservationAudienceService _audience;
+    private readonly TableEditLockService _tableLocks;
 
     public NotificationService(
         AppDbContext db,
         IHubContext<OrderHub> hub,
         ILogger<NotificationService> logger,
-        ReservationAudienceService audience)
+        ReservationAudienceService audience,
+        TableEditLockService tableLocks)
     {
         _db = db;
         _hub = hub;
         _logger = logger;
         _audience = audience;
+        _tableLocks = tableLocks;
     }
 
     public async Task CreateAsync(
@@ -248,7 +251,8 @@ public class NotificationService
             .Where(order => order.OrderId == orderId)
             .Select(order => new
             {
-                UserId = order.Employee != null
+                TableId = order.TableId,
+                OwnerUserId = order.Employee != null
                     ? (int?)order.Employee.UserId
                     : null,
                 AreaId = order.Table != null
@@ -262,25 +266,57 @@ public class NotificationService
 
         var recipients = new HashSet<int>();
 
-        if (orderInfo.UserId.HasValue && orderInfo.UserId.Value > 0)
+        // 1) Người đang thực sự giữ bàn/thao tác hiện tại có ưu tiên cao nhất.
+        if (orderInfo.TableId.HasValue &&
+            orderInfo.TableId.Value > 0)
+        {
+            var activeLock = _tableLocks.GetActive(
+                orderInfo.TableId.Value);
+
+            if (activeLock is not null &&
+                !string.IsNullOrWhiteSpace(activeLock.EmployeeCode))
+            {
+                var activeUserId = await _db.Employees
+                    .AsNoTracking()
+                    .Where(employee =>
+                        employee.EmployeeCode ==
+                            activeLock.EmployeeCode &&
+                        employee.Status ==
+                            EmployeeStatus.DangLamViec &&
+                        employee.User != null &&
+                        employee.User.IsActive)
+                    .Select(employee => (int?)employee.UserId)
+                    .FirstOrDefaultAsync();
+
+                if (activeUserId.HasValue)
+                    recipients.Add(activeUserId.Value);
+            }
+        }
+
+        // 2) Không có lock thì gửi cho nhân viên sở hữu/tạo Order.
+        if (recipients.Count == 0 &&
+            orderInfo.OwnerUserId.HasValue &&
+            orderInfo.OwnerUserId.Value > 0)
         {
             var active = await _db.Users
                 .AsNoTracking()
                 .AnyAsync(user =>
-                    user.UserId == orderInfo.UserId.Value &&
+                    user.UserId == orderInfo.OwnerUserId.Value &&
                     user.IsActive);
 
             if (active)
-                recipients.Add(orderInfo.UserId.Value);
+                recipients.Add(orderInfo.OwnerUserId.Value);
         }
 
+        // 3) Order legacy/chưa gắn nhân viên -> đúng Phục vụ của khu + ca hiện tại.
         if (recipients.Count == 0 &&
             orderInfo.AreaId.HasValue &&
             orderInfo.AreaId.Value > 0)
         {
-            recipients = await _audience.GetOperationalRecipientUserIdsAsync(
-                new[] { orderInfo.AreaId.Value },
-                DateTime.Now);
+            recipients =
+                await _audience.GetOperationalRecipientUserIdsAsync(
+                    new[] { orderInfo.AreaId.Value },
+                    DateTime.Now);
         }
 
         foreach (var userId in recipients)
