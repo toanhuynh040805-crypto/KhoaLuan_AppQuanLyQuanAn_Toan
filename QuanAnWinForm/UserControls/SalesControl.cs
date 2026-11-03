@@ -959,8 +959,8 @@ public partial class SalesControl : UserControl
         Button button)
     {
         if (_isTakeaway ||
-            item.Status is not ((int)KitchenStatus.MoiGoi) and
-                not ((int)KitchenStatus.DangCheBien))
+            (item.Status != (int)KitchenStatus.MoiGoi &&
+             item.Status != (int)KitchenStatus.DangCheBien))
         {
             return;
         }
@@ -1639,8 +1639,8 @@ public partial class SalesControl : UserControl
     {
         var canPrioritize =
             !_isTakeaway &&
-            item.Status is (int)KitchenStatus.MoiGoi or
-                (int)KitchenStatus.DangCheBien;
+            (item.Status == (int)KitchenStatus.MoiGoi ||
+             item.Status == (int)KitchenStatus.DangCheBien);
         var isPriority = _priorityItemIds.Contains(item.Id);
 
         var row = new Panel
