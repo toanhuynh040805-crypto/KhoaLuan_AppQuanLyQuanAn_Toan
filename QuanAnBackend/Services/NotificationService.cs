@@ -15,15 +15,18 @@ public class NotificationService
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly ILogger<NotificationService> _logger;
+    private readonly ReservationAudienceService _audience;
 
     public NotificationService(
         AppDbContext db,
         IHubContext<OrderHub> hub,
-        ILogger<NotificationService> logger)
+        ILogger<NotificationService> logger,
+        ReservationAudienceService audience)
     {
         _db = db;
         _hub = hub;
         _logger = logger;
+        _audience = audience;
     }
 
     public async Task CreateAsync(
@@ -223,6 +226,75 @@ public class NotificationService
                 relatedEntityType: relatedEntityType,
                 relatedEntityId: relatedEntityId
             );
+        }
+    }
+
+    /// <summary>
+    /// Thông báo gắn với một Order chỉ gửi cho đúng nhân viên đang sở hữu Order.
+    /// Nếu Order chưa có EmployeeId/UserId thì fallback về Phục vụ đang được
+    /// phân đúng ca + đúng khu vực của bàn.
+    /// </summary>
+    public async Task CreateForOrderResponsibleAsync(
+        int orderId,
+        string title,
+        string content,
+        NotificationType type,
+        string? relatedEntityType = null,
+        int? relatedEntityId = null,
+        string? eventKeyPrefix = null)
+    {
+        var orderInfo = await _db.Orders
+            .AsNoTracking()
+            .Where(order => order.OrderId == orderId)
+            .Select(order => new
+            {
+                UserId = order.Employee != null
+                    ? (int?)order.Employee.UserId
+                    : null,
+                AreaId = order.Table != null
+                    ? (int?)order.Table.AreaId
+                    : null
+            })
+            .FirstOrDefaultAsync();
+
+        if (orderInfo is null)
+            return;
+
+        var recipients = new HashSet<int>();
+
+        if (orderInfo.UserId.HasValue && orderInfo.UserId.Value > 0)
+        {
+            var active = await _db.Users
+                .AsNoTracking()
+                .AnyAsync(user =>
+                    user.UserId == orderInfo.UserId.Value &&
+                    user.IsActive);
+
+            if (active)
+                recipients.Add(orderInfo.UserId.Value);
+        }
+
+        if (recipients.Count == 0 &&
+            orderInfo.AreaId.HasValue &&
+            orderInfo.AreaId.Value > 0)
+        {
+            recipients = await _audience.GetOperationalRecipientUserIdsAsync(
+                new[] { orderInfo.AreaId.Value },
+                DateTime.Now);
+        }
+
+        foreach (var userId in recipients)
+        {
+            await CreateAsync(
+                title,
+                content,
+                type,
+                targetUserId: userId,
+                relatedEntityType: relatedEntityType,
+                relatedEntityId: relatedEntityId,
+                eventKey: string.IsNullOrWhiteSpace(eventKeyPrefix)
+                    ? null
+                    : $"{eventKeyPrefix}:user:{userId}");
         }
     }
 
