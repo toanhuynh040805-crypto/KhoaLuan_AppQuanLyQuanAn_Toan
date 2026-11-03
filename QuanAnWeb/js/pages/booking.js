@@ -3,7 +3,8 @@ import {
     renderBookingTables,
     renderBookingTableCards,
     renderAreaFilterPills,
-    renderBookingTableAlert
+    renderBookingTableAlert,
+    renderBookingPagination
 } from '../components/bookingView.js';
 import { setupSessionNavigation } from '../components/sessionNavigation.js?auth-session-2';
 import { realtimeClient } from '../realtime/realtimeClient.js?table-sync-3';
@@ -23,6 +24,7 @@ if (form) {
 
     const tableSelectorContainer = document.getElementById('booking-table-selector');
     const tableAlertContainer = document.getElementById('booking-table-alert');
+    const tablePaginationContainer = document.getElementById('booking-table-pagination');
     const areaFiltersContainer = document.getElementById('booking-area-filters');
     const availableCountBadge = document.getElementById('booking-available-tables-count');
     const reloadButton = document.getElementById('btn-reload-tables');
@@ -36,6 +38,8 @@ if (form) {
     let selectedTableId = '';
     let selectedTableDetails = null;
     let activeAreaFilter = 'all';
+    let currentPage = 1;
+    const pageSize = 12;
 
     const now = new Date();
     const localToday = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -44,6 +48,9 @@ if (form) {
     // Hiển thị trạng thái khởi tạo
     if (tableSelectorContainer) {
         renderBookingTableCards(tableSelectorContainer, { state: 'empty-input' });
+    }
+    if (tablePaginationContainer) {
+        renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
     }
 
     function setMessage(element, message, isError = false) {
@@ -240,6 +247,9 @@ if (form) {
                 state: 'no-match',
                 requestedGuests
             });
+            if (tablePaginationContainer) {
+                renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
+            }
             if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
             if (availableCountBadge) {
                 availableCountBadge.classList.remove('hidden');
@@ -273,6 +283,7 @@ if (form) {
 
         renderAreaFilterPills(areaFiltersContainer, areasList, activeAreaFilter, (newAreaId) => {
             activeAreaFilter = newAreaId;
+            currentPage = 1; // Luôn đưa về trang 1 khi thay đổi bộ lọc khu vực
             renderCurrentView();
         });
 
@@ -281,18 +292,47 @@ if (form) {
             ? currentCandidates
             : currentCandidates.filter((t) => t.areaName === activeAreaFilter);
 
+        const totalItems = displayed.length;
+        const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+        if (currentPage > totalPages) {
+            currentPage = 1;
+        }
+        if (currentPage < 1) {
+            currentPage = 1;
+        }
+
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = Math.min(startIndex + pageSize, totalItems);
+        const paginatedTables = displayed.slice(startIndex, endIndex);
+
         if (availableCountBadge) {
             availableCountBadge.classList.remove('hidden');
             availableCountBadge.textContent = `${currentCandidates.length} bàn trống`;
         }
 
         renderBookingTableCards(tableSelectorContainer, {
-            tables: displayed,
+            tables: paginatedTables,
             selectedId: selectedTableId,
             requestedGuests,
             state: 'loaded',
             onSelect: handleSelectTable
         });
+
+        if (tablePaginationContainer) {
+            renderBookingPagination(tablePaginationContainer, {
+                currentPage,
+                totalPages,
+                totalItems,
+                startIndex,
+                endIndex,
+                pageSize,
+                onPageChange: (newPage) => {
+                    currentPage = newPage;
+                    renderCurrentView();
+                    tableSelectorContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            });
+        }
 
         renderBookingTables(tableInput, currentCandidates);
         tableInput.value = selectedTableId || '';
@@ -301,12 +341,19 @@ if (form) {
 
     function handleSelectTable(table) {
         const idStr = String(table.id ?? table.tableId);
-        selectedTableId = idStr;
-        selectedTableDetails = table;
-        tableInput.value = idStr;
+        if (selectedTableId === idStr) {
+            // Nhấn lại bàn đang chọn -> Bỏ chọn (Deselect)
+            selectedTableId = '';
+            selectedTableDetails = null;
+            tableInput.value = '';
+        } else {
+            selectedTableId = idStr;
+            selectedTableDetails = table;
+            tableInput.value = idStr;
+            // Xóa thông báo cảnh báo trước đó khi khách đã chọn được bàn mới hợp lệ
+            renderBookingTableAlert(tableAlertContainer, '');
+        }
 
-        // Xóa thông báo cảnh báo trước đó khi khách đã chọn được bàn mới hợp lệ
-        renderBookingTableAlert(tableAlertContainer, '');
         renderCurrentView();
         updateSubmitState();
         if (statusElement) statusElement.textContent = '';
@@ -329,6 +376,10 @@ if (form) {
             selectedTableId = '';
             selectedTableDetails = null;
             currentCandidates = [];
+            currentPage = 1;
+            if (tablePaginationContainer) {
+                renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
+            }
             if (availableCountBadge) availableCountBadge.classList.add('hidden');
             if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
             renderBookingTableCards(tableSelectorContainer, { state: 'empty-input' });
@@ -347,6 +398,10 @@ if (form) {
             selectedTableId = '';
             selectedTableDetails = null;
             currentCandidates = [];
+            currentPage = 1;
+            if (tablePaginationContainer) {
+                renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
+            }
             if (availableCountBadge) availableCountBadge.classList.add('hidden');
             if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
             renderBookingTableCards(tableSelectorContainer, {
@@ -365,6 +420,9 @@ if (form) {
 
         if (currentCandidates.length === 0) {
             renderBookingTableCards(tableSelectorContainer, { state: 'loading' });
+            if (tablePaginationContainer) {
+                renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
+            }
         }
 
         try {
@@ -379,6 +437,7 @@ if (form) {
 
             const candidates = processCandidates(rawTables, requestedGuests);
             currentCandidates = candidates;
+            currentPage = 1; // Đưa về trang 1 khi tải dữ liệu mới
 
             // KIỂM SOÁT VÀ TỰ ĐỘNG BỎ CHỌN BÀN KHI THAY ĐỔI SỐ KHÁCH:
             if (selectedTableId) {
@@ -416,12 +475,16 @@ if (form) {
             if (reloadIcon) reloadIcon.classList.remove('animate-spin');
             if (version !== requestVersion) return;
             currentCandidates = [];
+            currentPage = 1;
             selectedTableId = '';
             selectedTableDetails = null;
             tableInput.value = '';
             tableInput.disabled = true;
             if (availableCountBadge) availableCountBadge.classList.add('hidden');
             if (areaFiltersContainer) areaFiltersContainer.classList.add('hidden');
+            if (tablePaginationContainer) {
+                renderBookingPagination(tablePaginationContainer, { totalItems: 0 });
+            }
             renderBookingTableCards(tableSelectorContainer, {
                 state: 'no-match',
                 requestedGuests
@@ -436,9 +499,18 @@ if (form) {
         }
     }
 
-    [dateInput, timeInput].forEach((input) => input.addEventListener('change', () => loadAvailability(false)));
-    guestsInput.addEventListener('input', () => loadAvailability(false));
-    guestsInput.addEventListener('change', () => loadAvailability(false));
+    [dateInput, timeInput].forEach((input) => input.addEventListener('change', () => {
+        currentPage = 1;
+        loadAvailability(false);
+    }));
+    guestsInput.addEventListener('input', () => {
+        currentPage = 1;
+        loadAvailability(false);
+    });
+    guestsInput.addEventListener('change', () => {
+        currentPage = 1;
+        loadAvailability(false);
+    });
 
     [nameInput, phoneInput].forEach((input) => {
         input.addEventListener('input', updateSubmitState);
