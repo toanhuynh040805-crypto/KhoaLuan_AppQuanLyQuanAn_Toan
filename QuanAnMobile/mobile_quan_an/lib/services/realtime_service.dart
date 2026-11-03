@@ -5,7 +5,6 @@ import 'package:signalr_netcore/signalr_client.dart';
 import '../models/app_notification.dart';
 import 'api_config.dart';
 import 'api_client.dart';
-import 'mobile_access_policy.dart';
 
 class DishStatusRealtimeEvent {
   final int orderItemId;
