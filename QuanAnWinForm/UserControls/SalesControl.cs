@@ -2124,6 +2124,9 @@ public partial class SalesControl : UserControl
             Items = lines,
             SubTotal = preview.SubTotal,
             DiscountAmount = preview.DiscountAmount,
+            PointsRedeemed = preview.RedeemedPoints,
+            PointsEarned = preview.EstimatedEarnedPoints,
+            LoyaltyDiscount = preview.LoyaltyDiscount,
             TaxAmount = 0,
             TotalAmount = preview.TotalAmount,
             Status = 0,
@@ -2799,21 +2802,41 @@ public partial class SalesControl : UserControl
         }
 
         var totalQty = invoice.Items.Sum(x => x.Quantity);
-        var lblTotals = new Label
+        var campaignDiscount = Math.Max(
+            0m,
+            invoice.DiscountAmount - invoice.LoyaltyDiscount);
+
+        var totalLines = new List<string>
         {
-            Text =
-                $"Tổng số món: {totalQty:N0}\n" +
-                $"Tạm tính: {invoice.SubTotal:N0}đ\n" +
-                (invoice.DiscountAmount > 0
-                    ? $"Giảm giá: -{invoice.DiscountAmount:N0}đ\n"
-                    : "") +
-                $"TỔNG TIỀN: {invoice.TotalAmount:N0}đ",
-            Font = AppFonts.LabelLg,
-            Location = new Point(20, 454),
-            Size = new Size(384, invoice.DiscountAmount > 0 ? 82 : 64),
+            $"Tổng số món: {totalQty:N0}",
+            $"Tạm tính: {invoice.SubTotal:N0}đ"
         };
 
-        var qrTop = invoice.DiscountAmount > 0 ? 542 : 524;
+        if (campaignDiscount > 0)
+            totalLines.Add($"Khuyến mãi: -{campaignDiscount:N0}đ");
+
+        if (invoice.LoyaltyDiscount > 0 && invoice.PointsRedeemed > 0)
+        {
+            totalLines.Add(
+                $"Đổi {invoice.PointsRedeemed:N0} điểm: " +
+                $"-{invoice.LoyaltyDiscount:N0}đ");
+        }
+
+        totalLines.Add($"TỔNG TIỀN: {invoice.TotalAmount:N0}đ");
+
+        if (invoice.PointsEarned > 0)
+            totalLines.Add($"Điểm tích thêm: +{invoice.PointsEarned:N0}");
+
+        var totalsHeight = Math.Max(64, 22 * totalLines.Count + 12);
+        var lblTotals = new Label
+        {
+            Text = string.Join("\n", totalLines),
+            Font = AppFonts.LabelLg,
+            Location = new Point(20, 454),
+            Size = new Size(384, totalsHeight),
+        };
+
+        var qrTop = lblTotals.Bottom + 6;
         var picQr = new PictureBox
         {
             Location = new Point(122, qrTop),
