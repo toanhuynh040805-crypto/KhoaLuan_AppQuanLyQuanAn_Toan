@@ -885,8 +885,8 @@ public partial class SalesControl : UserControl
     {
         var hasPendingKitchenItems =
             _existingOrder?.Items.Any(item =>
-                item.Status is (int)KitchenStatus.MoiGoi or
-                    (int)KitchenStatus.DangCheBien) == true;
+                item.Status == (int)KitchenStatus.MoiGoi ||
+                item.Status == (int)KitchenStatus.DangCheBien) == true;
 
         btnPriorityTable.Visible =
             !_isTakeaway &&
