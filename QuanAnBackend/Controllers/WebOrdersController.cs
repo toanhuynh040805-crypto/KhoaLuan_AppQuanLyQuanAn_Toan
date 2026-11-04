@@ -23,19 +23,21 @@ public class WebOrdersController : ControllerBase
     private readonly OrderRoutingService _orderRoutingService;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
-
-    public WebOrdersController(
+    private readonly KitchenHoursService _kitchenHours;
+        public WebOrdersController(
         AppDbContext context,
         ILogger<WebOrdersController> logger,
         OrderRoutingService orderRoutingService,
         IHubContext<OrderHub> hub,
-        NotificationService notifications)
+        NotificationService notifications,
+        KitchenHoursService kitchenHours)
     {
         _context = context;
         _logger = logger;
         _orderRoutingService = orderRoutingService;
         _hub = hub;
         _notifications = notifications;
+        _kitchenHours = kitchenHours;
     }
 
     private int GetCurrentCustomerId()
@@ -97,7 +99,10 @@ public class WebOrdersController : ControllerBase
                 await transaction.CommitAsync();
                 return await RouteAndRespondAsync(previousOrder, existingItemIds);
             }
-
+            // Bếp đóng cửa: chặn đơn mới. Đặt sau khối kiểm tra trùng yêu cầu
+            // để việc gửi lại đơn đã tạo trước giờ đóng vẫn trả đúng kết quả cũ.
+            if (!_kitchenHours.IsOpenNow(out var kitchenClosedMessage))
+                return BadRequest(new { code = "KITCHEN_CLOSED", message = kitchenClosedMessage });
             var table = await _context.Tables
                 .FirstOrDefaultAsync(candidate => candidate.TableId == request.TableId.Value);
             if (table is null)

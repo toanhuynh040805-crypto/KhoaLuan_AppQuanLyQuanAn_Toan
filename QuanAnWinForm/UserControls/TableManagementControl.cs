@@ -50,7 +50,32 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 or "thungân";
         }
     }
+    // Chỉ Quản lý được xác nhận "Đã phục vụ" thay nhân viên (backend cũng chặn các role khác).
+    private bool CanMarkServed
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
 
+            return role is "quanly" or "quảnlý" or "admin";
+        }
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
+    {
+        var d = radius * 2;
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
     // Gom nhiều sự kiện realtime dồn dập (vd mobile tick nhiều món liên tiếp) thành 1 lần tải lại
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 300 };
     private bool _pendingReloadTables;
@@ -764,23 +789,43 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         row.Controls.Add(lblTime);
         row.Controls.Add(lblStatus);
 
-        // Chỉ cho phép bấm "Đã phục vụ" khi món ở trạng thái Đã chế biến (DaCheBien = 2)
+        // Món đã chế biến, đang chờ nhân viên phục vụ xác nhận
         if (statusIndex == 2)
         {
+            if (!CanMarkServed)
+            {
+                row.Controls.Add(new Label
+                {
+                    Text = "Chờ phục vụ xác nhận",
+                    Font = new Font(AppFonts.LabelMd, FontStyle.Italic),
+                    ForeColor = AppColors.Outline,
+                    AutoSize = true,
+                    Location = new Point(110, 50)
+                });
+                return row;
+            }
+
             var btnServe = new Button
             {
-                Text = "Đã phục vụ",
-                Location = new Point(150, 44),
-                Size = new Size(108, 28),
+                Text = "✓  Đã phục vụ",
+                Size = new Size(116, 30),
+                Location = new Point(row.Width - 116 - 10, 42),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Tertiary,
                 ForeColor = Color.White,
                 Font = AppFonts.LabelMd,
+                Cursor = Cursors.Hand,
+                UseVisualStyleBackColor = false,
             };
             btnServe.FlatAppearance.BorderSize = 0;
+            btnServe.FlatAppearance.MouseOverBackColor = AppColors.TertiaryContainer;
+            btnServe.FlatAppearance.MouseDownBackColor = AppColors.Success;
+            btnServe.Region = new Region(RoundedRect(new Rectangle(0, 0, btnServe.Width, btnServe.Height), 8));
+
             btnServe.Click += async (s, e) =>
             {
                 btnServe.Enabled = false;
+                btnServe.Text = "Đang lưu...";
                 try
                 {
                     await _api.UpdateOrderItemStatusAsync(item.Id, (int)KitchenStatus.DaPhucVu, _userId, null, item.RowVer);
@@ -789,6 +834,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Không cập nhật được: {ex.Message}", "Cảnh báo / Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    btnServe.Text = "✓  Đã phục vụ";
                     btnServe.Enabled = true;
                 }
             };

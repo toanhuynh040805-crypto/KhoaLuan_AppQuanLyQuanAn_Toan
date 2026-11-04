@@ -534,7 +534,19 @@ public class ApiService
             "/api/attendance-settings",
             JsonOpts);
     }
-
+    // Giờ nhận món của bếp (backend: GET /api/kitchen-hours). Lỗi mạng -> null (coi như không chặn ở UI,
+    // backend vẫn là lớp chặn cuối cùng).
+    public async Task<KitchenHoursDto?> GetKitchenHoursAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<KitchenHoursDto>("/api/kitchen-hours", JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
     public async Task<AttendanceLocationSettingsDto?> UpdateAttendanceLocationSettingsAsync(
         double latitude,
         double longitude,
@@ -1212,4 +1224,12 @@ public class RoleDto
         "Bep" => "Bếp",
         _ => RoleName,
     };
+}
+public class KitchenHoursDto
+{
+    public bool IsOpen { get; set; } = true;
+    public string OpenTime { get; set; } = "";
+    public string CloseTime { get; set; } = "";
+    public string Message { get; set; } = "";
+    public DateTime ServerTime { get; set; }
 }

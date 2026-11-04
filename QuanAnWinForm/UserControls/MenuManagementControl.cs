@@ -317,60 +317,111 @@ public partial class MenuManagementControl : UserControl, IRefreshableContent
             return;
         }
 
+        var workArea = Screen.FromControl(this).WorkingArea;
+
         using var dialog = new Form
         {
             Text = existing is null ? "Thêm món mới" : "Sửa món",
-            Width = 380,
-            Height = 600,
+            AutoScaleMode = AutoScaleMode.Dpi,
+            ClientSize = new Size(480, Math.Min(760, workArea.Height - 100)),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
+            BackColor = Color.White,
         };
 
-        var lblName = new Label { Text = "Tên món *", Font = AppFonts.BodyMd, Location = new Point(20, 16), AutoSize = true };
-        var txtName = new TextBox { Location = new Point(20, 36), Width = 320, Font = AppFonts.BodyMd, Text = existing?.Name ?? "" };
+        var root = new TableLayoutPanel
+        {
+            ColumnCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top,
+            MinimumSize = new Size(440, 0),
+            Padding = new Padding(24, 20, 24, 20),
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-        var lblPrice = new Label { Text = "Giá bán (đ) *", Font = AppFonts.BodyMd, Location = new Point(20, 72), AutoSize = true };
-        var numPrice = new NumericUpDown { Location = new Point(20, 92), Width = 150, Minimum = 0, Maximum = 100_000_000, Increment = 1000, ThousandsSeparator = true, Value = existing?.Price ?? 0 };
+        Label Lbl(string text, int top = 12) => new Label
+        {
+            Text = text,
+            Font = AppFonts.BodyMd,
+            AutoSize = true,
+            Margin = new Padding(0, top, 0, 4),
+        };
 
-        var lblUnit = new Label { Text = "Đơn vị tính", Font = AppFonts.BodyMd, Location = new Point(190, 72), AutoSize = true };
-        var cbUnit = new ComboBox { Location = new Point(190, 92), Width = 150, Font = AppFonts.BodyMd, DropDownStyle = ComboBoxStyle.DropDownList };
+        // ---------- Tên món ----------
+        var txtName = new TextBox { Dock = DockStyle.Fill, Font = AppFonts.BodyMd, Text = existing?.Name ?? "" };
+
+        // ---------- Giá + Đơn vị ----------
+        var numPrice = new NumericUpDown
+        {
+            Dock = DockStyle.Fill,
+            Font = AppFonts.BodyMd,
+            Margin = new Padding(0, 0, 8, 0),
+            Minimum = 0,
+            Maximum = 100_000_000,
+            Increment = 1000,
+            ThousandsSeparator = true,
+            Value = existing?.Price ?? 0,
+        };
+        var cbUnit = new ComboBox
+        {
+            Dock = DockStyle.Fill,
+            Font = AppFonts.BodyMd,
+            Margin = new Padding(8, 0, 0, 0),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+        };
         cbUnit.Items.AddRange(UnitOptions);
         var preselectUnit = existing is null ? -1 : Array.IndexOf(UnitOptions, existing.Unit);
         cbUnit.SelectedIndex = preselectUnit >= 0 ? preselectUnit : 0;
 
-        var lblCategory = new Label { Text = "Loại món *", Font = AppFonts.BodyMd, Location = new Point(20, 128), AutoSize = true };
-        var cbCategory = new ComboBox { Location = new Point(20, 148), Width = 320, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
+        var rowPriceUnit = new TableLayoutPanel
+        {
+            ColumnCount = 2,
+            RowCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+        };
+        rowPriceUnit.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        rowPriceUnit.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var lblPrice = Lbl("Giá bán (đ) *");
+        var lblUnit = Lbl("Đơn vị tính");
+        lblUnit.Margin = new Padding(8, 12, 0, 4);
+        rowPriceUnit.Controls.Add(lblPrice, 0, 0);
+        rowPriceUnit.Controls.Add(lblUnit, 1, 0);
+        rowPriceUnit.Controls.Add(numPrice, 0, 1);
+        rowPriceUnit.Controls.Add(cbUnit, 1, 1);
+
+        // ---------- Loại món ----------
+        var cbCategory = new ComboBox { Dock = DockStyle.Fill, Font = AppFonts.BodyMd, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
         cbCategory.Items.AddRange(_categories.Cast<object>().ToArray());
         var preselectCategory = existing is null ? 0 : _categories.FindIndex(c => c.Id == existing.CategoryId);
         cbCategory.SelectedIndex = preselectCategory >= 0 ? preselectCategory : 0;
 
-        var lblStation = new Label { Text = "Bộ phận chế biến", Font = AppFonts.BodyMd, Location = new Point(20, 184), AutoSize = true };
-        var cbStation = new ComboBox { Location = new Point(20, 204), Width = 320, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
+        // ---------- Bộ phận chế biến ----------
+        var cbStation = new ComboBox { Dock = DockStyle.Fill, Font = AppFonts.BodyMd, DropDownStyle = ComboBoxStyle.DropDownList, DisplayMember = "Name" };
         cbStation.Items.Add("(Không chọn)");
         cbStation.Items.AddRange(_stations.Cast<object>().ToArray());
         var preselectStation = existing?.DepartmentId is int depId and > 0 ? _stations.FindIndex(s => s.Id == depId) : -1;
         cbStation.SelectedIndex = preselectStation >= 0 ? preselectStation + 1 : 0;
 
-        var lblDescription = new Label { Text = "Mô tả", Font = AppFonts.BodyMd, Location = new Point(20, 240), AutoSize = true };
-        var txtDescription = new TextBox { Location = new Point(20, 260), Width = 320, Height = 70, Font = AppFonts.BodyMd, Multiline = true, Text = existing?.Description ?? "" };
+        // ---------- Mô tả + Trạng thái ----------
+        var txtDescription = new TextBox { Dock = DockStyle.Fill, Height = 80, Font = AppFonts.BodyMd, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = existing?.Description ?? "" };
+        var chkAvailable = new CheckBox { Text = "Đang bán (Còn hàng)", Font = AppFonts.BodyMd, AutoSize = true, Margin = new Padding(0, 14, 0, 0), Checked = existing?.IsAvailable ?? true };
 
-        var chkAvailable = new CheckBox { Text = "Đang bán (Còn hàng)", Font = AppFonts.BodyMd, Location = new Point(20, 340), AutoSize = true, Checked = existing?.IsAvailable ?? true };
-
-        dialog.Controls.Add(lblName);
-        dialog.Controls.Add(txtName);
-        dialog.Controls.Add(lblPrice);
-        dialog.Controls.Add(numPrice);
-        dialog.Controls.Add(lblUnit);
-        dialog.Controls.Add(cbUnit);
-        dialog.Controls.Add(lblCategory);
-        dialog.Controls.Add(cbCategory);
-        dialog.Controls.Add(lblStation);
-        dialog.Controls.Add(cbStation);
-        dialog.Controls.Add(lblDescription);
-        dialog.Controls.Add(txtDescription);
-        dialog.Controls.Add(chkAvailable);
+        root.Controls.Add(Lbl("Tên món *", 0));
+        root.Controls.Add(txtName);
+        root.Controls.Add(rowPriceUnit);
+        root.Controls.Add(Lbl("Loại món *"));
+        root.Controls.Add(cbCategory);
+        root.Controls.Add(Lbl("Bộ phận chế biến"));
+        root.Controls.Add(cbStation);
+        root.Controls.Add(Lbl("Mô tả"));
+        root.Controls.Add(txtDescription);
+        root.Controls.Add(chkAvailable);
 
         // ---------- Anh mon ----------
         // pendingImagePath: file vua chon (chua upload, se upload sau khi luu mon thanh cong).
@@ -378,14 +429,37 @@ public partial class MenuManagementControl : UserControl, IRefreshableContent
         string? pendingImagePath = null;
         var removeImage = false;
 
-        var lblImage = new Label { Text = "Ảnh món (jpg, png, webp - tối đa 5 MB)", Font = AppFonts.BodyMd, Location = new Point(20, 372), AutoSize = true };
-        var picPreview = new PictureBox { Location = new Point(20, 394), Size = new Size(150, 100), BorderStyle = BorderStyle.FixedSingle, SizeMode = PictureBoxSizeMode.Zoom, BackColor = AppColors.SurfaceContainer };
-        var btnPickImage = new Button { Text = "Chọn ảnh...", Location = new Point(190, 394), Size = new Size(150, 32), FlatStyle = FlatStyle.Flat };
-        var btnClearImage = new Button { Text = "Gỡ ảnh", Location = new Point(190, 434), Size = new Size(150, 32), FlatStyle = FlatStyle.Flat, ForeColor = AppColors.Error };
-        dialog.Controls.Add(lblImage);
-        dialog.Controls.Add(picPreview);
-        dialog.Controls.Add(btnPickImage);
-        dialog.Controls.Add(btnClearImage);
+        var lblImage = Lbl("Ảnh món (jpg, png, webp - tối đa 5 MB)", 16);
+        var picPreview = new PictureBox { Size = new Size(160, 110), Margin = new Padding(0), BorderStyle = BorderStyle.FixedSingle, SizeMode = PictureBoxSizeMode.Zoom, BackColor = AppColors.SurfaceContainer };
+        var btnPickImage = new Button { Text = "Chọn ảnh...", Size = new Size(150, 34), Margin = new Padding(0, 0, 0, 10), FlatStyle = FlatStyle.Flat, Font = AppFonts.BodyMd };
+        var btnClearImage = new Button { Text = "Gỡ ảnh", Size = new Size(150, 34), Margin = new Padding(0), FlatStyle = FlatStyle.Flat, Font = AppFonts.BodyMd, ForeColor = AppColors.Error };
+
+        var imageButtons = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            Margin = new Padding(16, 0, 0, 0),
+        };
+        imageButtons.Controls.Add(btnPickImage);
+        imageButtons.Controls.Add(btnClearImage);
+
+        var rowImage = new TableLayoutPanel
+        {
+            ColumnCount = 2,
+            RowCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+        };
+        rowImage.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        rowImage.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        rowImage.Controls.Add(picPreview, 0, 0);
+        rowImage.Controls.Add(imageButtons, 1, 0);
+
+        root.Controls.Add(lblImage);
+        root.Controls.Add(rowImage);
         dialog.Disposed += (s, e) => picPreview.Image?.Dispose();
 
         // Mon dang co anh -> tai anh hien tai de xem truoc.
@@ -444,9 +518,22 @@ public partial class MenuManagementControl : UserControl, IRefreshableContent
             removeImage = !string.IsNullOrWhiteSpace(existing?.ImageUrl);
         };
 
-        var btnSave = new Button { Text = "Lưu", Location = new Point(130, 510), Size = new Size(120, 34), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+        var btnSave = new Button
+        {
+            Text = "Lưu",
+            Size = new Size(140, 38),
+            Anchor = AnchorStyles.None,
+            Margin = new Padding(0, 20, 0, 0),
+            DialogResult = DialogResult.OK,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+            Font = AppFonts.BodyMd,
+        };
         btnSave.FlatAppearance.BorderSize = 0;
-        dialog.Controls.Add(btnSave);
+        root.Controls.Add(btnSave);
+
+        dialog.Controls.Add(root);
         dialog.AcceptButton = btnSave;
 
         if (dialog.ShowDialog() != DialogResult.OK) return;

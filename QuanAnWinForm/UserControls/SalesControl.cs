@@ -58,6 +58,12 @@ public partial class SalesControl : UserControl
     private readonly Button btnConfirmOrder = new() { Text = "Xác nhận" };
     private readonly Button btnPriorityTable = new() { Text = "⚑ Ưu tiên bàn" };
     private readonly HashSet<int> _priorityItemIds = new();
+
+    // Giờ nhận món của bếp: dải cảnh báo + khóa nút gọi món khi bếp đóng cửa.
+    private readonly Label lblKitchenClosed = new();
+    private readonly System.Windows.Forms.Timer _kitchenHoursTimer = new() { Interval = 60_000 };
+    private bool _kitchenClosed;
+    private string _kitchenClosedMessage = "Bếp đã đóng cửa.";
     private bool _tablePriorityActive;
 
     private bool CanViewPaymentReceiptQr
@@ -97,6 +103,7 @@ public partial class SalesControl : UserControl
         BuildModeBar();
         BuildReceiptPreviewButton();
         BuildKitchenPriorityControls();
+        BuildKitchenClosedBanner();
 
         btnAllCategory.Click += (s, e) => FilterCategory(null);
 
@@ -138,6 +145,8 @@ public partial class SalesControl : UserControl
         {
             SubscribeRealtime();
             await LoadDataAsync();
+            await RefreshKitchenHoursAsync();
+            _kitchenHoursTimer.Start();
         };
 
         Disposed += (s, e) =>
@@ -147,6 +156,8 @@ public partial class SalesControl : UserControl
             _realtimeRefreshTimer.Dispose();
             _tableLockHeartbeatTimer.Stop();
             _tableLockHeartbeatTimer.Dispose();
+            _kitchenHoursTimer.Stop();
+            _kitchenHoursTimer.Dispose();
 
             var tableId = _lockedTableId;
             var token = _tableLockToken;
@@ -1079,10 +1090,57 @@ public partial class SalesControl : UserControl
             await ShowTemporaryReceiptAsync();
     }
 
+    // ================= GIỜ NHẬN MÓN CỦA BẾP =================
+
+    private void BuildKitchenClosedBanner()
+    {
+        lblKitchenClosed.Dock = DockStyle.Top;
+        lblKitchenClosed.Height = 38;
+        lblKitchenClosed.TextAlign = ContentAlignment.MiddleCenter;
+        lblKitchenClosed.BackColor = AppColors.ErrorContainer;
+        lblKitchenClosed.ForeColor = AppColors.Error;
+        lblKitchenClosed.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        lblKitchenClosed.Visible = false;
+        Controls.Add(lblKitchenClosed);
+        lblKitchenClosed.SendToBack();
+
+        _kitchenHoursTimer.Tick += async (s, e) => await RefreshKitchenHoursAsync();
+    }
+
+    private async Task RefreshKitchenHoursAsync()
+    {
+        var info = await _api.GetKitchenHoursAsync();
+        if (IsDisposed || info is null) return; // lỗi mạng: giữ trạng thái cũ, backend vẫn chặn
+
+        _kitchenClosed = !info.IsOpen;
+        if (_kitchenClosed && !string.IsNullOrWhiteSpace(info.Message))
+            _kitchenClosedMessage = info.Message;
+
+        lblKitchenClosed.Text = "⛔  " + _kitchenClosedMessage;
+        lblKitchenClosed.Visible = _kitchenClosed;
+        btnConfirmOrder.Enabled = !_kitchenClosed;
+        btnSendKitchen.Enabled = !_kitchenClosed;
+    }
+
+    // Trả true (và báo người dùng) nếu bếp đang đóng cửa.
+    private bool BlockIfKitchenClosed()
+    {
+        if (!_kitchenClosed) return false;
+
+        MessageBox.Show(
+            _kitchenClosedMessage,
+            "Bếp đã đóng cửa",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+        return true;
+    }
+
     // Lưu các món đang chọn vào Order và gửi xuống bếp/quầy nhưng KHÔNG thanh toán.
     // Sau khi thành công, tải lại đơn từ Backend để phần "Món đã gọi" là nguồn sự thật.
     private async Task ConfirmOrderAsync()
     {
+        if (BlockIfKitchenClosed()) return;
+
         if (!_isTakeaway && _selectedTableId is null)
         {
             MessageBox.Show("Vui lòng chọn bàn trước.");
@@ -1310,6 +1368,7 @@ public partial class SalesControl : UserControl
     private async Task SendTakeawayToKitchenAsync()
     {
         if (!_isTakeaway || _existingOrder is not null) return;
+        if (BlockIfKitchenClosed()) return;
         if (CartIsEmpty)
         {
             MessageBox.Show("Giỏ hàng đang trống");
@@ -2218,6 +2277,9 @@ public partial class SalesControl : UserControl
             var items = BuildOrderItems();
             var hadNewItems = items.Count > 0;
 
+            // Có món mới chưa gửi bếp mà bếp đã đóng: không cho tạo món, đơn cũ vẫn thanh toán bình thường.
+            if (hadNewItems && BlockIfKitchenClosed()) return;
+
             // Bước 1: bảo đảm các món mới đã nằm trong Order, nhưng CHƯA tạo Payment.
             int? orderId = _isTakeaway
                 ? (_existingOrder is not null && !hadNewItems
@@ -2703,10 +2765,20 @@ public partial class SalesControl : UserControl
         bool showPaymentQr = false,
         bool requirePaymentConfirmation = false)
     {
+        const int paperW = 424;     // bề rộng tờ bill
+        const int padX = 20;        // lề trái/phải trong tờ bill
+        const int contentW = 384;   // paperW - 2 * padX
+        const int rowH = 48;        // chiều cao 1 dòng món
+        const int maxItemsH = rowH * 5;
+
+        // Dialog tự co giãn theo nội dung, nhưng không vượt quá màn hình.
+        var workArea = Screen.FromControl(this).WorkingArea;
+        int maxClientH = Math.Max(480, workArea.Height - 90);
+
         using var dialog = new Form
         {
             Text = $"Bill #{invoice.Id}",
-            ClientSize = new Size(460, 790),
+            ClientSize = new Size(460, 600),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -2717,42 +2789,48 @@ public partial class SalesControl : UserControl
         var paper = new Panel
         {
             Location = new Point(18, 14),
-            Size = new Size(424, 720),
+            Size = new Size(paperW, 500),
             BackColor = Color.White,
             AutoScroll = true,
         };
         dialog.Controls.Add(paper);
 
-        var shopName = new Label
-        {
-            Text = string.IsNullOrWhiteSpace(invoice.ShopName)
-                ? "Lẩu Bò Nhà Gỗ Sài Gòn"
-                : invoice.ShopName,
-            Font = AppFonts.HeadlineSm,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(12, 14),
-            Size = new Size(400, 30),
-        };
+        int y = 14;
 
-        var shopAddress = new Label
+        // Thêm 1 nhãn tự đo chiều cao theo nội dung (tự xuống dòng), rồi dời y xuống dưới.
+        Label AddText(string text, Font font, Color color, ContentAlignment align)
         {
-            Text = invoice.ShopAddress,
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(20, 44),
-            Size = new Size(384, 34),
-        };
+            int h = TextRenderer.MeasureText(
+                text, font, new Size(contentW, 0),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height + 6;
 
-        var lblTitle = new Label
-        {
-            Text = receiptTitle,
-            Font = AppFonts.HeadlineSm,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(12, 82),
-            Size = new Size(400, 30),
-        };
+            var lbl = new Label
+            {
+                Text = text,
+                Font = font,
+                ForeColor = color,
+                TextAlign = align,
+                Location = new Point(padX, y),
+                Size = new Size(contentW, Math.Max(22, h)),
+            };
+            paper.Controls.Add(lbl);
+            y += lbl.Height;
+            return lbl;
+        }
 
+        // ---- Tên quán + địa chỉ + tiêu đề ----
+        AddText(
+            string.IsNullOrWhiteSpace(invoice.ShopName) ? "Lẩu Bò Nhà Gỗ Sài Gòn" : invoice.ShopName,
+            AppFonts.HeadlineSm, AppColors.OnSurface, ContentAlignment.MiddleCenter);
+
+        if (!string.IsNullOrWhiteSpace(invoice.ShopAddress))
+            AddText(invoice.ShopAddress, AppFonts.BodyMd, AppColors.OnSurfaceVariant, ContentAlignment.MiddleCenter);
+
+        y += 10;
+        AddText(receiptTitle, AppFonts.HeadlineSm, AppColors.OnSurface, ContentAlignment.MiddleCenter);
+        y += 6;
+
+        // ---- Thông tin bill ----
         var paymentTime = invoice.Payments
             .OrderBy(p => p.PaymentTime)
             .LastOrDefault()?.PaymentTime
@@ -2766,29 +2844,41 @@ public partial class SalesControl : UserControl
             ? ""
             : $"\nThu ngân: {invoice.CashierName}";
 
-        var meta = new Label
+        AddText(
+            $"{referenceText}\n" +
+            $"Bàn: {invoice.TableName}    Ngày: {paymentTime:dd/MM/yyyy}\n" +
+            $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {(receiptTitle == "PHIẾU TẠM TÍNH" ? "-" : paymentTime.ToString("HH:mm"))}\n" +
+            $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}" +
+            cashierLine,
+            AppFonts.BodyMd, AppColors.OnSurface, ContentAlignment.TopLeft);
+
+        y += 8;
+
+        // ---- Danh sách món: vừa khít bề ngang, chỉ cuộn dọc khi quá 5 món ----
+        paper.Controls.Add(new Panel
         {
-            Text =
-                $"{referenceText}\n" +
-                $"Bàn: {invoice.TableName}    Ngày: {paymentTime:dd/MM/yyyy}\n" +
-                $"Giờ vào: {(invoice.OrderTime.HasValue ? invoice.OrderTime.Value.ToString("HH:mm") : "-")}    Giờ ra: {(receiptTitle == "PHIẾU TẠM TÍNH" ? "-" : paymentTime.ToString("HH:mm"))}\n" +
-                $"Phục vụ: {(string.IsNullOrWhiteSpace(invoice.WaiterName) ? "-" : invoice.WaiterName)}" +
-                cashierLine,
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurface,
-            Location = new Point(20, 118),
-            Size = new Size(384, 88),
-        };
+            Location = new Point(padX, y),
+            Size = new Size(contentW, 1),
+            BackColor = AppColors.OutlineVariant,
+        });
+        y += 1;
+
+        int itemCount = Math.Max(1, invoice.Items.Count);
+        int itemsH = Math.Min(itemCount * rowH, maxItemsH);
+        bool needScroll = itemCount * rowH > itemsH;
+        int rowW = contentW - (needScroll ? SystemInformation.VerticalScrollBarWidth : 0);
 
         var flowItems = new FlowLayoutPanel
         {
-            Location = new Point(20, 214),
-            Size = new Size(384, 230),
+            Location = new Point(padX, y),
+            Size = new Size(contentW, itemsH),
             AutoScroll = true,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            BorderStyle = BorderStyle.FixedSingle,
+            BorderStyle = BorderStyle.None,
             BackColor = Color.White,
+            Padding = Padding.Empty,
+            Margin = Padding.Empty,
         };
 
         if (invoice.Items.Count == 0)
@@ -2799,21 +2889,22 @@ public partial class SalesControl : UserControl
                 Font = AppFonts.BodyMd,
                 ForeColor = AppColors.OnSurfaceVariant,
                 AutoSize = true,
-                Margin = new Padding(6),
+                Margin = new Padding(0, 12, 0, 0),
             });
         }
         else
         {
+            bool showTakeawayTag = !string.Equals(
+                invoice.OrderType, "MangVe", StringComparison.OrdinalIgnoreCase);
+
             foreach (var line in invoice.Items)
-                flowItems.Controls.Add(
-                    BuildInvoiceLineRow(
-                        line,
-                        !string.Equals(
-                            invoice.OrderType,
-                            "MangVe",
-                            StringComparison.OrdinalIgnoreCase)));
+                flowItems.Controls.Add(BuildInvoiceLineRow(line, showTakeawayTag, rowW));
         }
 
+        paper.Controls.Add(flowItems);
+        y += itemsH + 12;
+
+        // ---- Tổng kết ----
         var totalQty = invoice.Items.Sum(x => x.Quantity);
         var campaignDiscount = Math.Max(
             0m,
@@ -2840,52 +2931,42 @@ public partial class SalesControl : UserControl
         if (invoice.PointsEarned > 0)
             totalLines.Add($"Điểm tích thêm: +{invoice.PointsEarned:N0}");
 
-        var totalsHeight = Math.Max(64, 22 * totalLines.Count + 12);
-        var lblTotals = new Label
-        {
-            Text = string.Join("\n", totalLines),
-            Font = AppFonts.LabelLg,
-            Location = new Point(20, 454),
-            Size = new Size(384, totalsHeight),
-        };
+        AddText(string.Join("\n", totalLines), AppFonts.LabelLg, AppColors.OnSurface, ContentAlignment.TopLeft);
 
-        var qrTop = lblTotals.Bottom + 6;
+        // ---- QR chuyển khoản (nếu có) ----
+        bool hasQr = showPaymentQr && CanViewPaymentReceiptQr;
         var picQr = new PictureBox
         {
-            Location = new Point(122, qrTop),
             Size = new Size(180, 180),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.White,
         };
 
-        var lblBank = new Label
+        if (hasQr)
         {
-            Text =
+            y += 6;
+            picQr.Location = new Point((paperW - picQr.Width) / 2, y);
+            paper.Controls.Add(picQr);
+            y += picQr.Height + 4;
+
+            AddText(
                 $"{invoice.BankAccountName}\n" +
                 $"{invoice.BankName} · {invoice.BankAccountNo}\n" +
                 $"{invoice.BankBranch}\n" +
                 $"Nội dung: {invoice.TransferContent}",
-            Font = AppFonts.BodyMd,
-            ForeColor = AppColors.OnSurfaceVariant,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Location = new Point(20, qrTop + 184),
-            Size = new Size(384, 72),
-        };
-
-        paper.Controls.Add(shopName);
-        paper.Controls.Add(shopAddress);
-        paper.Controls.Add(lblTitle);
-        paper.Controls.Add(meta);
-        paper.Controls.Add(flowItems);
-        paper.Controls.Add(lblTotals);
-
-        if (showPaymentQr && CanViewPaymentReceiptQr)
-        {
-            paper.Controls.Add(picQr);
-            paper.Controls.Add(lblBank);
+                AppFonts.BodyMd, AppColors.OnSurfaceVariant, ContentAlignment.MiddleCenter);
         }
 
-        if (showPaymentQr && CanViewPaymentReceiptQr && invoice.TotalAmount > 0)
+        y += 14;
+
+        // ---- Co dialog theo nội dung ----
+        const int buttonH = 36;
+        int paperH = Math.Min(y, maxClientH - 14 - 14 - buttonH - 14);
+        paper.Height = paperH;
+        int buttonY = 14 + paperH + 14;
+        dialog.ClientSize = new Size(460, buttonY + buttonH + 14);
+
+        if (hasQr && invoice.TotalAmount > 0)
         {
             try
             {
@@ -2934,8 +3015,8 @@ public partial class SalesControl : UserControl
             var btnCancel = new Button
             {
                 Text = "Hủy",
-                Location = new Point(54, 744),
-                Size = new Size(150, 36),
+                Location = new Point(54, buttonY),
+                Size = new Size(150, buttonH),
                 DialogResult = DialogResult.Cancel,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.White,
@@ -2946,8 +3027,8 @@ public partial class SalesControl : UserControl
             var btnConfirm = new Button
             {
                 Text = "Xác nhận thanh toán",
-                Location = new Point(218, 744),
-                Size = new Size(190, 36),
+                Location = new Point(218, buttonY),
+                Size = new Size(190, buttonH),
                 DialogResult = DialogResult.OK,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Primary,
@@ -2966,8 +3047,8 @@ public partial class SalesControl : UserControl
         var btnClose = new Button
         {
             Text = "Đóng",
-            Location = new Point(150, 744),
-            Size = new Size(160, 36),
+            Location = new Point(150, buttonY),
+            Size = new Size(160, buttonH),
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat,
             BackColor = AppColors.Primary,
@@ -2981,12 +3062,35 @@ public partial class SalesControl : UserControl
         return false;
     }
 
-    private Panel BuildInvoiceLineRow(InvoiceLineDto line, bool showTakeawayTag = false)
+    private Panel BuildInvoiceLineRow(InvoiceLineDto line, bool showTakeawayTag = false, int width = 384)
     {
-        var row = new Panel { Size = new Size(405, 46), Margin = new Padding(6, 4, 6, 4) };
-        var lblName = new Label { Text = $"{line.Name} x{line.Quantity}", Font = AppFonts.BodyMd, Location = new Point(0, 0), Size = new Size(290, 22), AutoEllipsis = true };
-        var lblUnit = new Label { Text = $"{line.UnitPrice:N0}đ/món", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(0, 24), AutoSize = true };
-        var lblLineTotal = new Label { Text = $"{line.LineTotal:N0}đ", Font = AppFonts.LabelMd, Location = new Point(295, 10), Size = new Size(105, 22), TextAlign = ContentAlignment.MiddleRight };
+        const int totalW = 100;
+
+        var row = new Panel { Size = new Size(width, 48), Margin = Padding.Empty, BackColor = Color.White };
+        var lblName = new Label
+        {
+            Text = $"{line.Name} x{line.Quantity}",
+            Font = AppFonts.BodyMd,
+            Location = new Point(0, 3),
+            Size = new Size(Math.Max(40, width - totalW - 8), 22),
+            AutoEllipsis = true,
+        };
+        var lblUnit = new Label
+        {
+            Text = $"{line.UnitPrice:N0}đ/món",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(0, 24),
+            AutoSize = true,
+        };
+        var lblLineTotal = new Label
+        {
+            Text = $"{line.LineTotal:N0}đ",
+            Font = AppFonts.LabelLg,
+            Location = new Point(width - totalW, 3),
+            Size = new Size(totalW, 22),
+            TextAlign = ContentAlignment.MiddleRight,
+        };
         row.Controls.Add(lblName);
         row.Controls.Add(lblUnit);
         row.Controls.Add(lblLineTotal);
@@ -3003,6 +3107,13 @@ public partial class SalesControl : UserControl
             row.Controls.Add(lblTag);
             lblTag.Location = new Point(lblUnit.PreferredWidth + 4, 24);
         }
+
+        // Đường kẻ mảnh ngăn cách các dòng
+        row.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawLine(pen, 0, row.Height - 1, row.Width, row.Height - 1);
+        };
 
         return row;
     }

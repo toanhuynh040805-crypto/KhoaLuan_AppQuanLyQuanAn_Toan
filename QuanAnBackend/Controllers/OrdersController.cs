@@ -45,19 +45,21 @@ public class OrdersController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly ILogger<OrdersController> _logger;
-
-    public OrdersController(
+    private readonly KitchenHoursService _kitchenHours;
+        public OrdersController(
         AppDbContext db,
         OrderRoutingService routingService,
         IHubContext<OrderHub> hub,
         NotificationService notifications,
-        ILogger<OrdersController> logger)
+        ILogger<OrdersController> logger,
+        KitchenHoursService kitchenHours)
     {
         _db = db;
         _routingService = routingService;
         _hub = hub;
         _notifications = notifications;
         _logger = logger;
+        _kitchenHours = kitchenHours;
     }
 
     [HttpPost("add-items")]
@@ -65,7 +67,9 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> AddItems([FromBody] AddItemsRequest request)
     {
         var items = request.Items ?? new List<CreateOrderItemDto>();
-
+        // Bếp đóng cửa: chặn gọi món (cả tại bàn lẫn mang về).
+        if (!_kitchenHours.IsOpenNow(out var kitchenClosedMessage))
+            return BadRequest(new { code = "KITCHEN_CLOSED", message = kitchenClosedMessage });
         if (items.Count == 0)
             return BadRequest(new { message = "Danh sách món đang trống" });
 

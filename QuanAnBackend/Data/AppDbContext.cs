@@ -140,6 +140,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Invoice>().Property(i => i.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Payment>().Property(p => p.PaymentMethod).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Payment>().Property(p => p.Status).HasConversion<string>().HasMaxLength(20);
+        modelBuilder.Entity<Payment>().Property(p => p.TransactionRef).HasColumnName("TransactionCode").HasMaxLength(100);
         modelBuilder.Entity<ShiftAssignment>().Property(sa => sa.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<StaffTask>().Property(t => t.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Reservation>().Property(r => r.Status)

@@ -19,6 +19,11 @@ public partial class KitchenBoardControl : UserControl
 
     private readonly Dictionary<string, TicketCard> _cardsByBatchKey = new();
     private readonly HashSet<int> _priorityItemIds = new();
+    // Giờ nhận món của bếp: dải cảnh báo + khóa nút gọi món khi bếp đóng cửa.
+    private readonly Label lblKitchenClosed = new();
+    private readonly System.Windows.Forms.Timer _kitchenHoursTimer = new() { Interval = 60_000 };
+    private bool _kitchenClosed;
+    private string _kitchenClosedMessage = "Bếp đã đóng cửa.";
     private readonly HashSet<int> _priorityTableIds = new();
 
     public KitchenBoardControl() : this(0, "Bep", "Màn hình Bếp", null) { }
