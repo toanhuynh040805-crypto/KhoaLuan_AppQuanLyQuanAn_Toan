@@ -20,6 +20,7 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
     private List<OrderSummaryDto> _orders = new();      // sau khi lọc theo trạng thái
     private readonly List<OrderRowPanel> _orderRows = new();
     private readonly List<ItemRowPanel> _itemRows = new();
+    private Panel? _itemsClip;   // khung cắt: che thanh cuộn của panelItems
 
     private int? _selectedOrderId;
     private int _loadVersion;     // chống kết quả cũ ghi đè kết quả mới khi đổi ngày liên tục
@@ -136,7 +137,11 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
         btnCancelOrder.Click += async (s, e) => await CancelCurrentOrderAsync();
 
         panelOrderScroll.Resize += (s, e) => LayoutOrderRows(reposition: false);
-        panelItems.Resize += (s, e) => LayoutItemRows(reposition: false);
+        panelDetailFooter.Resize += (s, e) => LayoutDetailParts();
+        panelDetailHead.Resize += (s, e) => LayoutDetailParts();
+        panelDetailContent.VisibleChanged += (s, e) => LayoutDetailParts();
+        BuildItemsClip();
+        MouseWheel += OnAnyMouseWheel;
     }
 
     public async Task RefreshDataAsync()
@@ -362,18 +367,80 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
         panelListHeader.Invalidate();
     }
 
-    private void LayoutItemRows(bool reposition) => LayoutStack(panelItems, _itemRows, reposition);
+    private void LayoutItemRows(bool reposition)
+    {
+        if (_itemsClip is null) return;
+        int vw = _itemsClip.ClientSize.Width, vh = _itemsClip.ClientSize.Height;
+        if (vw <= 0 || vh <= 0) return;
 
-    // Xếp các dòng nối tiếp nhau, tràn hết bề ngang vùng chứa (trừ thanh cuộn nếu có).
-    // Trả về bề rộng thanh cuộn đang chiếm chỗ.
+        int sbW = SystemInformation.VerticalScrollBarWidth;
+        int sbH = SystemInformation.HorizontalScrollBarHeight;
+
+        // panelItems rộng/cao hơn khung nhìn đúng bằng thanh cuộn => thanh cuộn bị cắt khỏi tầm nhìn
+        panelItems.SetBounds(0, 0, vw + sbW, vh + sbH);
+
+        int total = _itemRows.Sum(r => r.Height);
+        var min = new Size(0, total + sbH);
+        if (panelItems.AutoScrollMinSize != min) panelItems.AutoScrollMinSize = min;
+
+        if (reposition) panelItems.AutoScrollPosition = Point.Empty;
+
+        int y = 0;
+        foreach (var r in _itemRows)
+        {
+            if (reposition) r.Location = new Point(0, y);
+            r.Width = vw;
+            y += r.Height;
+        }
+    }
+
+    private void BuildItemsClip()
+    {
+        _itemsClip = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Name = "panelItemsClip" };
+
+        panelDetailContent.SuspendLayout();
+        int idx = panelDetailContent.Controls.GetChildIndex(panelItems);
+        panelDetailContent.Controls.Remove(panelItems);
+        panelDetailContent.Controls.Add(_itemsClip);
+        panelDetailContent.Controls.SetChildIndex(_itemsClip, idx);
+
+        panelItems.Dock = DockStyle.None;
+        panelItems.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+        _itemsClip.Controls.Add(panelItems);
+        _itemsClip.Resize += (s, e) => LayoutItemRows(reposition: false);
+        panelDetailContent.ResumeLayout(true);
+    }
+
+    // Cuộn bằng con lăn chuột khi con trỏ đang ở trên danh sách (thanh cuộn đã ẩn).
+    private void OnAnyMouseWheel(object? sender, MouseEventArgs e)
+    {
+        var pos = Cursor.Position;
+        foreach (var host in new[] { panelItems, panelOrderScroll })
+        {
+            if (!host.Visible || !host.RectangleToScreen(host.ClientRectangle).Contains(pos)) continue;
+            var cur = host.AutoScrollPosition;
+            host.AutoScrollPosition = new Point(-cur.X, -cur.Y - e.Delta / 2);
+            return;
+        }
+    }
+
+    // Xếp các dòng nối tiếp nhau, vừa khít bề ngang vùng chứa; chỉ cho cuộn dọc.
+    // Trả về bề rộng thanh cuộn dọc đang chiếm chỗ.
     private static int LayoutStack(Panel host, IReadOnlyList<Control> rows, bool reposition)
     {
+        int totalHeight = rows.Sum(r => r.Height);
+
+        // Đặt vùng cuộn trước để WinForms quyết định có thanh dọc hay không,
+        // sau đó mới lấy ClientSize (đã trừ thanh cuộn) làm bề rộng dòng.
+        var minSize = new Size(0, totalHeight);
+        if (host.AutoScrollMinSize != minSize) host.AutoScrollMinSize = minSize;
+        host.HorizontalScroll.Enabled = false;
+        host.HorizontalScroll.Visible = false;
+
         if (rows.Count == 0) return 0;
 
-        int totalHeight = rows.Sum(r => r.Height);
-        bool needScroll = totalHeight > host.Height;
-        int scrollBar = needScroll ? SystemInformation.VerticalScrollBarWidth : 0;
-        int width = Math.Max(50, host.Width - scrollBar);
+        int width = Math.Max(50, host.ClientSize.Width);
+        int scrollBar = Math.Max(0, host.Width - host.ClientSize.Width);
 
         if (reposition) host.AutoScrollPosition = Point.Empty;
 
@@ -503,6 +570,30 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
         pillDetailStatus.Left = lblDetailTitle.Left + lblDetailTitle.PreferredWidth + 12;
         pillDetailStatus.Top = lblDetailTitle.Top + Math.Max(0, (lblDetailTitle.PreferredHeight - 24) / 2);
         pillDetailStatus.Invalidate();
+    }
+
+    // Tự canh vị trí/kích thước theo bề rộng thật, không dùng Anchor (Anchor bị lệch khi panel ẩn lúc khởi tạo).
+    private void LayoutDetailParts()
+    {
+        int fw = panelDetailFooter.ClientSize.Width;
+        if (fw > 0)
+        {
+            lblTotalValue.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            btnCancelOrder.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+
+            int vx = lblTotalCaption.Right + 8;
+            lblTotalValue.SetBounds(vx, 12, Math.Max(40, fw - vx), 36);
+
+            btnCancelOrder.TextAlign = ContentAlignment.MiddleCenter;
+            btnCancelOrder.SetBounds(0, 62, fw, 42);
+        }
+
+        int hw = panelDetailHead.ClientSize.Width;
+        if (hw > 0)
+        {
+            tlpInfo.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            tlpInfo.SetBounds(0, 46, hw, 104);
+        }
     }
 
     private void SetFooter(decimal total, bool canCancel)
@@ -924,7 +1015,7 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
         public string TimeText = "";
         private Button? _cancelButton;
 
-        public static int HeightFor(bool hasNote) => hasNote ? 104 : 84;
+        public static int HeightFor(bool hasNote) => hasNote ? 74 : 56;
 
         public ItemRowPanel()
         {
@@ -943,7 +1034,7 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
         private void PositionButton()
         {
             if (_cancelButton is not null)
-                _cancelButton.Location = new Point(Math.Max(0, Width - _cancelButton.Width - 2), 32);
+                _cancelButton.Location = new Point(Math.Max(0, Width - _cancelButton.Width - 2), 28);
         }
 
         protected override void OnResize(EventArgs eventargs)
@@ -960,25 +1051,32 @@ public partial class OrderManagementControl : UserControl, IRefreshableContent
 
             var nameColor = Cancelled ? AppColors.Outline : AppColors.OnSurface;
             TextRenderer.DrawText(g, $"{ItemName}  x{Qty}", Cancelled ? FontStrike : FontBodyBold,
-                new Rectangle(0, 6, Math.Max(20, Width - priceW - 8), 24), nameColor, Tf);
-            TextRenderer.DrawText(g, PriceText, FontBodyBold, new Rectangle(Width - priceW, 6, priceW, 24), nameColor, TfRight);
+                new Rectangle(0, 4, Math.Max(20, Width - priceW - 8), 24), nameColor, Tf);
+            TextRenderer.DrawText(g, PriceText, FontBodyBold, new Rectangle(Width - priceW, 4, priceW, 24), nameColor, TfRight);
 
+            // Dòng 2: trạng thái · giờ · chip "Mang về"
             string st = "● " + StatusText;
             int sw = TextRenderer.MeasureText(g, st, FontCaption, Size.Empty, TextFormatFlags.NoPadding).Width;
-            TextRenderer.DrawText(g, st, FontCaption, new Rectangle(0, 34, sw + 6, 22), StatusColor, Tf);
+            TextRenderer.DrawText(g, st, FontCaption, new Rectangle(0, 30, sw + 6, 22), StatusColor, Tf);
+
+            int x = sw + 10;
+            if (TimeText.Length > 0)
+            {
+                string t = "· " + TimeText;
+                int tw = TextRenderer.MeasureText(g, t, FontSmall, Size.Empty, TextFormatFlags.NoPadding).Width;
+                TextRenderer.DrawText(g, t, FontSmall, new Rectangle(x, 31, tw + 6, 20), AppColors.OnSurfaceVariant, Tf);
+                x += tw + 10;
+            }
 
             if (Takeaway)
             {
-                var chip = new Rectangle(sw + 16, 35, 66, 20);
+                var chip = new Rectangle(x, 31, 66, 20);
                 FillPill(g, chip, AppColors.ErrorContainer);
                 TextRenderer.DrawText(g, "Mang về", FontCaption, chip, AppColors.Primary, TfCenter);
             }
 
-            if (TimeText.Length > 0)
-                TextRenderer.DrawText(g, TimeText, FontSmall, new Rectangle(0, 58, Width, 20), AppColors.OnSurfaceVariant, Tf);
-
             if (Note.Length > 0)
-                TextRenderer.DrawText(g, Note, FontSmall, new Rectangle(0, 78, Width, 20), AppColors.OnSurfaceVariant, Tf);
+                TextRenderer.DrawText(g, Note, FontSmall, new Rectangle(0, 52, Width, 20), AppColors.OnSurfaceVariant, Tf);
 
             using var pen = new Pen(AppColors.OutlineVariant);
             g.DrawLine(pen, 0, Height - 1, Width, Height - 1);

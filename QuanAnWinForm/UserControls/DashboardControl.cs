@@ -109,16 +109,14 @@ public partial class DashboardControl : UserControl, IRefreshableContent
     {
         // Mỗi dòng món bán chạy luôn rộng bằng khung -> giá tiền không bị cắt.
         // (Đặt ở đây, không đặt trong InitializeComponent vì Designer không đọc được lambda.)
-        flowTopItems.SizeChanged += (s, e) =>
-        {
-            foreach (Control c in flowTopItems.Controls)
-                if (c is Panel) c.Width = flowTopItems.ClientSize.Width;
-        };
+        flowTopItems.SizeChanged += (s, e) => ApplyTopRowSizes();
 
         panelChartCard.Paint += (s, e) =>
             e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelChartCard.Width - 1, panelChartCard.Height - 1);
         panelTopItemsCard.Paint += (s, e) =>
             e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, panelTopItemsCard.Width - 1, panelTopItemsCard.Height - 1);
+
+        BuildTopItemsToggle();
     }
 
     private async Task LoadAllAsync(bool silent = false)
@@ -180,35 +178,202 @@ public partial class DashboardControl : UserControl, IRefreshableContent
         chartPanel.Invalidate();
     }
 
+    private const int TopTake = 5;      // số món hiển thị
+    private int _topItemsVersion;   // chống 2 lần tải chồng nhau làm trùng dòng
+
+    // Chiều cao mỗi dòng = chia đều chiều cao khung cho TopTake dòng => lấp đầy khung, không dư trống.
+    private int TopRowHeight() => Math.Clamp(flowTopItems.ClientSize.Height / TopTake, 64, 108);
+
+    private void ApplyTopRowSizes()
+    {
+        var size = new Size(flowTopItems.ClientSize.Width, TopRowHeight());
+        foreach (Control c in flowTopItems.Controls)
+            if (c is Panel) c.Size = size;
+    }
+
+    private void BuildTopItemRowSized(FlowLayoutPanel parent, string name, string sold, string revenue, string? imageUrl)
+    {
+        var row = new Panel
+        {
+            Size = new Size(Math.Max(200, parent.ClientSize.Width), TopRowHeight()),
+            Margin = Padding.Empty,
+        };
+        var thumb = new Panel { BackColor = AppColors.SurfaceContainer };
+        var lblPlaceholder = new Label
+        {
+            Text = "🍽",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Segoe UI Emoji", 14),
+            ForeColor = AppColors.Outline,
+        };
+        thumb.Controls.Add(lblPlaceholder);
+        thumb.Disposed += (s, e) => thumb.BackgroundImage?.Dispose();
+
+        var lblName = new Label
+        {
+            Text = name,
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var lblSold = new Label
+        {
+            Text = sold,
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var lblRevenue = new Label
+        {
+            Text = revenue,
+            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+            ForeColor = AppColors.Primary,
+            AutoSize = true,
+        };
+
+        void LayoutRow()
+        {
+            int rh = row.Height;
+            int ts = Math.Clamp(rh - 20, 48, 80);
+            thumb.SetBounds(0, (rh - ts) / 2, ts, ts);
+
+            int textLeft = ts + 14;
+            lblRevenue.Location = new Point(
+                Math.Max(textLeft, row.Width - lblRevenue.PreferredWidth),
+                (rh - lblRevenue.PreferredHeight) / 2);
+
+            int nameW = Math.Max(40, lblRevenue.Left - textLeft - 8);
+            int top = (rh - 46) / 2;
+            lblName.SetBounds(textLeft, top, nameW, 24);
+            lblSold.SetBounds(textLeft, top + 24, nameW, 22);
+            row.Invalidate();
+        }
+
+        row.Controls.Add(thumb);
+        row.Controls.Add(lblName);
+        row.Controls.Add(lblSold);
+        row.Controls.Add(lblRevenue);
+        row.Resize += (s, e) => LayoutRow();
+        row.Paint += (s, e) =>
+        {
+            using var pen = new Pen(AppColors.OutlineVariant);
+            e.Graphics.DrawLine(pen, 0, row.Height - 1, row.Width, row.Height - 1);
+        };
+        LayoutRow();
+
+        parent.Controls.Add(row);
+
+        if (!string.IsNullOrWhiteSpace(imageUrl))
+            _ = LoadTopItemThumbAsync(thumb, lblPlaceholder, imageUrl);
+    }
+
+    // ---- Bộ chọn kỳ cho "Món bán chạy": Hôm nay | Tháng này ----
+    private bool _topByMonth = true;   // mặc định: Tháng này
+    private readonly Button _btnTopToday = new() { Text = "Hôm nay" };
+    private readonly Button _btnTopMonth = new() { Text = "Tháng này" };
+
+    private void BuildTopItemsToggle()
+    {
+        foreach (var b in new[] { _btnTopToday, _btnTopMonth })
+        {
+            b.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            b.Padding = Padding.Empty;
+            b.Size = new Size(TextRenderer.MeasureText(b.Text, b.Font).Width + 36, 32);
+            b.FlatStyle = FlatStyle.Flat;
+            b.Cursor = Cursors.Hand;
+            b.TabStop = false;
+            panelTopItemsCard.Controls.Add(b);
+            b.BringToFront();
+        }
+
+        _btnTopToday.Click += async (s, e) => await SetTopPeriodAsync(false);
+        _btnTopMonth.Click += async (s, e) => await SetTopPeriodAsync(true);
+        panelTopItemsCard.Resize += (s, e) => PositionTopToggle();
+
+        ApplyTopToggleStyle();
+        PositionTopToggle();
+    }
+
+    private void PositionTopToggle()
+    {
+        int right = panelTopItemsCard.ClientSize.Width - 20;
+        _btnTopMonth.Location = new Point(right - _btnTopMonth.Width, 14);
+        _btnTopToday.Location = new Point(_btnTopMonth.Left - _btnTopToday.Width + 1, 14);
+    }
+
+    private void ApplyTopToggleStyle()
+    {
+        static void Style(Button b, bool active)
+        {
+            b.BackColor = active ? AppColors.Primary : Color.White;
+            b.ForeColor = active ? Color.White : AppColors.OnSurface;
+            b.FlatAppearance.BorderSize = 1;
+            b.FlatAppearance.BorderColor = active ? AppColors.Primary : AppColors.OutlineVariant;
+        }
+
+        Style(_btnTopToday, !_topByMonth);
+        Style(_btnTopMonth, _topByMonth);
+        lblTopItemsTitle.Text = _topByMonth ? "Món bán chạy tháng này" : "Món bán chạy hôm nay";
+    }
+
+    private async Task SetTopPeriodAsync(bool byMonth)
+    {
+        if (_topByMonth == byMonth) return;
+        _topByMonth = byMonth;
+        ApplyTopToggleStyle();
+
+        try { await LoadTopItemsAsync(); }
+        catch (Exception ex)
+        {
+            if (!IsDisposed) MessageBox.Show($"Không tải được món bán chạy: {ex.Message}");
+        }
+    }
+
     private async Task LoadTopItemsAsync()
     {
+        var version = ++_topItemsVersion;
+
+        // Tải dữ liệu TRƯỚC, chưa đụng tới giao diện.
+        var today = DateTime.Today;
+        var from = _topByMonth ? new DateTime(today.Year, today.Month, 1) : today;
+        var topTask = _api.GetTopItemsAsync(from, today, take: TopTake);
+        var menuTask = _api.GetMenuAsync();
+        await Task.WhenAll(topTask, menuTask);
+
+        // Đã có lần tải mới hơn (hoặc control đã đóng) -> bỏ kết quả cũ.
+        if (version != _topItemsVersion || IsDisposed) return;
+
+        var items = topTask.Result;
+        // Báo cáo chỉ trả MenuItemId -> tra ImageUrl từ danh sách thực đơn.
+        var imageById = menuTask.Result
+            .Where(m => !string.IsNullOrWhiteSpace(m.ImageUrl))
+            .GroupBy(m => m.Id)
+            .ToDictionary(g => g.Key, g => g.First().ImageUrl!);
+
+        // Xóa + dựng lại liền mạch, KHÔNG có await ở giữa => không thể bị trùng dòng.
+        flowTopItems.SuspendLayout();
         foreach (var old in flowTopItems.Controls.Cast<Control>().ToList())
         {
             flowTopItems.Controls.Remove(old);
             old.Dispose();
         }
 
-        var topTask = _api.GetTopItemsAsync(DateTime.Today, DateTime.Today, take: 5);
-        var menuTask = _api.GetMenuAsync();
-        await Task.WhenAll(topTask, menuTask);
-
-        var items = topTask.Result;
-        // Báo cáo chỉ trả MenuItemId -> tra ImageUrl từ danh sách thực đơn.
-        var imageById = menuTask.Result
-            .Where(m => !string.IsNullOrWhiteSpace(m.ImageUrl))
-            .ToDictionary(m => m.Id, m => m.ImageUrl!);
-
         if (items.Count == 0)
         {
-            flowTopItems.Controls.Add(new Label { Text = "Chưa có dữ liệu bán hàng hôm nay.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(0, 8, 0, 0) });
-            return;
+            flowTopItems.Controls.Add(new Label { Text = _topByMonth ? "Chưa có dữ liệu bán hàng tháng này." : "Chưa có dữ liệu bán hàng hôm nay.", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(0, 8, 0, 0) });
         }
-
-        foreach (var item in items)
+        else
         {
-            imageById.TryGetValue(item.MenuItemId, out var imageUrl);
-            BuildTopItemRow(flowTopItems, item.MenuItemName, $"Đã bán: {item.QuantitySold}", $"{item.Revenue:N0}đ", imageUrl);
+            foreach (var item in items)
+            {
+                imageById.TryGetValue(item.MenuItemId, out var imageUrl);
+                BuildTopItemRowSized(flowTopItems, item.MenuItemName, $"Đã bán: {item.QuantitySold}", $"{item.Revenue:N0}đ", imageUrl);
+            }
         }
+        flowTopItems.ResumeLayout(true);
     }
 
     private async Task LoadTopItemThumbAsync(Panel thumb, Label placeholder, string imageUrl)
@@ -220,7 +385,7 @@ public partial class DashboardControl : UserControl, IRefreshableContent
             if (thumb.IsDisposed) return;
             var old = thumb.BackgroundImage;
             thumb.BackgroundImage = CropToFill(img, thumb.Size);
-            thumb.BackgroundImageLayout = ImageLayout.None;
+            thumb.BackgroundImageLayout = ImageLayout.Zoom;
             old?.Dispose();
             placeholder.Visible = false;
         }

@@ -76,6 +76,8 @@ builder.Services.AddScoped<WebProfileSchemaService>();
 builder.Services.AddSingleton<IWebReviewContentClassifier, WebReviewModerationService>();
 builder.Services.AddHostedService<TimeoutMonitorService>();
 builder.Services.AddHostedService<ReservationReminderService>();
+builder.Services.AddScoped<OrderRoutingService>();
+builder.Services.AddSingleton<KitchenHoursService>();
 
 // JWT & Google Authentication for Web, Mobile and WinForms.
 var jwtSection = builder.Configuration.GetSection("Jwt");
