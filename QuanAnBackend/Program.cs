@@ -73,6 +73,8 @@ builder.Services.AddScoped<WinFormsCompatibilitySchemaService>();
 builder.Services.AddScoped<SharedMenuCatalogService>();
 builder.Services.AddScoped<BundledMenuImageService>();
 builder.Services.AddScoped<WebProfileSchemaService>();
+builder.Services.AddScoped<DiscountCampaignSchemaService>();
+builder.Services.AddScoped<CampaignEligibilityService>();
 builder.Services.AddSingleton<IWebReviewContentClassifier, WebReviewModerationService>();
 builder.Services.AddHostedService<TimeoutMonitorService>();
 builder.Services.AddHostedService<ReservationReminderService>();
@@ -357,7 +359,9 @@ using (var scope = app.Services.CreateScope())
     var webProfileSchema =
         scope.ServiceProvider.GetRequiredService<WebProfileSchemaService>();
     await webProfileSchema.EnsureAsync();
-
+    var discountCampaignSchema =
+        scope.ServiceProvider.GetRequiredService<DiscountCampaignSchemaService>();
+    await discountCampaignSchema.EnsureAsync();
     // Đồng bộ bộ thực đơn mới nhất của WinForms vào database dùng chung.
     // Chỉ thêm món/ảnh còn thiếu nên không ghi đè dữ liệu vận hành hiện tại.
     var sharedMenuCatalog =

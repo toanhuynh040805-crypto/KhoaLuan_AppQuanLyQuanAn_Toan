@@ -29,7 +29,14 @@ public partial class SalesControl : UserControl
     private bool _isTakeaway;
     private readonly Button btnDineIn = new() { Text = "Tại bàn" };
     private readonly Button btnTakeaway = new() { Text = "Mang về" };
-    private List<ActiveCampaignDto> _activeCampaigns = new();
+    private List<EligibleCampaignDto> _eligibleCampaigns = new();
+
+    // Tải lại danh sách khuyến mãi khi đổi khách / đổi tạm tính (có trễ để không gọi API liên tục).
+    private decimal _campaignSubtotal;
+    private (int? CustomerId, decimal SubTotal)? _campaignLoadedKey;
+    private bool _campaignPopulating;
+    private int _campaignRefreshSeq;
+    private readonly System.Windows.Forms.Timer _campaignReloadTimer = new() { Interval = 350 };
     private CustomerSearchResultDto? _selectedCustomer;
 
     // Đơn ĐANG MỞ của bàn đang chọn (các món khách đã gọi trước đó, kể cả từ Mobile).
@@ -154,6 +161,8 @@ public partial class SalesControl : UserControl
             UnsubscribeRealtime();
             _realtimeRefreshTimer.Stop();
             _realtimeRefreshTimer.Dispose();
+            _campaignReloadTimer.Stop();
+            _campaignReloadTimer.Dispose();
             _tableLockHeartbeatTimer.Stop();
             _tableLockHeartbeatTimer.Dispose();
             _kitchenHoursTimer.Stop();
@@ -175,7 +184,16 @@ public partial class SalesControl : UserControl
         btnThanhToan.Click += async (s, e) => await ProcessPaymentAsync(method: 0);
         btnConfirmOrder.Click += async (s, e) => await ConfirmOrderAsync();
         lblInvoiceHistory.Click += async (s, e) => await OpenInvoiceHistoryDialogAsync();
-        cbCampaign.SelectedIndexChanged += (s, e) => RenderCart();
+        cbCampaign.SelectedIndexChanged += (s, e) =>
+        {
+            if (_campaignPopulating) return;
+            OnCampaignSelectionChanged();
+        };
+        _campaignReloadTimer.Tick += async (s, e) =>
+        {
+            _campaignReloadTimer.Stop();
+            await RefreshCampaignsAsync();
+        };
 
         btnFindCustomer.Click += async (s, e) => await FindCustomerAsync();
         txtCustomerPhone.KeyDown += async (s, e) =>
@@ -686,24 +704,86 @@ public partial class SalesControl : UserControl
         }
     }
 
-    // Nap danh sach khuyen mai DANG hieu luc vao ComboBox (goi lai sau moi lan
-    // thanh toan xong de bat kip truong hop 1 chien dich vua het han/bi tat giua
-    // luc dang ban hang). Luon co san muc "(Không áp dụng)" o dau danh sach.
+    // Nạp danh sách khuyến mãi ĐANG hiệu lực vào ComboBox, mỗi chiến dịch kèm trạng thái
+    // đủ/không đủ điều kiện theo khách đang chọn + tạm tính hiện tại. Luôn có mục
+    // "(Không áp dụng)" ở đầu. Mỗi hóa đơn chỉ chọn được 1 chiến dịch.
     private async Task RefreshCampaignsAsync()
     {
+        var seq = ++_campaignRefreshSeq;
+        var customerId = _selectedCustomer?.Id;
+        var subTotal = _campaignSubtotal;
+        var previousId = GetSelectedCampaignId();
+
+        List<EligibleCampaignDto> list;
         try
         {
-            _activeCampaigns = await _api.GetActiveCampaignsAsync();
+            list = await _api.GetEligibleCampaignsAsync(customerId, subTotal);
         }
         catch
         {
-            _activeCampaigns = new List<ActiveCampaignDto>(); // khong chan luong ban hang chi vi loi tai khuyen mai
+            list = new List<EligibleCampaignDto>(); // không chặn luồng bán hàng chỉ vì lỗi tải khuyến mãi
         }
 
-        cbCampaign.Items.Clear();
-        cbCampaign.Items.Add("(Không áp dụng)");
-        cbCampaign.Items.AddRange(_activeCampaigns.Cast<object>().ToArray());
-        cbCampaign.SelectedIndex = 0;
+        // Có lần tải mới hơn đang chạy -> bỏ kết quả cũ.
+        if (seq != _campaignRefreshSeq) return;
+
+        _eligibleCampaigns = list;
+        _campaignLoadedKey = (customerId, subTotal);
+
+        _campaignPopulating = true;
+        try
+        {
+            cbCampaign.Items.Clear();
+            cbCampaign.Items.Add("(Không áp dụng)");
+            cbCampaign.Items.AddRange(list.Cast<object>().ToArray());
+
+            // Giữ lại chiến dịch đang chọn nếu vẫn đủ điều kiện, ngược lại về "(Không áp dụng)".
+            var keep = previousId.HasValue
+                ? list.FindIndex(c => c.Id == previousId.Value && c.Eligible)
+                : -1;
+            cbCampaign.SelectedIndex = keep >= 0 ? keep + 1 : 0;
+        }
+        finally
+        {
+            _campaignPopulating = false;
+        }
+
+        // Lựa chọn bị đổi (vd khách bị bỏ, tạm tính giảm) -> cập nhật lại số tiền giảm.
+        if (GetSelectedCampaignId() != previousId)
+            RenderCart();
+    }
+
+    // Đặt lịch tải lại khuyến mãi khi khách hoặc tạm tính thay đổi.
+    private void ScheduleCampaignRefresh()
+    {
+        var key = (_selectedCustomer?.Id, _campaignSubtotal);
+        if (_campaignLoadedKey is { } loaded && loaded == key) return;
+
+        _campaignReloadTimer.Stop();
+        _campaignReloadTimer.Start();
+    }
+
+    // Thu ngân chọn 1 khuyến mãi: nếu chưa đủ điều kiện thì báo lý do và quay về "(Không áp dụng)".
+    private void OnCampaignSelectionChanged()
+    {
+        if (cbCampaign.SelectedItem is EligibleCampaignDto campaign && !campaign.Eligible)
+        {
+            var reason = string.IsNullOrWhiteSpace(campaign.Reason)
+                ? "Không đáp ứng điều kiện của chương trình."
+                : "- " + campaign.Reason.Replace("; ", "\n- ");
+
+            MessageBox.Show(
+                $"Chưa đủ điều kiện áp dụng \"{campaign.CampaignName}\":\n{reason}",
+                "Khuyến mãi",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+
+            _campaignPopulating = true;
+            try { cbCampaign.SelectedIndex = 0; }
+            finally { _campaignPopulating = false; }
+        }
+
+        RenderCart();
     }
 
     // Tai lai danh sach ban (dung sau khi thanh toan xong de cap nhat trang thai
@@ -1668,21 +1748,30 @@ public partial class SalesControl : UserControl
         lblDiscountValue.Text = $"-{discount:N0}đ";
 
         lblTotalValue.Text = $"{subtotal - discount:N0}đ";
+
+        // Tạm tính đổi -> điều kiện "hóa đơn tối thiểu" có thể đổi -> tải lại danh sách khuyến mãi.
+        _campaignSubtotal = subtotal;
+        ScheduleCampaignRefresh();
     }
 
-    // Lay % giam cua khuyen mai dang duoc chon trong cbCampaign (index 0 = "(Không
-    // áp dụng)"), tinh so tien giam uoc tinh tren tam tinh hien tai.
+    // Lấy % giảm của khuyến mãi đang chọn trong cbCampaign (index 0 = "(Không áp dụng)"),
+    // tính số tiền giảm ước tính trên tạm tính hiện tại. Chiến dịch chưa đủ điều kiện = 0.
     private decimal GetEstimatedDiscount(decimal subtotal)
     {
-        if (cbCampaign.SelectedIndex <= 0 || cbCampaign.SelectedItem is not ActiveCampaignDto campaign)
+        if (cbCampaign.SelectedIndex <= 0
+            || cbCampaign.SelectedItem is not EligibleCampaignDto campaign
+            || !campaign.Eligible)
             return 0;
 
         return Math.Round(subtotal * campaign.DiscountPercent / 100m, 0, MidpointRounding.AwayFromZero);
     }
 
-    // Ma chien dich khuyen mai dang duoc chon (null = khong ap dung khuyen mai nao).
+    // Mã chiến dịch khuyến mãi đang chọn (null = không áp dụng khuyến mãi nào).
     private int? GetSelectedCampaignId()
-        => cbCampaign.SelectedIndex > 0 && cbCampaign.SelectedItem is ActiveCampaignDto campaign ? campaign.Id : null;
+        => cbCampaign.SelectedIndex > 0
+           && cbCampaign.SelectedItem is EligibleCampaignDto { Eligible: true } campaign
+            ? campaign.Id
+            : null;
 
     private static string KitchenStatusText(int status) => status switch
     {
@@ -2016,6 +2105,9 @@ public partial class SalesControl : UserControl
             lblCustomerInfo.ForeColor = AppColors.Success;
             _tip.SetToolTip(lblCustomerInfo, lblCustomerInfo.Text);
         }
+
+        // Đổi khách -> điều kiện khuyến mãi (khách quen, hạng, sinh nhật...) có thể đổi.
+        ScheduleCampaignRefresh();
     }
 
     // Luong that, khop dung Backend:
