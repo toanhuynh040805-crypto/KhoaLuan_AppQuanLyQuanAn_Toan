@@ -281,7 +281,8 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
     {
         var margin = new Padding(0, 0, 0, Dp(12));
         var pad = Dp(20);
-        var h = Dp(104);
+        var hasConditions = c.Conditions.Count > 0;
+        var h = Dp(hasConditions ? 128 : 104);
         var kind = KindOf(c);
         var (statusLabel, statusFg, statusBg) = StatusInfo(kind);
         var live = kind is StatusKind.Running or StatusKind.Upcoming;
@@ -320,6 +321,15 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
         row.Controls.Add(lblName);
         row.Controls.Add(lblDate);
         row.Controls.Add(lblNote);
+
+        Label? lblCond = null;
+        if (hasConditions)
+        {
+            var condText = "🎯  Điều kiện: " + string.Join("  ·  ", c.Conditions.Select(x => x.Description));
+            lblCond = MakeLabel(condText, FSmall, AppColors.Secondary);
+            new ToolTip().SetToolTip(lblCond, condText);
+            row.Controls.Add(lblCond);
+        }
 
         // --- Thanh tien do (chi voi chien dich dang dien ra) ---
         Panel? track = null, fill = null;
@@ -413,7 +423,7 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
             lblName.SetBounds(colX, Dp(14), colW, FName.Height + Dp(2));
             lblDate.SetBounds(colX, lblName.Bottom + Dp(2), colW, FSmall.Height + Dp(2));
             lblNote.SetBounds(colX, lblDate.Bottom + Dp(2), colW, FSmall.Height + Dp(2));
-
+            lblCond?.SetBounds(colX, lblNote.Bottom + Dp(2), colW, FSmall.Height + Dp(2));
             if (track is not null && fill is not null)
             {
                 track.SetBounds(colX, h - Dp(16), colW, Dp(4));
@@ -434,59 +444,284 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
     private void OpenAddOrEditCampaignDialog(DiscountCampaignDto? campaign)
     {
         var isEdit = campaign is not null;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+
         using var dialog = new Form
         {
             Text = isEdit ? "Sửa chiến dịch khuyến mãi" : "Thêm chiến dịch khuyến mãi",
-            Width = 380,
-            Height = 420,
+            ClientSize = new Size(500, 640),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
             MinimizeBox = false,
         };
 
-        var lblName = new Label { Text = "Tên chiến dịch *", Font = AppFonts.BodyMd, Location = new Point(20, 16), AutoSize = true };
-        var txtName = new TextBox { Location = new Point(20, 36), Width = 320, Font = AppFonts.BodyMd, Text = campaign?.CampaignName ?? "" };
+        // ---------- Thông tin chung ----------
+        var lblName = new Label { Text = "Tên chiến dịch *", Font = AppFonts.BodyMd, Location = new Point(20, 14), AutoSize = true };
+        var txtName = new TextBox { Location = new Point(20, 34), Width = 460, Font = AppFonts.BodyMd, Text = campaign?.CampaignName ?? "" };
 
-        var lblStart = new Label { Text = "Bắt đầu *", Font = AppFonts.BodyMd, Location = new Point(20, 76), AutoSize = true };
-        var dtpStart = new DateTimePicker { Location = new Point(20, 96), Width = 150, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy", Value = campaign?.StartDate ?? DateTime.Today };
+        var lblStart = new Label { Text = "Bắt đầu *", Font = AppFonts.BodyMd, Location = new Point(20, 72), AutoSize = true };
+        var dtpStart = new DateTimePicker { Location = new Point(20, 92), Width = 150, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy", Value = campaign?.StartDate ?? DateTime.Today };
 
-        var lblEnd = new Label { Text = "Kết thúc *", Font = AppFonts.BodyMd, Location = new Point(190, 76), AutoSize = true };
-        var dtpEnd = new DateTimePicker { Location = new Point(190, 96), Width = 150, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy", Value = campaign?.EndDate ?? DateTime.Today.AddDays(7) };
+        var lblEnd = new Label { Text = "Kết thúc *", Font = AppFonts.BodyMd, Location = new Point(190, 72), AutoSize = true };
+        var dtpEnd = new DateTimePicker { Location = new Point(190, 92), Width = 150, Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy", Value = campaign?.EndDate ?? DateTime.Today.AddDays(7) };
 
-        var lblPercent = new Label { Text = "Phần trăm giảm (%) *", Font = AppFonts.BodyMd, Location = new Point(20, 136), AutoSize = true };
-        var numPercent = new NumericUpDown { Location = new Point(20, 156), Width = 150, Minimum = 0, Maximum = 100, DecimalPlaces = 2, Value = campaign?.DiscountPercent ?? 10 };
+        var lblPercent = new Label { Text = "Giảm (%) *", Font = AppFonts.BodyMd, Location = new Point(360, 72), AutoSize = true };
+        var numPercent = new NumericUpDown { Location = new Point(360, 92), Width = 120, Minimum = 0, Maximum = 100, DecimalPlaces = 2, Value = campaign?.DiscountPercent ?? 10 };
 
-        var lblNote = new Label { Text = "Ghi chú", Font = AppFonts.BodyMd, Location = new Point(20, 196), AutoSize = true };
-        var txtNote = new TextBox { Location = new Point(20, 216), Width = 320, Height = 60, Font = AppFonts.BodyMd, Multiline = true, Text = campaign?.Note ?? "" };
+        var lblNote = new Label { Text = "Ghi chú", Font = AppFonts.BodyMd, Location = new Point(20, 128), AutoSize = true };
+        var txtNote = new TextBox { Location = new Point(20, 148), Width = 460, Height = 50, Font = AppFonts.BodyMd, Multiline = true, Text = campaign?.Note ?? "" };
 
-        if (campaign is { RequireMembership: true })
+        // ---------- Điều kiện áp dụng ----------
+        var lblCondTitle = new Label { Text = "Điều kiện áp dụng", Font = new Font(AppFonts.BodyMd, FontStyle.Bold), Location = new Point(20, 212), AutoSize = true };
+        var lblCondHint = new Label
         {
-            var lblWarn = new Label
+            Text = "Hóa đơn phải thỏa TẤT CẢ điều kiện. Không thêm điều kiện nào = áp dụng cho mọi hóa đơn.",
+            Font = FSmall,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(20, 234),
+            Size = new Size(460, 32),
+            AutoSize = false,
+        };
+
+        var cbType = new ComboBox { Location = new Point(20, 272), Width = 300, DropDownStyle = ComboBoxStyle.DropDownList, Font = AppFonts.BodyMd };
+        var pnlInput = new Panel { Location = new Point(20, 304), Size = new Size(460, 70) };
+        var btnAddCond = new Button { Text = "+ Thêm điều kiện", Location = new Point(20, 380), Size = new Size(160, 30), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Secondary, ForeColor = Color.White };
+        var lstConds = new ListBox { Location = new Point(20, 418), Size = new Size(460, 110), Font = AppFonts.BodyMd };
+        var btnRemoveCond = new Button { Text = "Xóa điều kiện đã chọn", Location = new Point(20, 534), Size = new Size(180, 28), FlatStyle = FlatStyle.Flat };
+
+        var btnSave = new Button { Text = isEdit ? "Lưu" : "Tạo chiến dịch", Location = new Point(175, 590), Size = new Size(150, 36), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
+
+        // ---------- Trạng thái ----------
+        var conditions = campaign?.Conditions
+            .Select(c => new CampaignConditionDto
             {
-                Text = "⚠ Chiến dịch này yêu cầu điều kiện khách quen - hệ thống hiện chưa hỗ trợ sửa loại này qua giao diện.",
-                Font = AppFonts.BodyMd,
-                ForeColor = AppColors.Error,
-                Location = new Point(20, 284),
-                Size = new Size(320, 40),
-            };
-            dialog.Controls.Add(lblWarn);
+                ConditionType = c.ConditionType,
+                Value1 = c.Value1,
+                Value2 = c.Value2,
+                Description = c.Description,
+            })
+            .ToList() ?? new List<CampaignConditionDto>();
+
+        var available = new List<(string Type, string Label)>();
+        Func<(string V1, string? V2)?>? readInput = null;
+
+        static (string V1, string? V2)? Result(string v1, string? v2 = null) => (v1, v2);
+
+        static Label PLabel(string text, int x, int y) => new()
+        {
+            Text = text,
+            Font = FSmall,
+            ForeColor = AppColors.OnSurfaceVariant,
+            AutoSize = true,
+            Location = new Point(x, y),
+        };
+
+        // Vẽ ô nhập tương ứng với loại điều kiện đang chọn.
+        void BuildInput(string type)
+        {
+            pnlInput.Controls.Clear();
+            readInput = null;
+
+            switch (type)
+            {
+                case CampaignConditionTypes.VisitCount:
+                    {
+                        var numVisits = new NumericUpDown { Location = new Point(0, 22), Width = 80, Minimum = 1, Maximum = 1000, Value = 3, Font = AppFonts.BodyMd };
+                        var numDays = new NumericUpDown { Location = new Point(160, 22), Width = 80, Minimum = 1, Maximum = 3650, Value = 30, Font = AppFonts.BodyMd };
+                        pnlInput.Controls.Add(PLabel("Số lần ghé tối thiểu", 0, 2));
+                        pnlInput.Controls.Add(numVisits);
+                        pnlInput.Controls.Add(PLabel("Trong (ngày gần nhất)", 160, 2));
+                        pnlInput.Controls.Add(numDays);
+                        readInput = () => Result(numVisits.Value.ToString("0", inv), numDays.Value.ToString("0", inv));
+                        break;
+                    }
+
+                case CampaignConditionTypes.MemberLevel:
+                    {
+                        var levels = new (string Key, string Label)[]
+                        {
+                        ("ThanhVien", "Thành viên"), ("Bac", "Bạc"), ("Vang", "Vàng"), ("KimCuong", "Kim cương"),
+                        };
+                        var cbLevel = new ComboBox { Location = new Point(0, 22), Width = 220, DropDownStyle = ComboBoxStyle.DropDownList, Font = AppFonts.BodyMd };
+                        foreach (var lv in levels) cbLevel.Items.Add(lv.Label);
+                        cbLevel.SelectedIndex = 1;
+                        pnlInput.Controls.Add(PLabel("Hạng tối thiểu", 0, 2));
+                        pnlInput.Controls.Add(cbLevel);
+                        readInput = () => Result(levels[cbLevel.SelectedIndex].Key);
+                        break;
+                    }
+
+                case CampaignConditionTypes.Birthday:
+                    {
+                        var modes = new (string Key, string Label)[]
+                        {
+                        ("Day", "Đúng ngày sinh nhật của khách"), ("Month", "Trong tháng sinh nhật của khách"),
+                        };
+                        var cbMode = new ComboBox { Location = new Point(0, 22), Width = 280, DropDownStyle = ComboBoxStyle.DropDownList, Font = AppFonts.BodyMd };
+                        foreach (var m in modes) cbMode.Items.Add(m.Label);
+                        cbMode.SelectedIndex = 0;
+                        pnlInput.Controls.Add(PLabel("Áp dụng khi", 0, 2));
+                        pnlInput.Controls.Add(cbMode);
+                        readInput = () => Result(modes[cbMode.SelectedIndex].Key);
+                        break;
+                    }
+
+                case CampaignConditionTypes.MinBill:
+                    {
+                        var numAmount = new NumericUpDown
+                        {
+                            Location = new Point(0, 22),
+                            Width = 180,
+                            Minimum = 1000,
+                            Maximum = 1000000000,
+                            Increment = 10000,
+                            ThousandsSeparator = true,
+                            Value = 200000,
+                            Font = AppFonts.BodyMd,
+                        };
+                        pnlInput.Controls.Add(PLabel("Tạm tính tối thiểu (VNĐ)", 0, 2));
+                        pnlInput.Controls.Add(numAmount);
+                        readInput = () => Result(numAmount.Value.ToString("0", inv));
+                        break;
+                    }
+
+                case CampaignConditionTypes.TimeRange:
+                    {
+                        var dtpFrom = new DateTimePicker { Location = new Point(0, 22), Width = 90, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true, Value = DateTime.Today.AddHours(14) };
+                        var dtpTo = new DateTimePicker { Location = new Point(130, 22), Width = 90, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm", ShowUpDown = true, Value = DateTime.Today.AddHours(17) };
+                        pnlInput.Controls.Add(PLabel("Từ giờ", 0, 2));
+                        pnlInput.Controls.Add(dtpFrom);
+                        pnlInput.Controls.Add(PLabel("Đến giờ", 130, 2));
+                        pnlInput.Controls.Add(dtpTo);
+                        readInput = () =>
+                        {
+                            var from = dtpFrom.Value.ToString("HH:mm", inv);
+                            var to = dtpTo.Value.ToString("HH:mm", inv);
+                            if (from == to)
+                            {
+                                MessageBox.Show("Giờ bắt đầu và giờ kết thúc không được trùng nhau.");
+                                return null;
+                            }
+                            return Result(from, to);
+                        };
+                        break;
+                    }
+
+                case CampaignConditionTypes.DayOfWeek:
+                    {
+                        var dayDefs = new (int Value, string Label)[]
+                        {
+                        (1, "T2"), (2, "T3"), (3, "T4"), (4, "T5"), (5, "T6"), (6, "T7"), (0, "CN"),
+                        };
+                        var checks = new List<CheckBox>();
+                        var posX = 0;
+                        pnlInput.Controls.Add(PLabel("Áp dụng vào các ngày", 0, 2));
+                        foreach (var def in dayDefs)
+                        {
+                            var chk = new CheckBox { Text = def.Label, Tag = def.Value, AutoSize = true, Location = new Point(posX, 24), Font = AppFonts.BodyMd };
+                            checks.Add(chk);
+                            pnlInput.Controls.Add(chk);
+                            posX += 62;
+                        }
+                        readInput = () =>
+                        {
+                            var picked = checks.Where(k => k.Checked).Select(k => (int)k.Tag!).OrderBy(v => v).ToList();
+                            if (picked.Count == 0)
+                            {
+                                MessageBox.Show("Vui lòng chọn ít nhất 1 ngày.");
+                                return null;
+                            }
+                            return Result(string.Join(",", picked));
+                        };
+                        break;
+                    }
+            }
         }
 
-        dialog.Controls.Add(lblName);
-        dialog.Controls.Add(txtName);
-        dialog.Controls.Add(lblStart);
-        dialog.Controls.Add(dtpStart);
-        dialog.Controls.Add(lblEnd);
-        dialog.Controls.Add(dtpEnd);
-        dialog.Controls.Add(lblPercent);
-        dialog.Controls.Add(numPercent);
-        dialog.Controls.Add(lblNote);
-        dialog.Controls.Add(txtNote);
+        // Chỉ cho chọn các loại điều kiện CHƯA được thêm (mỗi loại 1 lần / chiến dịch).
+        void RefillTypes()
+        {
+            available = CampaignConditionTypes.All
+                .Where(t => conditions.All(c => c.ConditionType != t.Type))
+                .ToList();
 
-        var btnSave = new Button { Text = isEdit ? "Lưu" : "Tạo chiến dịch", Location = new Point(110, 330), Size = new Size(150, 34), DialogResult = DialogResult.OK, FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
-        dialog.Controls.Add(btnSave);
+            cbType.Items.Clear();
+            foreach (var t in available) cbType.Items.Add(t.Label);
+
+            var any = available.Count > 0;
+            cbType.Enabled = any;
+            btnAddCond.Enabled = any;
+
+            if (any)
+            {
+                cbType.SelectedIndex = 0;
+            }
+            else
+            {
+                pnlInput.Controls.Clear();
+                readInput = null;
+            }
+        }
+
+        void RefreshConditionList()
+        {
+            lstConds.Items.Clear();
+            foreach (var c in conditions) lstConds.Items.Add(c.Description);
+        }
+
+        cbType.SelectedIndexChanged += (s, e) =>
+        {
+            if (cbType.SelectedIndex >= 0 && cbType.SelectedIndex < available.Count)
+                BuildInput(available[cbType.SelectedIndex].Type);
+        };
+
+        btnAddCond.Click += (s, e) =>
+        {
+            if (cbType.SelectedIndex < 0 || cbType.SelectedIndex >= available.Count || readInput is null) return;
+
+            var input = readInput();
+            if (input is null) return;
+
+            var type = available[cbType.SelectedIndex].Type;
+            var (v1, v2) = input.Value;
+            conditions.Add(new CampaignConditionDto
+            {
+                ConditionType = type,
+                Value1 = v1,
+                Value2 = v2,
+                Description = DescribeCondition(type, v1, v2),
+            });
+
+            RefreshConditionList();
+            RefillTypes();
+        };
+
+        btnRemoveCond.Click += (s, e) =>
+        {
+            var idx = lstConds.SelectedIndex;
+            if (idx < 0 || idx >= conditions.Count)
+            {
+                MessageBox.Show("Vui lòng chọn điều kiện cần xóa trong danh sách.");
+                return;
+            }
+
+            conditions.RemoveAt(idx);
+            RefreshConditionList();
+            RefillTypes();
+        };
+
+        dialog.Controls.AddRange(new Control[]
+        {
+            lblName, txtName, lblStart, dtpStart, lblEnd, dtpEnd, lblPercent, numPercent,
+            lblNote, txtNote,
+            lblCondTitle, lblCondHint, cbType, pnlInput, btnAddCond, lstConds, btnRemoveCond,
+            btnSave,
+        });
         dialog.AcceptButton = btnSave;
+
+        RefreshConditionList();
+        RefillTypes();
 
         if (dialog.ShowDialog() != DialogResult.OK) return;
 
@@ -505,16 +740,66 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
         var note = string.IsNullOrWhiteSpace(txtNote.Text) ? null : txtNote.Text.Trim();
 
         if (isEdit)
-            _ = UpdateCampaignAsync(campaign!.Id, name, dtpStart.Value.Date, dtpEnd.Value.Date, numPercent.Value, note);
+            _ = UpdateCampaignAsync(campaign!.Id, name, dtpStart.Value.Date, dtpEnd.Value.Date, numPercent.Value, note, conditions);
         else
-            _ = CreateCampaignAsync(name, dtpStart.Value.Date, dtpEnd.Value.Date, numPercent.Value, note);
+            _ = CreateCampaignAsync(name, dtpStart.Value.Date, dtpEnd.Value.Date, numPercent.Value, note, conditions);
     }
 
-    private async Task CreateCampaignAsync(string name, DateTime start, DateTime end, decimal percent, string? note)
+    // Mô tả điều kiện vừa thêm trong dialog (điều kiện đã lưu thì Backend trả sẵn Description).
+    private static string DescribeCondition(string type, string v1, string? v2)
+    {
+        switch (type)
+        {
+            case CampaignConditionTypes.VisitCount:
+                return $"Khách ghé từ {v1} lần trong {v2} ngày gần nhất";
+
+            case CampaignConditionTypes.MemberLevel:
+                return $"Hạng thành viên từ {LevelLabel(v1)}";
+
+            case CampaignConditionTypes.Birthday:
+                return v1 == "Day" ? "Đúng ngày sinh nhật của khách" : "Trong tháng sinh nhật của khách";
+
+            case CampaignConditionTypes.MinBill:
+                {
+                    var inv = System.Globalization.CultureInfo.InvariantCulture;
+                    return decimal.TryParse(v1, System.Globalization.NumberStyles.Number, inv, out var amount)
+                        ? $"Hóa đơn từ {amount.ToString("#,##0", inv).Replace(',', '.')}đ"
+                        : "Hóa đơn tối thiểu";
+                }
+
+            case CampaignConditionTypes.TimeRange:
+                return $"Khung giờ {v1} – {v2}";
+
+            case CampaignConditionTypes.DayOfWeek:
+                {
+                    var names = new[] { "CN", "T2", "T3", "T4", "T5", "T6", "T7" };
+                    var days = v1.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(p => int.TryParse(p, out var d) ? d : -1)
+                        .Where(d => d is >= 0 and <= 6)
+                        .OrderBy(d => (d + 6) % 7)
+                        .Select(d => names[d]);
+                    return "Các ngày: " + string.Join(", ", days);
+                }
+
+            default:
+                return CampaignConditionTypes.LabelOf(type);
+        }
+    }
+
+    private static string LevelLabel(string key) => key switch
+    {
+        "ThanhVien" => "Thành viên",
+        "Bac" => "Bạc",
+        "Vang" => "Vàng",
+        "KimCuong" => "Kim cương",
+        _ => key,
+    };
+
+    private async Task CreateCampaignAsync(string name, DateTime start, DateTime end, decimal percent, string? note, List<CampaignConditionDto> conditions)
     {
         try
         {
-            await _api.CreateCampaignAsync(name, start, end, percent, note, _userId);
+            await _api.CreateCampaignAsync(name, start, end, percent, note, _userId, conditions);
             await LoadCampaignsAsync();
         }
         catch (Exception ex)
@@ -523,11 +808,11 @@ public partial class PromotionsControl : UserControl, IRefreshableContent
         }
     }
 
-    private async Task UpdateCampaignAsync(int id, string name, DateTime start, DateTime end, decimal percent, string? note)
+    private async Task UpdateCampaignAsync(int id, string name, DateTime start, DateTime end, decimal percent, string? note, List<CampaignConditionDto> conditions)
     {
         try
         {
-            await _api.UpdateCampaignAsync(id, name, start, end, percent, note);
+            await _api.UpdateCampaignAsync(id, name, start, end, percent, note, conditions);
             await LoadCampaignsAsync();
         }
         catch (Exception ex)

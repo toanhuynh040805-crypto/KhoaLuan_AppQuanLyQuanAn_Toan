@@ -70,12 +70,13 @@ public record PaymentPreviewDto(
 [Route("api/[controller]")]
 public class PaymentsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+        private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
     private readonly IPaymentProvider _paymentProvider;
     private readonly TableStateService _tableState;
+    private readonly CampaignEligibilityService _campaignEligibility;
     private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
@@ -85,6 +86,7 @@ public class PaymentsController : ControllerBase
         IEmailService email,
         IPaymentProvider paymentProvider,
         TableStateService tableState,
+        CampaignEligibilityService campaignEligibility,
         ILogger<PaymentsController> logger)
     {
         _db = db;
@@ -93,6 +95,7 @@ public class PaymentsController : ControllerBase
         _tableState = tableState;
         _email = email;
         _paymentProvider = paymentProvider;
+        _campaignEligibility = campaignEligibility;
         _logger = logger;
     }
 
@@ -400,27 +403,25 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
+                // Xác định khách TRƯỚC để kiểm tra điều kiện khuyến mãi
+        // (khách quen, hạng thành viên, sinh nhật...).
+        var effectiveCustomerId = customerId ?? order.CustomerId;
+
         decimal campaignDiscount = 0;
         if (campaignId.HasValue)
         {
-            var campaign = await _db.DiscountCampaigns
-                .AsNoTracking()
-                .FirstOrDefaultAsync(c =>
-                    c.CampaignId == campaignId.Value);
+            var applyResult = await _campaignEligibility.ValidateForPaymentAsync(
+                campaignId.Value,
+                effectiveCustomerId,
+                subTotal,
+                DateTime.Now,
+                order.OrderId);
 
-            if (campaign is null)
-                return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
-            if (!campaign.IsActive)
-                return BadRequest(new { message = "Chương trình khuyến mãi đã bị tắt" });
-
-            var now = DateTime.Now;
-            if (now < campaign.StartDate || now > campaign.EndDate)
-                return BadRequest(new { message = "Chương trình khuyến mãi hiện không còn hiệu lực" });
-            if (campaign.RequireMembership)
-                return BadRequest(new { message = "Chương trình này yêu cầu khách hàng thành viên" });
+            if (applyResult.Error is not null)
+                return BadRequest(new { message = applyResult.Error });
 
             campaignDiscount = Math.Round(
-                subTotal * campaign.DiscountPercent / 100m,
+                subTotal * applyResult.Campaign!.DiscountPercent / 100m,
                 0,
                 MidpointRounding.AwayFromZero);
         }
@@ -429,7 +430,6 @@ public class PaymentsController : ControllerBase
             0,
             subTotal - campaignDiscount);
 
-        var effectiveCustomerId = customerId ?? order.CustomerId;
         Customer? customer = null;
         if (effectiveCustomerId.HasValue)
         {
@@ -746,25 +746,33 @@ public class PaymentsController : ControllerBase
         // Áp dụng khuyến mãi (nếu Thu ngân có chọn) - validate LẠI ở đây (không tin
         // tưởng con số % mà WinForm tự tính) để tránh 1 request giả mạo/lỗi thời gian
         // (vd chiến dịch vừa hết hạn ngay lúc bấm) làm sai số tiền thật thu vào.
+                // Xác định khách TRƯỚC để kiểm tra điều kiện khuyến mãi - ưu tiên CustomerId gửi kèm
+        // request, nếu không có thì dùng khách đã gắn sẵn trên Order.
+        var customerId = request.CustomerId ?? order.CustomerId;
+
         decimal discountAmount = 0;
         DiscountCampaign? campaign = null;
         if (request.CampaignId.HasValue)
         {
-            campaign = await _db.DiscountCampaigns.FindAsync(request.CampaignId.Value);
-            if (campaign is null) return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
-            if (!campaign.IsActive) return BadRequest(new { message = "Chương trình khuyến mãi này đã bị tắt" });
-            var now = DateTime.Now;
-            if (now < campaign.StartDate || now > campaign.EndDate)
-                return BadRequest(new { message = "Chương trình khuyến mãi này hiện không còn hiệu lực" });
-            if (campaign.RequireMembership)
-                return BadRequest(new { message = "Chương trình này chỉ áp dụng cho khách hàng thân thiết - hệ thống hiện chưa hỗ trợ kiểm tra điều kiện này" });
+            var applyResult = await _campaignEligibility.ValidateForPaymentAsync(
+                request.CampaignId.Value,
+                customerId,
+                total,
+                DateTime.Now,
+                order.OrderId);
 
-            discountAmount = Math.Round(total * campaign.DiscountPercent / 100m, 0, MidpointRounding.AwayFromZero);
+            if (applyResult.Error is not null)
+                return BadRequest(new { message = applyResult.Error });
+
+            campaign = applyResult.Campaign;
+            discountAmount = Math.Round(
+                total * campaign!.DiscountPercent / 100m,
+                0,
+                MidpointRounding.AwayFromZero);
         }
 
         // Xác định khách hàng thành viên áp dụng cho hóa đơn (nếu có) - ưu tiên
         // CustomerId gửi kèm request, nếu không có thì dùng khách đã gắn sẵn trên Order.
-        var customerId = request.CustomerId ?? order.CustomerId;
         Customer? customer = null;
         if (customerId.HasValue)
         {

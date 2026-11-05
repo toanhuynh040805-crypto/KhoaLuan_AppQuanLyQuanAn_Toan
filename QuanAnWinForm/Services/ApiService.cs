@@ -743,15 +743,57 @@ public class ApiService
         return res ?? new List<ActiveCampaignDto>();
     }
 
-    public async Task CreateCampaignAsync(string campaignName, DateTime startDate, DateTime endDate, decimal discountPercent, string? note, int userId)
+    // Mọi chiến dịch đang hiệu lực, kèm trạng thái đủ/không đủ điều kiện theo khách + tạm tính.
+    public async Task<List<EligibleCampaignDto>> GetEligibleCampaignsAsync(int? customerId, decimal subTotal)
     {
-        var res = await _http.PostAsJsonAsync("/api/discountcampaigns", new { campaignName, startDate, endDate, discountPercent, note, userId });
+        var url = $"/api/discountcampaigns/eligible?subTotal={subTotal.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        if (customerId.HasValue)
+            url += $"&customerId={customerId.Value}";
+
+        var res = await _http.GetFromJsonAsync<List<EligibleCampaignDto>>(url, JsonOpts);
+        return res ?? new List<EligibleCampaignDto>();
+    }
+
+    public async Task CreateCampaignAsync(
+        string campaignName,
+        DateTime startDate,
+        DateTime endDate,
+        decimal discountPercent,
+        string? note,
+        int userId,
+        List<CampaignConditionDto> conditions)
+    {
+        var res = await _http.PostAsJsonAsync("/api/discountcampaigns", new
+        {
+            campaignName,
+            startDate,
+            endDate,
+            discountPercent,
+            note,
+            userId,
+            conditions = conditions.Select(c => new { conditionType = c.ConditionType, value1 = c.Value1, value2 = c.Value2 }).ToList()
+        });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
-    public async Task UpdateCampaignAsync(int id, string campaignName, DateTime startDate, DateTime endDate, decimal discountPercent, string? note)
+    public async Task UpdateCampaignAsync(
+        int id,
+        string campaignName,
+        DateTime startDate,
+        DateTime endDate,
+        decimal discountPercent,
+        string? note,
+        List<CampaignConditionDto> conditions)
     {
-        var res = await _http.PutAsJsonAsync($"/api/discountcampaigns/{id}", new { campaignName, startDate, endDate, discountPercent, note });
+        var res = await _http.PutAsJsonAsync($"/api/discountcampaigns/{id}", new
+        {
+            campaignName,
+            startDate,
+            endDate,
+            discountPercent,
+            note,
+            conditions = conditions.Select(c => new { conditionType = c.ConditionType, value1 = c.Value1, value2 = c.Value2 }).ToList()
+        });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
