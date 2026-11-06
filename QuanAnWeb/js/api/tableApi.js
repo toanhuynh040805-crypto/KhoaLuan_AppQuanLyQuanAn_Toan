@@ -98,7 +98,7 @@ export const tableApi = {
     },
 
     async getAvailableTables() {
-        const tables = await this.getTables({ status: 'Trong' });
-        return tables.filter((table) => table.status === 'Trong');
+        const tables = await this.getTables();
+        return tables.filter((table) => table.status === 'Trong' || table.status === 'DangPhucVu');
     }
 };
