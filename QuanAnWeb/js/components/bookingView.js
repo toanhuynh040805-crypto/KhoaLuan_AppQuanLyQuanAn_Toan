@@ -323,7 +323,9 @@ export function renderReservationDetails(container, reservation) {
 
     const status = getReservationValue(reservation, 'status', 'Status');
     const durationMinutes = Number(
-        getReservationValue(reservation, 'durationMinutes', 'DurationMinutes') ?? 30
+        getReservationValue(reservation, 'durationMinutes', 'DurationMinutes') ??
+        window.AppConfig?.bookingDuration ??
+        30
     );
     const rawHoldUntil = getReservationValue(reservation, 'holdUntil', 'HoldUntil');
     let holdLabel = `${durationMinutes} phút sau giờ hẹn`;

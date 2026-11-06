@@ -107,8 +107,26 @@ public class WebOrdersController : ControllerBase
                 .FirstOrDefaultAsync(candidate => candidate.TableId == request.TableId.Value);
             if (table is null)
                 return NotFound(new { message = "Không tìm thấy bàn đã chọn." });
-            if (table.Status != TableStatus.Trong)
-                return Conflict(new { message = "Bàn vừa được sử dụng hoặc không còn khả dụng. Vui lòng chọn bàn khác." });
+
+            // HƯỚNG A: Bắt buộc bàn phải được Thu ngân/Lễ tân "Mở bàn" (DangPhucVu / InUse).
+            // Nếu bàn đang trống (Trong), từ chối ngay lập tức để chặn lỗ hổng khách chụp mã QR mang về nhà order phá rối.
+            if (table.Status == TableStatus.Trong)
+            {
+                return BadRequest(new
+                {
+                    code = "TABLE_NOT_OPENED",
+                    message = "Bàn chưa được mở, vui lòng liên hệ nhân viên để mở bàn trước khi gọi món."
+                });
+            }
+
+            if (table.Status != TableStatus.DangPhucVu)
+            {
+                return Conflict(new
+                {
+                    code = "TABLE_NOT_AVAILABLE",
+                    message = "Bàn hiện không ở trạng thái sẵn sàng nhận món. Vui lòng liên hệ nhân viên."
+                });
+            }
 
             var webEmployeeId = await _context.Employees
                 .Where(employee => employee.EmployeeCode == OrderSources.WebEmployeeCode)

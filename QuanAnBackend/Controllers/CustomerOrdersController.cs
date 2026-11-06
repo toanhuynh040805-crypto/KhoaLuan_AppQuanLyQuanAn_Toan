@@ -156,9 +156,11 @@ public class CustomerOrdersController : ControllerBase
                     return Error(404, "TABLE_NOT_FOUND", "Không tìm thấy bàn.");
                 if (table.TableName.StartsWith("MV-") || table.Area?.AreaName == "Mang về")
                     return Error(400, "TABLE_NOT_DINE_IN", "Bàn này không nhận đặt món online.");
-                if (table.Status != TableStatus.Trong ||
-                    await _db.Orders.AnyAsync(o => o.TableId == table.TableId && o.Status == OrderStatus.DangMo))
-                    return Error(409, "TABLE_UNAVAILABLE", "Bàn này không còn trống. Vui lòng chọn bàn khác.");
+                // HƯỚNG A: Bắt buộc bàn phải được Mở bàn (DangPhucVu). Nếu bàn đang Trống -> Từ chối ngay.
+                if (table.Status == TableStatus.Trong)
+                    return Error(400, "TABLE_NOT_OPENED", "Bàn chưa được mở, vui lòng liên hệ nhân viên.");
+                if (table.Status != TableStatus.DangPhucVu)
+                    return Error(409, "TABLE_UNAVAILABLE", "Bàn hiện không ở trạng thái sẵn sàng phục vụ. Vui lòng liên hệ nhân viên.");
 
                 var now = DateTime.Now;
                 var order = new Order

@@ -357,14 +357,32 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
         }
         const emptyBox = createElement('div', 'rounded-2xl border border-amber-200 bg-amber-50/70 p-6 text-center');
         const icon = createElement('span', 'material-symbols-outlined mx-auto text-3xl text-amber-600 block', 'table_restaurant');
-        const title = createElement('p', 'mt-2 text-sm font-bold text-amber-900', 'Hiện không có bàn trống. Vui lòng thử lại sau.');
-        const subtext = createElement('p', 'mt-1 text-xs text-amber-700', 'Tất cả các bàn hiện đang phục vụ hoặc đang dọn dẹp. Danh sách sẽ tự động hiển thị ngay khi có bàn trống.');
+        const title = createElement('p', 'mt-2 text-sm font-bold text-amber-900', 'Hiện không có bàn khả dụng. Vui lòng thử lại sau.');
+        const subtext = createElement('p', 'mt-1 text-xs text-amber-700', 'Danh sách sẽ tự động hiển thị ngay khi có bàn khả dụng.');
         emptyBox.append(icon, title, subtext);
         gridContainer.replaceChildren(emptyBox);
         return;
     }
 
     const wrapper = createElement('div', 'space-y-3.5 w-full min-w-0');
+
+    // Hiển thị thông báo trạng thái bàn đang chọn (giữ nguyên khi phân trang)
+    if (selectedTableId) {
+        const selectedObj = availableTables.find(t => String(t.id ?? t.TableId ?? t.tableId) === String(selectedTableId));
+        if (selectedObj) {
+            const selName = selectedObj.tableName || selectedObj.name || `Bàn ${selectedTableId}`;
+            const selArea = selectedObj.areaName ? ` · ${selectedObj.areaName}` : '';
+            const banner = createElement('div', 'flex items-center justify-between rounded-xl bg-[#fff6f4] border border-[#ac2d00]/30 px-3.5 py-2 text-xs font-semibold text-[#ac2d00]');
+            banner.innerHTML = `
+                <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="material-symbols-outlined text-[18px]">check_circle</span>
+                    <span class="truncate">Bàn đang chọn: <strong>${selName}</strong>${selArea}</span>
+                </div>
+                <span class="text-[11px] font-bold bg-[#ac2d00] text-white px-2 py-0.5 rounded-full shrink-0 ml-2">Đang chọn</span>
+            `;
+            wrapper.append(banner);
+        }
+    }
 
     // Thu thập danh sách các khu vực duy nhất có bàn trống
     const areas = [];
@@ -464,8 +482,11 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
 
         // Hàng dưới: Trạng thái trống / Đang chọn
         const bottomRow = createElement('div', 'mt-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-[#f2eae6] w-full min-w-0 gap-1');
-        const statusBadge = createElement('span', 'inline-flex items-center gap-1 font-semibold text-emerald-700 shrink-0');
-        statusBadge.innerHTML = `<span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Trống`;
+        const isTableInUse = table?.status === 'DangPhucVu';
+        const statusBadge = createElement('span', `inline-flex items-center gap-1 font-semibold ${isTableInUse ? 'text-amber-700' : 'text-emerald-700'} shrink-0`);
+        statusBadge.innerHTML = isTableInUse
+            ? '<span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"></span>Đã mở bàn'
+            : '<span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Trống';
         bottomRow.append(statusBadge);
 
         if (isSelected) {
