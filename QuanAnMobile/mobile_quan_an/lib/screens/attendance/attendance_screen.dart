@@ -102,42 +102,128 @@ class _AttendanceScreenState
       _isCheckingLocation = true;
     });
 
+    LocationCheckResult? gpsResult;
+
     try {
-      final LocationCheckResult result =
+      gpsResult =
           await AppServices.locationService
               .checkCurrentLocation(
         requestPermission: requestPermission,
       );
 
       if (!mounted) {
-        return result;
+        return gpsResult;
+      }
+
+      final bool gpsReady =
+          !gpsResult.requiresSecureContext &&
+          gpsResult.serviceEnabled &&
+          gpsResult.permissionGranted &&
+          gpsResult.latitude != null &&
+          gpsResult.longitude != null &&
+          gpsResult.accuracyMeters != null;
+
+      if (!gpsReady) {
+        setState(() {
+          _locationResult = gpsResult;
+          _isCheckingLocation = false;
+        });
+
+        if (showMessage) {
+          TopMessage.show(
+            context,
+            message: gpsResult.message,
+            type: TopMessageType.warning,
+          );
+        }
+
+        return gpsResult;
+      }
+
+      final AttendanceLocationValidationDto validation =
+          await AppServices.attendanceService
+              .checkLocation(
+        employeeCode: appEmployee.employeeCode,
+        location: gpsResult,
+      );
+
+      final LocationCheckResult verified =
+          LocationCheckResult(
+        isConfigured: true,
+        serviceEnabled: true,
+        permissionGranted: true,
+        isInside: validation.isInside,
+        latitude: gpsResult.latitude,
+        longitude: gpsResult.longitude,
+        distanceMeters: validation.distanceMeters,
+        radiusMeters: validation.radiusMeters,
+        accuracyMeters:
+            validation.accuracyMeters ??
+            gpsResult.accuracyMeters,
+        isMocked:
+            validation.isMocked ||
+            gpsResult.isMocked,
+        message: validation.message,
+      );
+
+      if (!mounted) {
+        return verified;
       }
 
       setState(() {
-        _locationResult = result;
+        _locationResult = verified;
         _isCheckingLocation = false;
       });
 
       if (showMessage) {
-        final bool gpsReady =
-            result.serviceEnabled &&
-            result.permissionGranted &&
-            result.latitude != null &&
-            result.longitude != null &&
-            result.accuracyMeters != null;
-
         TopMessage.show(
           context,
-          message: gpsReady
-              ? 'Đã lấy vị trí GPS hiện tại. Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.'
-              : result.message,
-          type: gpsReady
+          message: verified.message,
+          type:
+              verified.isInside &&
+                  !verified.isMocked
               ? TopMessageType.success
               : TopMessageType.warning,
         );
       }
 
-      return result;
+      return verified;
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return null;
+      }
+
+      final LocationCheckResult denied =
+          LocationCheckResult(
+        isConfigured: true,
+        serviceEnabled:
+            gpsResult?.serviceEnabled ?? true,
+        permissionGranted:
+            gpsResult?.permissionGranted ?? true,
+        isInside: false,
+        latitude: gpsResult?.latitude,
+        longitude: gpsResult?.longitude,
+        accuracyMeters:
+            gpsResult?.accuracyMeters,
+        isMocked:
+            gpsResult?.isMocked ?? false,
+        message: error.message,
+      );
+
+      setState(() {
+        _locationResult = denied;
+        _isCheckingLocation = false;
+      });
+
+      if (showMessage) {
+        TopMessage.show(
+          context,
+          message: error.message,
+          type: TopMessageType.warning,
+        );
+      }
+
+      return denied;
     } catch (_) {
       if (!mounted) {
         return null;
@@ -151,7 +237,7 @@ class _AttendanceScreenState
         TopMessage.show(
           context,
           message:
-              'Không thể lấy vị trí hiện tại. Hãy thử lại.',
+              'Không thể kiểm tra vị trí hiện tại. Hãy thử lại.',
           type: TopMessageType.error,
         );
       }
@@ -207,6 +293,26 @@ class _AttendanceScreenState
         context,
         message:
             'Không thể lấy tọa độ GPS hiện tại. Hãy thử lại.',
+        type: TopMessageType.warning,
+      );
+      return null;
+    }
+
+    if (result.isMocked) {
+      TopMessage.show(
+        context,
+        message:
+            'Thiết bị đang sử dụng vị trí mô phỏng. '
+            'Không thể điểm danh.',
+        type: TopMessageType.warning,
+      );
+      return null;
+    }
+
+    if (!result.isInside) {
+      TopMessage.show(
+        context,
+        message: result.message,
         type: TopMessageType.warning,
       );
       return null;
@@ -1159,13 +1265,13 @@ class _AttendanceScreenState
       statusColor = Colors.blueGrey;
       statusIcon = Icons.sync;
       detailText =
-          'Đang lấy vị trí GPS hiện tại...';
+          'Đang lấy GPS và đối chiếu với vị trí quán...';
     } else if (result == null) {
       statusText = 'Chưa kiểm tra';
       statusColor = Colors.grey;
       statusIcon = Icons.location_searching;
       detailText =
-          'Bấm Kiểm tra vị trí để lấy GPS hiện tại. Backend sẽ đối chiếu với vị trí quán do quản lý cấu hình.';
+          'Bấm Kiểm tra vị trí để Backend đối chiếu GPS hiện tại với vị trí quán do quản lý đã lưu.';
     } else if (result.requiresSecureContext) {
       statusText = 'Cần HTTPS';
       statusColor = Colors.orange;
@@ -1182,17 +1288,51 @@ class _AttendanceScreenState
       statusColor = Colors.red;
       statusIcon = Icons.location_off_outlined;
       detailText = result.message;
+    } else if (result.isMocked) {
+      statusText = 'Vị trí mô phỏng';
+      statusColor = Colors.red;
+      statusIcon = Icons.gps_off_outlined;
+      detailText =
+          'Thiết bị đang dùng GPS mô phỏng. '
+          'Không thể dùng vị trí này để điểm danh.';
+    } else if (result.latitude != null &&
+        result.longitude != null &&
+        result.accuracyMeters != null &&
+        result.isInside) {
+      statusText = 'Đúng vị trí quán';
+      statusColor = Colors.green;
+      statusIcon = Icons.location_on;
+      final String distance =
+          result.distanceMeters == null
+              ? '--'
+              : '${result.distanceMeters!.round()} m';
+      final String radius =
+          result.radiusMeters == null
+              ? '--'
+              : '${result.radiusMeters!.round()} m';
+      detailText =
+          'Cách quán: $distance'
+          ' • Bán kính cho phép: $radius'
+          ' • Sai số GPS: ${result.accuracyMeters!.round()} m.';
     } else if (result.latitude != null &&
         result.longitude != null &&
         result.accuracyMeters != null) {
-      statusText = 'GPS sẵn sàng';
-      statusColor = Colors.green;
-      statusIcon = Icons.my_location;
+      statusText = 'Ngoài phạm vi';
+      statusColor = Colors.red;
+      statusIcon = Icons.location_off_outlined;
+      final String distance =
+          result.distanceMeters == null
+              ? '--'
+              : '${result.distanceMeters!.round()} m';
+      final String radius =
+          result.radiusMeters == null
+              ? '--'
+              : '${result.radiusMeters!.round()} m';
       detailText =
-          'Đã lấy vị trí GPS hiện tại'
-          ' • Sai số: '
-          '${result.accuracyMeters!.round()} m. '
-          'Phạm vi hợp lệ sẽ được Backend kiểm tra theo cấu hình của quản lý.';
+          '${result.message}\n'
+          'Cách quán: $distance'
+          ' • Bán kính cho phép: $radius'
+          ' • Sai số GPS: ${result.accuracyMeters!.round()} m.';
     } else {
       statusText = 'Không lấy được GPS';
       statusColor = Colors.orange;
@@ -1279,10 +1419,15 @@ class _AttendanceScreenState
                   color: Color(0xFFFFE9DE),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.location_on,
-                  color:
-                      AppTheme.orangeColor,
+                child: Icon(
+                  result?.isInside == true &&
+                          result?.isMocked != true
+                      ? Icons.location_on
+                      : Icons.location_searching,
+                  color: result?.isInside == true &&
+                          result?.isMocked != true
+                      ? Colors.green
+                      : AppTheme.orangeColor,
                 ),
               ),
               const SizedBox(width: 12),
