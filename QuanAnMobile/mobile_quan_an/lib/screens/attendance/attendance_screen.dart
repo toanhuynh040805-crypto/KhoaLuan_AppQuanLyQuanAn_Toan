@@ -1291,7 +1291,7 @@ class _AttendanceScreenState
     } else if (result.isMocked) {
       statusText = 'Vị trí mô phỏng';
       statusColor = Colors.red;
-      statusIcon = Icons.gps_off_outlined;
+      statusIcon = Icons.gps_off;
       detailText =
           'Thiết bị đang dùng GPS mô phỏng. '
           'Không thể dùng vị trí này để điểm danh.';
