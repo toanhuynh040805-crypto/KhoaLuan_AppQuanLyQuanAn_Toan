@@ -14,6 +14,7 @@ import '../../services/api_client.dart';
 import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
 import '../../services/realtime_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../invoices/receipt_preview_screen.dart';
 import '../menu/menu_screen.dart';
@@ -69,6 +70,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
   MemberCustomer? _memberCustomer;
   Timer? _tableLockHeartbeatTimer;
   Timer? _paymentRequestLockTimer;
+  Timer? _relativeTimeTimer;
+  Timer? _realtimeReloadTimer;
   bool _paymentRequestLocked = false;
   int _paymentRequestRemainingSeconds = 0;
 
@@ -76,6 +79,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
   StreamSubscription<TableLockTakenOverRealtimeEvent>?
       _tableLockTakeoverSubscription;
+  StreamSubscription<void>? _orderSubscription;
+  StreamSubscription<TableStatusRealtimeEvent>? _tableStatusSubscription;
+  StreamSubscription<void>? _reservationSubscription;
 
   bool get _canManageTables =>
       MobileAccessPolicy.canManageTables(appEmployee.role);
@@ -127,6 +133,19 @@ class _TableDetailV2State extends State<TableDetailV2> {
     _paymentSubscription = AppServices.realtimeService.paymentCompletions
         .listen(_handlePaymentCompleted);
 
+    _orderSubscription = AppServices.realtimeService.orderChanges
+        .listen((_) => _scheduleRealtimeReload());
+
+    _tableStatusSubscription = AppServices.realtimeService.tableStatusChanges
+        .listen((event) {
+      if (event.tableId == currentTable.id) {
+        _scheduleRealtimeReload();
+      }
+    });
+
+    _reservationSubscription = AppServices.realtimeService.reservationChanges
+        .listen((_) => _scheduleRealtimeReload());
+
     _tableLockTakeoverSubscription =
         AppServices.realtimeService.tableLockTakeovers
             .listen(_handleTableLockTakenOver);
@@ -138,16 +157,86 @@ class _TableDetailV2State extends State<TableDetailV2> {
         (_) => unawaited(_heartbeatTableLock()),
       );
     }
+
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
   void dispose() {
     _tableLockHeartbeatTimer?.cancel();
     _paymentRequestLockTimer?.cancel();
+    _relativeTimeTimer?.cancel();
+    _realtimeReloadTimer?.cancel();
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableLockTakeoverSubscription?.cancel();
+    _orderSubscription?.cancel();
+    _tableStatusSubscription?.cancel();
+    _reservationSubscription?.cancel();
     super.dispose();
+  }
+
+  void _scheduleRealtimeReload() {
+    if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+    _realtimeReloadTimer?.cancel();
+    _realtimeReloadTimer = Timer(
+      const Duration(milliseconds: 180),
+      () => unawaited(_reloadCurrentTableRealtime()),
+    );
+  }
+
+  Future<void> _reloadCurrentTableRealtime() async {
+    if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+    try {
+      final results = await Future.wait<dynamic>([
+        AppServices.tableService.getTables(),
+        AppServices.tableService.getInitialOrders(),
+      ]);
+
+      if (!mounted || _closingAfterPayment || _tableLockLost) return;
+
+      final List<RestaurantTable> latestTables =
+          results[0] as List<RestaurantTable>;
+      final Map<int, List<OrderItem>> latestOrders =
+          results[1] as Map<int, List<OrderItem>>;
+
+      RestaurantTable? latestTable;
+      for (final table in latestTables) {
+        if (table.id == currentTable.id) {
+          latestTable = table;
+          break;
+        }
+      }
+
+      final List<OrderItem> latestItems =
+          (latestOrders[currentTable.id] ?? const <OrderItem>[])
+              .where((item) => item.status != 'Đã hủy')
+              .toList();
+
+      setState(() {
+        if (latestTable != null) {
+          currentTable = latestTable!;
+        }
+
+        orderItems = latestItems;
+        currentAmount = latestItems.fold<int>(
+          0,
+          (sum, item) => sum + item.totalPrice,
+        );
+      });
+
+      unawaited(_loadMemberCustomer());
+    } catch (_) {
+      // Realtime là tăng cường. Nếu request tải lại tạm lỗi, giữ dữ liệu hiện tại;
+      // event tiếp theo hoặc thao tác refresh sẽ tự đồng bộ lại.
+    }
   }
 
   Future<void> _loadPaymentRequestLock() async {
@@ -387,6 +476,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: oldItem.unitPrice,
           status: event.status,
           note: oldItem.note,
+          createdAt: oldItem.createdAt,
           isTakeaway: oldItem.isTakeaway,
         );
       }
@@ -826,6 +916,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
           unitPrice: current.unitPrice,
           status: status,
           note: current.note,
+          createdAt: current.createdAt,
           isTakeaway: current.isTakeaway,
         );
       });
@@ -874,6 +965,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
             unitPrice: item.unitPrice,
             status: 'Đã phục vụ',
             note: item.note,
+            createdAt: item.createdAt,
             isTakeaway: item.isTakeaway,
           );
         }).toList();
@@ -941,6 +1033,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
         unitPrice: current.unitPrice,
         status: current.status,
         note: current.note,
+        createdAt: current.createdAt,
         isTakeaway:
             current.isTakeaway,
       );
@@ -1165,6 +1258,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
                 preview.transferContent,
             qrImageUrl:
                 preview.qrImageUrl,
+            qrPayload:
+                preview.qrPayload,
           ),
         ),
       );
@@ -1197,8 +1292,34 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
 
     try {
-      final PaymentPreview preview = await AppServices.paymentService
-          .getPreview(tableId: currentTable.id);
+      final PaymentPreview initialPreview =
+          await AppServices.paymentService.getPreview(
+        tableId: currentTable.id,
+        customerId: _memberCustomer?.id,
+      );
+
+      if (!mounted || _closingAfterPayment) return;
+
+      int redeemPoints = 0;
+      if (initialPreview.maxRedeemablePoints > 0) {
+        final int? selectedPoints =
+            await _selectRedeemPoints(initialPreview);
+
+        if (!mounted || selectedPoints == null || _closingAfterPayment) {
+          return;
+        }
+
+        redeemPoints = selectedPoints;
+      }
+
+      final PaymentPreview preview =
+          redeemPoints > 0
+              ? await AppServices.paymentService.getPreview(
+                  tableId: currentTable.id,
+                  customerId: initialPreview.customerId,
+                  redeemPoints: redeemPoints,
+                )
+              : initialPreview;
 
       if (!mounted || _closingAfterPayment) return;
 
@@ -1224,6 +1345,8 @@ class _TableDetailV2State extends State<TableDetailV2> {
         tableId: currentTable.id,
         employeeCode: appEmployee.employeeCode,
         paymentMethod: payment.method,
+        customerId: preview.customerId,
+        redeemPoints: redeemPoints,
         transactionRef: payment.transactionRef,
       );
 
@@ -1239,6 +1362,141 @@ class _TableDetailV2State extends State<TableDetailV2> {
     }
   }
 
+  Future<int?> _selectRedeemPoints(
+    PaymentPreview preview,
+  ) async {
+    if (preview.maxRedeemablePoints <= 0) return 0;
+
+    final TextEditingController controller =
+        TextEditingController(text: '0');
+    int selectedPoints = 0;
+
+    try {
+      return await showDialog<int>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            void updatePoints(String value) {
+              final String digits =
+                  value.replaceAll(RegExp(r'[^0-9]'), '');
+              int next = int.tryParse(digits) ?? 0;
+
+              if (next > preview.maxRedeemablePoints) {
+                next = preview.maxRedeemablePoints;
+                controller.value = TextEditingValue(
+                  text: next.toString(),
+                  selection: TextSelection.collapsed(
+                    offset: next.toString().length,
+                  ),
+                );
+              }
+
+              selectedPoints = next;
+              setDialogState(() {});
+            }
+
+            final int discount =
+                selectedPoints * preview.loyaltyPointValue;
+            final int estimatedTotal =
+                (preview.totalAmount - discount)
+                    .clamp(0, 1 << 31)
+                    .toInt();
+
+            return AlertDialog(
+              title: const Text('Dùng điểm thành viên'),
+              content: SizedBox(
+                width: 360,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      preview.customerName?.trim().isNotEmpty == true
+                          ? preview.customerName!
+                          : 'Khách hàng thành viên',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Hiện có ${preview.loyaltyPointBalance} điểm · '
+                      '1 điểm = ${_formatMoney(preview.loyaltyPointValue)}',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Hóa đơn này dùng tối đa '
+                      '${preview.maxRedeemablePoints} điểm.',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: controller,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Số điểm muốn dùng',
+                        border: OutlineInputBorder(),
+                        suffixText: 'điểm',
+                      ),
+                      onChanged: updatePoints,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () {
+                          controller.text =
+                              preview.maxRedeemablePoints.toString();
+                          updatePoints(controller.text);
+                        },
+                        child: const Text('Dùng tối đa'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Giảm: ${_formatMoney(discount)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.green,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Tạm tính còn: ${_formatMoney(estimatedTotal)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Hủy thanh toán'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, 0),
+                  child: const Text('Không dùng điểm'),
+                ),
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, selectedPoints),
+                  child: const Text('Áp dụng'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
   Future<void> _setTablePriority() async {
     if (!_canOrder) {
       _showRoleDenied('ưu tiên bàn');
@@ -1658,20 +1916,63 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ),
           ),
           actions: [
+            if (_canCompletePayment && orderItems.isNotEmpty)
+              IconButton(
+                tooltip: 'Xem / in bill',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('receipt'),
+                icon: const Icon(Icons.print_outlined),
+              ),
+            if (_canOrder && _isTableActive)
+              IconButton(
+                tooltip: 'Khách hàng / Thành viên',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('member'),
+                icon: Icon(
+                  _memberCustomer == null
+                      ? Icons.person_add_alt_1_outlined
+                      : Icons.person_outline,
+                  color: _memberCustomer == null ? null : Colors.green,
+                ),
+              ),
+            if (_canManageTables && _isTableActive)
+              IconButton(
+                tooltip: currentTable.isTakeaway
+                    ? 'Xóa món và hủy đơn'
+                    : 'Xóa món và trả bàn',
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                constraints: const BoxConstraints(
+                  minWidth: 38,
+                  minHeight: 40,
+                ),
+                onPressed: _closingAfterPayment
+                    ? null
+                    : () => _handleTopMenuAction('clear'),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.redAccent,
+                ),
+              ),
             PopupMenuButton<String>(
-              tooltip: 'Thao tác',
+              tooltip: 'Thao tác khác',
               enabled: !_closingAfterPayment,
               onSelected: _handleTopMenuAction,
               itemBuilder: (context) => [
-                if (_canCompletePayment && orderItems.isNotEmpty)
-                  const PopupMenuItem(
-                    value: 'receipt',
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(Icons.print_outlined),
-                      title: Text('Xem / in bill'),
-                    ),
-                  ),
                 if (_canOrder && orderItems.isNotEmpty)
                   const PopupMenuItem(
                     value: 'kitchen',
@@ -1679,20 +1980,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       dense: true,
                       leading: Icon(Icons.restaurant_outlined),
                       title: Text('Yêu cầu xuống bếp'),
-                    ),
-                  ),
-                if (_canOrder && _isTableActive)
-                  PopupMenuItem(
-                    value: 'member',
-                    child: ListTile(
-                      dense: true,
-                      leading: Icon(
-                        _memberCustomer == null
-                            ? Icons.person_add_alt_1_outlined
-                            : Icons.person_outline,
-                        color: _memberCustomer == null ? null : Colors.green,
-                      ),
-                      title: const Text('Khách hàng / Thành viên'),
                     ),
                   ),
                 if (_canManageTables && !currentTable.isTakeaway)
@@ -1738,25 +2025,6 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       dense: true,
                       leading: Icon(Icons.call_split),
                       title: Text('Tách bàn'),
-                    ),
-                  ),
-                ],
-                if (_canManageTables && _isTableActive) ...[
-                  const PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'clear',
-                    child: ListTile(
-                      dense: true,
-                      leading: const Icon(
-                        Icons.delete_outline,
-                        color: Colors.redAccent,
-                      ),
-                      title: Text(
-                        currentTable.isTakeaway
-                            ? 'Xóa món và hủy đơn'
-                            : 'Xóa món và trả bàn',
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
                     ),
                   ),
                 ],
@@ -1871,6 +2139,69 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ],
           ),
           if (!currentTable.isTakeaway) ...[
+            if ((currentTable.customerName ?? '').trim().isNotEmpty ||
+                (currentTable.customerPhone ?? '').trim().isNotEmpty) ...[
+              const Divider(height: 28),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.person_outline,
+                    size: 20,
+                    color: AppTheme.orangeColor,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          currentTable.isReservationSession
+                              ? 'Khách đặt bàn'
+                              : 'Khách hàng',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          (currentTable.customerName ?? '').trim().isNotEmpty
+                              ? currentTable.customerName!.trim()
+                              : 'Khách',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if ((currentTable.customerPhone ?? '')
+                            .trim()
+                            .isNotEmpty)
+                          Text(
+                            currentTable.customerPhone!.trim(),
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        if (_memberCustomer != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              '${_memberCustomer!.memberLevel} · '
+                              '${_memberCustomer!.loyaltyPoint} điểm',
+                              style: const TextStyle(
+                                color: Color(0xFF2E9B65),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const Divider(height: 28),
             InkWell(
               onTap: _savingGuestCount ? null : _editGuestCount,
@@ -2069,6 +2400,31 @@ class _TableDetailV2State extends State<TableDetailV2> {
                       fontSize: 13,
                     ),
                   ),
+                  if (item.createdAt != null) ...[
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_outlined,
+                          size: 13,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            formatClockTime(item.createdAt),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (item.note != null &&
                       item.note!
                           .trim()

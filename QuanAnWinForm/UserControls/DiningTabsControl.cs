@@ -5,8 +5,20 @@ namespace QuanAnWinForm.UserControls;
 // Khung 2 tab: "Ăn tại chỗ" (Sơ đồ bàn - TableManagementControl)
 //              "Mang về"    (Danh sách đơn mang về - TakeawayOrdersControl)
 // Control dựng hoàn toàn bằng code (không có Designer).
-public partial class DiningTabsControl : UserControl
+public partial class DiningTabsControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync()
+    {
+        var child = _content.Controls
+            .OfType<UserControl>()
+            .FirstOrDefault();
+
+        return child is IRefreshableContent refreshable
+            ? refreshable.RefreshDataAsync()
+            : Task.CompletedTask;
+    }
+
+
     private readonly int _userId;
     private readonly Panel _tabBar = new();
     private readonly Panel _content = new();

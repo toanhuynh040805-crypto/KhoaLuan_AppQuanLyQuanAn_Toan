@@ -19,6 +19,7 @@ public sealed class TableEditLockService
         string employeeCode,
         string employeeName,
         string clientToken,
+        bool forceTakeover,
         out TableEditLockSnapshot lease,
         out TableEditLockSnapshot? conflictingLease)
     {
@@ -26,14 +27,42 @@ public sealed class TableEditLockService
         {
             CleanupExpiredUnsafe();
 
-            // Phiên vào sau luôn được quyền tiếp quản bàn ngay lập tức.
-            // Giữ lại lease cũ để controller phát realtime cho thiết bị/tài
-            // khoản đang giữ bàn biết rằng phiên của họ đã bị thay thế.
-            conflictingLease =
-                _locks.TryGetValue(tableId, out var current) &&
-                !string.Equals(current.ClientToken, clientToken, StringComparison.Ordinal)
-                    ? current
-                    : null;
+            if (_locks.TryGetValue(tableId, out var current))
+            {
+                // Cùng một client gọi acquire lại thì chỉ gia hạn lease, không
+                // coi là xung đột và cũng không phát sự kiện takeover.
+                if (string.Equals(
+                        current.ClientToken,
+                        clientToken,
+                        StringComparison.Ordinal))
+                {
+                    lease = current with
+                    {
+                        EmployeeCode = employeeCode,
+                        EmployeeName = employeeName,
+                        ExpiresAtUtc = DateTimeOffset.UtcNow.Add(LeaseDuration)
+                    };
+                    _locks[tableId] = lease;
+                    conflictingLease = null;
+                    return true;
+                }
+
+                // Có người khác đang giữ bàn: lần gọi đầu chỉ trả conflict để
+                // client hiển thị xác nhận. Chỉ khi người dùng đồng ý và gọi
+                // lại với forceTakeover=true mới thay lease cũ.
+                if (!forceTakeover)
+                {
+                    lease = current;
+                    conflictingLease = current;
+                    return false;
+                }
+
+                conflictingLease = current;
+            }
+            else
+            {
+                conflictingLease = null;
+            }
 
             lease = new TableEditLockSnapshot(
                 tableId,

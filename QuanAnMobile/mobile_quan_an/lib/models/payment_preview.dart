@@ -13,7 +13,17 @@ class PaymentPreview {
   final int vipMinimumGap;
   final int totalAmount;
 
+  final int? customerId;
+  final String? customerName;
+  final int loyaltyPointBalance;
+  final int maxRedeemablePoints;
+  final int redeemedPoints;
+  final int loyaltyPointValue;
+  final int loyaltyDiscount;
+  final int estimatedEarnedPoints;
+
   final String qrImageUrl;
+  final String qrPayload;
   final String bankName;
   final String bankAccountNo;
   final String bankAccountName;
@@ -36,7 +46,16 @@ class PaymentPreview {
     required this.vipRoomFee,
     required this.vipMinimumGap,
     required this.totalAmount,
+    this.customerId,
+    this.customerName,
+    this.loyaltyPointBalance = 0,
+    this.maxRedeemablePoints = 0,
+    this.redeemedPoints = 0,
+    this.loyaltyPointValue = 1000,
+    this.loyaltyDiscount = 0,
+    this.estimatedEarnedPoints = 0,
     required this.qrImageUrl,
+    required this.qrPayload,
     required this.bankName,
     required this.bankAccountNo,
     required this.bankAccountName,
@@ -75,8 +94,22 @@ class PaymentPreview {
       vipMinimumGap:
           _parseInt(json['vipMinimumGap']),
       totalAmount: _parseInt(json['totalAmount']),
+      customerId: json['customerId'] == null
+          ? null
+          : _parseInt(json['customerId']),
+      customerName: json['customerName']?.toString(),
+      loyaltyPointBalance: _parseInt(json['loyaltyPointBalance']),
+      maxRedeemablePoints: _parseInt(json['maxRedeemablePoints']),
+      redeemedPoints: _parseInt(json['redeemedPoints']),
+      loyaltyPointValue: _parseInt(json['loyaltyPointValue']),
+      loyaltyDiscount: _parseInt(json['loyaltyDiscount']),
+      estimatedEarnedPoints: _parseInt(json['estimatedEarnedPoints']),
       qrImageUrl:
           json['qrImageUrl']?.toString() ?? '',
+      qrPayload:
+          json['qrPayload']?.toString() ??
+          json['qrCodeContent']?.toString() ??
+          '',
       bankName:
           json['bankName']?.toString() ?? '',
       bankAccountNo:

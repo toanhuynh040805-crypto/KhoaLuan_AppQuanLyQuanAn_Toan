@@ -2,8 +2,10 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Hubs;
 
 namespace QuanAnBackend.Controllers;
 
@@ -15,10 +17,14 @@ public record MobilePriorityRequest(bool Active, string? EmployeeCode);
 public class MobileOperationsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IHubContext<OrderHub> _hub;
 
-    public MobileOperationsController(AppDbContext db)
+    public MobileOperationsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub)
     {
         _db = db;
+        _hub = hub;
     }
 
     [HttpGet("recent-notes")]
@@ -247,6 +253,19 @@ public class MobileOperationsController : ControllerBase
                 return NotFound(new { message = "Không tìm thấy món trong đơn đang mở" });
 
             var userId = await ResolveUserIdAsync(connection, request.EmployeeCode);
+
+            // Hai chế độ ưu tiên là loại trừ nhau để tránh trường hợp nhân viên
+            // chọn "Ưu tiên món" nhưng cờ "Ưu tiên bàn" cũ vẫn làm mọi phiếu
+            // của bàn bị đẩy lên trước.
+            if (request.Active)
+            {
+                await ClearTablePriorityAsync(
+                    connection,
+                    tableId.Value,
+                    userId
+                );
+            }
+
             await UpsertPriorityAsync(
                 connection,
                 scope: "Item",
@@ -255,6 +274,16 @@ public class MobileOperationsController : ControllerBase
                 active: request.Active,
                 userId: userId
             );
+
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Item",
+                    orderItemId,
+                    tableId,
+                    active = request.Active
+                });
 
             return Ok(new { orderItemId, tableId, active = request.Active });
         }
@@ -291,6 +320,18 @@ public class MobileOperationsController : ControllerBase
             }
 
             var userId = await ResolveUserIdAsync(connection, request.EmployeeCode);
+
+            // Bật ưu tiên bàn thì bỏ các cờ ưu tiên món riêng của chính bàn đó,
+            // để giao diện và thứ tự Bếp chỉ còn một chế độ rõ ràng.
+            if (request.Active)
+            {
+                await ClearItemPrioritiesForTableAsync(
+                    connection,
+                    tableId,
+                    userId
+                );
+            }
+
             await UpsertPriorityAsync(
                 connection,
                 scope: "Table",
@@ -299,6 +340,16 @@ public class MobileOperationsController : ControllerBase
                 active: request.Active,
                 userId: userId
             );
+
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Table",
+                    tableId,
+                    orderItemId = (int?)null,
+                    active = request.Active
+                });
 
             return Ok(new { tableId, active = request.Active });
         }
@@ -348,6 +399,51 @@ public class MobileOperationsController : ControllerBase
         AddParameter(command, "@EmployeeCode", employeeCode.Trim());
         var value = await command.ExecuteScalarAsync();
         return value is null || value == DBNull.Value ? null : Convert.ToInt32(value);
+    }
+
+    private static async Task ClearTablePriorityAsync(
+        DbConnection connection,
+        int tableId,
+        int? userId)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE MobileKitchenPriorities
+            SET IsActive = 0,
+                RequestedByUserId = @RequestedByUserId,
+                UpdatedAt = GETDATE()
+            WHERE PriorityScope = N'Table'
+              AND TableId = @TableId
+              AND IsActive = 1;
+            """;
+        AddParameter(command, "@TableId", tableId);
+        AddParameter(command, "@RequestedByUserId", userId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ClearItemPrioritiesForTableAsync(
+        DbConnection connection,
+        int tableId,
+        int? userId)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE p
+            SET IsActive = 0,
+                RequestedByUserId = @RequestedByUserId,
+                UpdatedAt = GETDATE()
+            FROM MobileKitchenPriorities p
+            INNER JOIN OrderItems oi
+                ON oi.OrderItemId = p.OrderItemId
+            INNER JOIN Orders o
+                ON o.OrderId = oi.OrderId
+            WHERE p.PriorityScope = N'Item'
+              AND p.IsActive = 1
+              AND o.TableId = @TableId;
+            """;
+        AddParameter(command, "@TableId", tableId);
+        AddParameter(command, "@RequestedByUserId", userId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task UpsertPriorityAsync(

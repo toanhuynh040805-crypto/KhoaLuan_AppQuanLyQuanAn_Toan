@@ -8,8 +8,11 @@ namespace QuanAnWinForm.UserControls;
 // ThuNgan (xem SidebarControl). Gom: danh sach/tim kiem, Them/Sua/Xoa, va
 // dialog chi tiet xem lich su tich/doi diem + don hang gan day + cong/tru diem
 // thu cong (vd tang diem sinh nhat).
-public partial class CustomerManagementControl : UserControl
+public partial class CustomerManagementControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadCustomersAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<CustomerDto> _customers = new();

@@ -2,6 +2,41 @@ import '../models/attendance_state.dart';
 import 'api_client.dart';
 import 'location_service.dart';
 
+class AttendanceLocationValidationDto {
+  final bool isInside;
+  final bool isMocked;
+  final double? distanceMeters;
+  final double? radiusMeters;
+  final double? accuracyMeters;
+  final String message;
+
+  const AttendanceLocationValidationDto({
+    required this.isInside,
+    required this.isMocked,
+    this.distanceMeters,
+    this.radiusMeters,
+    this.accuracyMeters,
+    required this.message,
+  });
+
+  factory AttendanceLocationValidationDto.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    double? number(dynamic value) =>
+        value is num ? value.toDouble() : double.tryParse('$value');
+
+    return AttendanceLocationValidationDto(
+      isInside: json['isInside'] == true,
+      isMocked: json['isMocked'] == true,
+      distanceMeters: number(json['distanceMeters']),
+      radiusMeters: number(json['radiusMeters']),
+      accuracyMeters: number(json['accuracyMeters']),
+      message: json['message']?.toString() ?? '',
+    );
+  }
+}
+
+
 class AttendanceLocationSettingsDto {
   final bool isConfigured;
   final double? latitude;
@@ -114,6 +149,32 @@ class AttendanceService {
     );
   }
 
+  Future<AttendanceLocationValidationDto> checkLocation({
+    required String employeeCode,
+    required LocationCheckResult location,
+  }) async {
+    final dynamic response = await _apiClient.post(
+      '/attendance/check-location',
+      body: {
+        'employeeCode': employeeCode,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'accuracyMeters': location.accuracyMeters,
+        'isMocked': location.isMocked,
+      },
+    );
+
+    if (response is! Map) {
+      throw const ApiException(
+        message: 'Không thể kiểm tra vị trí điểm danh.',
+      );
+    }
+
+    return AttendanceLocationValidationDto.fromJson(
+      Map<String, dynamic>.from(response),
+    );
+  }
+
   Future<void> loadToday({
     required String employeeCode,
     required AttendanceState state,
@@ -147,6 +208,7 @@ class AttendanceService {
         'latitude': location.latitude,
         'longitude': location.longitude,
         'accuracyMeters': location.accuracyMeters,
+        'isMocked': location.isMocked,
       },
     );
 
@@ -168,6 +230,7 @@ class AttendanceService {
         'latitude': location.latitude,
         'longitude': location.longitude,
         'accuracyMeters': location.accuracyMeters,
+        'isMocked': location.isMocked,
       },
     );
 

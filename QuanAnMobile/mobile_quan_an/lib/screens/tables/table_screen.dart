@@ -16,6 +16,7 @@ import '../../services/notification_service.dart';
 import '../../services/realtime_service.dart';
 import '../../services/table_service.dart';
 import '../../services/table_lock_service.dart';
+import '../../utils/order_time_format.dart';
 import '../../widgets/top_message.dart';
 import '../menu/menu_screen.dart';
 import '../notifications/notification_screen.dart';
@@ -44,6 +45,9 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   StreamSubscription<DishStatusRealtimeEvent>? _dishStatusSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
   StreamSubscription<TableStatusRealtimeEvent>? _tableStatusSubscription;
+  StreamSubscription<void>? _reservationSubscription;
+  StreamSubscription<void>? _orderSubscription;
+  Timer? _relativeTimeTimer;
 
   bool _isLoading = true;
   String? _loadError;
@@ -228,6 +232,12 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadData();
     _startRealtime();
+    _relativeTimeTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
   @override
@@ -244,6 +254,9 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     _dishStatusSubscription?.cancel();
     _paymentSubscription?.cancel();
     _tableStatusSubscription?.cancel();
+    _reservationSubscription?.cancel();
+    _orderSubscription?.cancel();
+    _relativeTimeTimer?.cancel();
     _realtimeService.stop();
     super.dispose();
   }
@@ -286,6 +299,14 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     });
 
     _tableStatusSubscription = _realtimeService.tableStatusChanges.listen(
+      (_) => _requestRealtimeRefresh(),
+    );
+
+    _reservationSubscription = _realtimeService.reservationChanges.listen(
+      (_) => _requestRealtimeRefresh(),
+    );
+
+    _orderSubscription = _realtimeService.orderChanges.listen(
       (_) => _requestRealtimeRefresh(),
     );
 
@@ -387,8 +408,15 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     try {
       final List<RestaurantTable> loadedTables = await _tableService
           .getTables();
-      final Map<int, List<OrderItem>> loadedOrders = await _tableService
-          .getInitialOrders();
+
+      // Chi tiết món đang mở là dữ liệu bổ sung. Trước đây request này lỗi
+      // sẽ làm mất luôn toàn bộ sơ đồ bàn dù API bàn vẫn hoạt động.
+      Map<int, List<OrderItem>> loadedOrders = <int, List<OrderItem>>{};
+      try {
+        loadedOrders = await _tableService.getInitialOrders();
+      } catch (_) {
+        loadedOrders = <int, List<OrderItem>>{};
+      }
 
       final List<RestaurantTable> normalizedTables = loadedTables.map((table) {
         final List<OrderItem> items =
@@ -475,9 +503,22 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     return '${buffer.toString()}đ';
   }
 
+  String _reservationDateTimeLabel(DateTime? value) {
+    if (value == null) return '';
+
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)} • '
+        '${two(value.hour)}:${two(value.minute)}';
+  }
+
   String _statusText(RestaurantTable table) {
     if (paymentRequestedTableIds.contains(table.id)) {
       return 'Chờ thanh toán';
+    }
+
+    if (table.status != TableStatus.occupied &&
+        table.hasUpcomingReservation) {
+      return 'Đã đặt';
     }
 
     switch (table.status) {
@@ -493,6 +534,11 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   Color _statusColor(RestaurantTable table) {
     if (paymentRequestedTableIds.contains(table.id)) {
       return Colors.redAccent;
+    }
+
+    if (table.status != TableStatus.occupied &&
+        table.hasUpcomingReservation) {
+      return const Color(0xFF2F80ED);
     }
 
     switch (table.status) {
@@ -513,19 +559,103 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     RestaurantTable current = table;
     TableLockLease? acquiredLock;
 
-    if (table.status == TableStatus.empty) {
+    final bool hasWaitingReservation = table.hasUpcomingReservation;
+    final bool canReceiveNewSession =
+        table.status != TableStatus.occupied;
+
+    if (canReceiveNewSession && hasWaitingReservation) {
       if (!_canManageTables) {
         _showRoleDenied('nhận bàn');
         return;
       }
 
-      // Bàn trống chỉ được khóa để tránh hai nhân viên cùng thao tác.
-      // Chạm vào bàn chỉ là xem chi tiết: KHÔNG đổi trạng thái trong DB.
-      // Bàn chỉ chuyển sang Đang phục vụ khi nhập số khách, gọi món hoặc
-      // người dùng bấm Mở bàn trong màn chi tiết.
+      final String reservationWhen =
+          _reservationDateTimeLabel(table.nextReservationTime);
+      final String customer =
+          (table.nextReservationCustomerName ?? table.customerName ?? 'Khách')
+              .trim();
+      final String guestText = table.nextReservationGuestCount == null
+          ? ''
+          : '\nSố khách: ${table.nextReservationGuestCount}';
+
+      final String? receiveMode = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('${table.name} có lịch đặt'),
+          content: Text(
+            'Lịch đặt tiếp theo: $reservationWhen\n'
+            'Khách: $customer$guestText\n\n'
+            'Chọn cách nhận bàn:',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Đóng'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, 'walkin'),
+              icon: const Icon(Icons.person_outline),
+              label: const Text('Nhận bàn thường'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, 'reservation'),
+              icon: const Icon(Icons.event_available_outlined),
+              label: const Text('Nhận bàn đặt'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || receiveMode == null) return;
+
+      acquiredLock = await _tryAcquireTableLock(table);
+      if (acquiredLock == null) return;
+
+      try {
+        await _tableService.receiveTable(
+          tableId: table.id,
+          customerCount: 0,
+          mode: receiveMode,
+          reservationId: receiveMode == 'reservation'
+              ? table.nextReservationId
+              : null,
+        );
+      } on ApiException catch (error) {
+        await _releaseTableLock(acquiredLock);
+        if (!mounted) return;
+        TopMessage.show(
+          context,
+          message: error.message,
+          type: TopMessageType.error,
+        );
+        return;
+      }
+
+      final bool receivedReservation = receiveMode == 'reservation';
+      current = table.copyWith(
+        status: TableStatus.occupied,
+        amount: 0,
+        currentSessionType:
+            receivedReservation ? 'Reservation' : 'WalkIn',
+        clearTime: true,
+        clearNextReservationId: receivedReservation,
+        clearNextReservationTime: receivedReservation,
+        clearNextReservationCustomerName: receivedReservation,
+        clearNextReservationGuestCount: receivedReservation,
+      );
+      _replaceTable(current);
+    } else if (table.status == TableStatus.empty) {
+      if (!_canManageTables) {
+        _showRoleDenied('nhận bàn');
+        return;
+      }
+
+      // Bàn trống không có reservation: chỉ khóa phiên để xem chi tiết.
+      // Trạng thái DB chỉ đổi sang Đang phục vụ khi nhân viên thực sự mở bàn.
       acquiredLock = await _tryAcquireTableLock(table);
       if (acquiredLock == null) return;
     } else if (table.status == TableStatus.reserved) {
+      // Tương thích dữ liệu cũ chưa trả nextReservationId/time.
       if (!_canManageTables) {
         _showRoleDenied('nhận bàn');
         return;
@@ -557,7 +687,11 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       if (acquiredLock == null) return;
 
       try {
-        await _tableService.receiveTable(tableId: table.id, customerCount: 0);
+        await _tableService.receiveTable(
+          tableId: table.id,
+          customerCount: 0,
+          mode: 'reservation',
+        );
       } on ApiException catch (error) {
         await _releaseTableLock(acquiredLock);
         if (!mounted) return;
@@ -572,6 +706,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       current = table.copyWith(
         status: TableStatus.occupied,
         amount: 0,
+        currentSessionType: 'Reservation',
         clearTime: true,
       );
       _replaceTable(current);
@@ -603,12 +738,55 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       );
     } on ApiException catch (error) {
       if (!mounted) return null;
+
+      if (error.statusCode == 409) {
+        final bool? confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Bàn đang được sử dụng'),
+            content: Text(
+              '${error.message}\n\n'
+              'Nếu bạn đồng ý tiếp tục, người đang giữ bàn sẽ bị đẩy ra '
+              'và bạn sẽ nhận quyền thao tác bàn này.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Hủy'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Đồng ý'),
+              ),
+            ],
+          ),
+        );
+
+        if (!mounted || confirmed != true) return null;
+
+        try {
+          return await AppServices.tableLockService.acquire(
+            tableId: table.id,
+            employeeCode: appEmployee.employeeCode,
+            forceTakeover: true,
+          );
+        } on ApiException catch (takeoverError) {
+          if (!mounted) return null;
+          TopMessage.show(
+            context,
+            message: takeoverError.message,
+            type: TopMessageType.error,
+            duration: const Duration(milliseconds: 3000),
+          );
+          return null;
+        }
+      }
+
       TopMessage.show(
         context,
         message: error.message,
-        type: error.statusCode == 409
-            ? TopMessageType.warning
-            : TopMessageType.error,
+        type: TopMessageType.error,
         duration: const Duration(milliseconds: 2600),
       );
       return null;
@@ -1914,6 +2092,30 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     return _buildAreaView();
   }
 
+  DateTime? _firstOrderTime(List<OrderItem> items) {
+    DateTime? result;
+    for (final OrderItem item in items) {
+      final DateTime? value = item.createdAt;
+      if (value == null) continue;
+      if (result == null || value.isBefore(result)) {
+        result = value;
+      }
+    }
+    return result;
+  }
+
+  DateTime? _latestOrderTime(List<OrderItem> items) {
+    DateTime? result;
+    for (final OrderItem item in items) {
+      final DateTime? value = item.createdAt;
+      if (value == null) continue;
+      if (result == null || value.isAfter(result)) {
+        result = value;
+      }
+    }
+    return result;
+  }
+
   Widget _buildInvoiceView() {
     final List<RestaurantTable> items = _activeInvoiceTables;
 
@@ -1932,11 +2134,17 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(14),
         itemCount: items.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
-          childAspectRatio: 1.08,
+          // Safari/iPhone Web có chiều cao dòng và cách làm tròn pixel
+          // khác Android. Cho card hóa đơn cao hơn trên màn hình hẹp
+          // để các dòng thời gian / số khách / chờ thanh toán không overflow.
+          childAspectRatio:
+              MediaQuery.sizeOf(context).width <= 430
+                  ? 0.88
+                  : 1.02,
         ),
         itemBuilder: (context, index) => _buildInvoiceCard(items[index]),
       ),
@@ -1946,6 +2154,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
   Widget _buildInvoiceCard(RestaurantTable table) {
     final List<OrderItem> items = tableOrders[table.id] ?? const <OrderItem>[];
     final int quantity = items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final DateTime? firstOrderAt = _firstOrderTime(items);
     final bool waiting = paymentRequestedTableIds.contains(table.id);
 
     return InkWell(
@@ -2024,6 +2233,17 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
             ),
+            if (firstOrderAt != null)
+              Text(
+                formatElapsedCompact(firstOrderAt),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             if (!table.isTakeaway && table.guestCount != null)
               Text(
                 '${table.guestCount} khách',
@@ -2079,8 +2299,8 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
           // Cho card cao hơn một chút ở màn hình hẹp để không overflow.
           childAspectRatio:
               MediaQuery.sizeOf(context).width <= 430
-                  ? 0.94
-                  : 1.02,
+                  ? 0.82
+                  : 0.92,
         ),
         itemBuilder: (context, index) => _buildTableCard(items[index]),
       ),
@@ -2091,6 +2311,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     final Color color = _statusColor(table);
     final List<OrderItem> items = tableOrders[table.id] ?? const <OrderItem>[];
     final int quantity = items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final DateTime? latestOrderAt = _latestOrderTime(items);
 
     Color cardBackground = Colors.white;
     Color cardBorder = Colors.grey.shade200;
@@ -2104,7 +2325,9 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       cardBackground = const Color(0xFFFFF4E8);
       cardBorder = const Color(0xFFFFB77A);
       borderWidth = 1.4;
-    } else if (table.status == TableStatus.reserved) {
+    } else if (table.status == TableStatus.reserved ||
+        (table.status != TableStatus.occupied &&
+            table.hasUpcomingReservation)) {
       cardBackground = const Color(0xFFEFF6FF);
       cardBorder = const Color(0xFF93C5FD);
       borderWidth = 1.3;
@@ -2195,6 +2418,44 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
+                if (table.status == TableStatus.occupied)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: table.isReservationSession
+                          ? const Color(0xFFEFF6FF)
+                          : const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          table.isReservationSession
+                              ? Icons.event_available_outlined
+                              : Icons.person_outline,
+                          size: 12,
+                          color: table.isReservationSession
+                              ? const Color(0xFF2563EB)
+                              : const Color(0xFF4B5563),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          table.isReservationSession ? 'ĐẶT' : 'THƯỜNG',
+                          style: TextStyle(
+                            color: table.isReservationSession
+                                ? const Color(0xFF2563EB)
+                                : const Color(0xFF4B5563),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 6),
@@ -2211,6 +2472,17 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                   '$quantity món',
                   style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
                 ),
+              if (latestOrderAt != null)
+                Text(
+                  formatElapsedCompact(latestOrderAt),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               Text(
                 _formatMoney(table.amount ?? 0),
                 style: TextStyle(
@@ -2219,19 +2491,85 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                   fontSize: 14,
                 ),
               ),
-            ] else if (table.status == TableStatus.reserved) ...[
+              if (table.hasUpcomingReservation) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.event_outlined,
+                        size: 13,
+                        color: Color(0xFF2563EB),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _reservationDateTimeLabel(
+                            table.nextReservationTime,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ] else if (table.status == TableStatus.reserved ||
+                table.hasUpcomingReservation) ...[
               Text(
-                table.customerName ?? 'Khách đặt bàn',
+                table.nextReservationCustomerName ??
+                    table.customerName ??
+                    'Khách đặt bàn',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
               ),
-              if (table.guestCount != null)
+              if (table.nextReservationGuestCount != null)
+                Text(
+                  '${table.nextReservationGuestCount} khách',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                )
+              else if (table.guestCount != null)
                 Text(
                   '${table.guestCount} khách',
                   style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                 ),
-              if (table.time != null)
+              if (table.nextReservationTime != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.event_outlined,
+                        size: 13,
+                        color: Color(0xFF2563EB),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _reservationDateTimeLabel(
+                            table.nextReservationTime,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else if (table.time != null)
                 Text(
                   table.time!,
                   style: const TextStyle(

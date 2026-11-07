@@ -2,14 +2,13 @@ namespace QuanAnBackend.Models;
 
 // Khớp bảng DiscountCampaigns trong QuanAnManagementDB_Final.sql.
 //
-// LƯU Ý PHẠM VI: DB gốc cho phép 1 chiến dịch yêu cầu "khách quen" (RequireMembership
-// = true, kèm MinVisitCount/VisitLookbackDays) - để kiểm tra đúng điều kiện này cần
-// có module Khách hàng thành viên (theo dõi lịch sử ghé quán theo SĐT/tài khoản),
-// MODULE ĐÓ CHƯA ĐƯỢC LÀM ở backend hiện tại. Vì vậy backend này chỉ tạo VÀ áp dụng
-// được các chiến dịch RequireMembership = false (áp dụng chung cho mọi khách) - xem
-// DiscountCampaignsController. Cột RequireMembership/MinVisitCount/VisitLookbackDays
-// vẫn được giữ nguyên trong model để khớp đúng schema DB, chỉ là luôn ghi false/null
-// từ phía backend này.
+// Điều kiện áp dụng được lưu ở bảng DiscountCampaignConditions (xem
+// DiscountCampaignCondition.cs): 1 chiến dịch có 0..N điều kiện, hóa đơn phải thỏa
+// TẤT CẢ. Mỗi hóa đơn chỉ áp dụng tối đa 1 chiến dịch.
+//
+// Ba cột RequireMembership / MinVisitCount / VisitLookbackDays là cột CŨ của schema
+// gốc, được giữ lại để tương thích DB. Từ nay backend luôn ghi false/null cho 3 cột
+// này (điều kiện khách quen được lưu thành 1 dòng VisitCount trong bảng điều kiện).
 public class DiscountCampaign
 {
     public int CampaignId { get; set; }
@@ -18,6 +17,7 @@ public class DiscountCampaign
     public DateTime EndDate { get; set; }
     public decimal DiscountPercent { get; set; } // 10.00 nghia la 10%
 
+    // Cột cũ - luôn false/null, xem ghi chú đầu file.
     public bool RequireMembership { get; set; } = false;
     public int? MinVisitCount { get; set; }
     public int? VisitLookbackDays { get; set; }
@@ -28,4 +28,7 @@ public class DiscountCampaign
     public int? CreatedBy { get; set; }
     public User? CreatedByUser { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
+
+    public ICollection<DiscountCampaignCondition> Conditions { get; set; }
+        = new List<DiscountCampaignCondition>();
 }

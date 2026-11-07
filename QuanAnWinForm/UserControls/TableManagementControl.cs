@@ -1,17 +1,37 @@
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
+using QuanAnWinForm.Utils;
 
 namespace QuanAnWinForm.UserControls;
 
-public partial class TableManagementControl : UserControl
+public partial class TableManagementControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => RefreshRealtimeAsync(reloadTables: true, reloadItems: true);
+
+
     private readonly ApiService _api = new();
     private readonly int _userId;
     private List<TableDto> _tables = new();
     private List<AreaDto> _areas = new();
     private TableDto? _selectedTable;
     private HashSet<int> _paymentRequestedTableIds = new();
+
+    private bool CanConfirmReservations
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
+
+            return role is "quanly"
+                or "quảnlý"
+                or "admin";
+        }
+    }
 
     private bool CanCompletePayment
     {
@@ -30,7 +50,32 @@ public partial class TableManagementControl : UserControl
                 or "thungân";
         }
     }
+    // Chỉ Quản lý được xác nhận "Đã phục vụ" thay nhân viên (backend cũng chặn các role khác).
+    private bool CanMarkServed
+    {
+        get
+        {
+            var role = (SessionContext.RoleName ?? "")
+                .Trim()
+                .ToLowerInvariant()
+                .Replace(" ", "")
+                .Replace("_", "");
 
+            return role is "quanly" or "quảnlý" or "admin";
+        }
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
+    {
+        var d = radius * 2;
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
     // Gom nhiều sự kiện realtime dồn dập (vd mobile tick nhiều món liên tiếp) thành 1 lần tải lại
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 300 };
     private bool _pendingReloadTables;
@@ -67,6 +112,12 @@ public partial class TableManagementControl : UserControl
 
         _refreshTimer.Tick += async (s, e) => await OnRefreshTimerTickAsync();
 
+        // Designer được tạo ở kích thước lớn hơn một số cửa sổ thực tế.
+        // Tự co vùng sơ đồ theo chiều cao hiện tại để hàng cuối không bị che/cắt.
+        Resize += (s, e) => LayoutTableViewport();
+        panelDetail.VisibleChanged += (s, e) => LayoutTableViewport();
+        LayoutTableViewport();
+
         // Sự kiện realtime là static -> bắt buộc hủy đăng ký khi control bị Dispose để tránh rò rỉ
         Disposed += (s, e) =>
         {
@@ -76,12 +127,41 @@ public partial class TableManagementControl : UserControl
         };
     }
 
+    private void LayoutTableViewport()
+    {
+        if (flowTables is null || flowLegend is null)
+            return;
+
+        const int top = 130;
+        const int bottomGap = 8;
+        const int rightGap = 8;
+        const int detailGap = 12;
+
+        var rightEdge = panelDetail.Visible
+            ? ClientSize.Width - panelDetail.Width - detailGap
+            : ClientSize.Width - rightGap;
+
+        rightEdge = Math.Max(320, rightEdge);
+
+        flowLegend.Width = rightEdge;
+        flowTables.SetBounds(
+            0,
+            top,
+            rightEdge,
+            Math.Max(140, ClientSize.Height - top - bottomGap));
+
+        flowTables.AutoScroll = true;
+        flowTables.Padding = new Padding(0, 0, 0, 18);
+    }
+
     private async Task LoadAllAsync()
     {
         try
         {
             _areas = await _api.GetAreasAsync();
-            _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+            _tables = NormalizePhysicalTables(
+                (await _api.GetTablesAsync())
+                    .Where(t => !IsTakeawaySlot(t)));
 
             if (CanCompletePayment)
             {
@@ -112,6 +192,41 @@ public partial class TableManagementControl : UserControl
     // ẩn khỏi sơ đồ bàn, được quản lý ở tab "Mang về".
     private static bool IsTakeawaySlot(TableDto t)
         => string.Equals(t.AreaName?.Trim(), "Mang về", StringComparison.OrdinalIgnoreCase);
+
+    // DB cũ có thể tồn tại nhiều DiningTable khác TableId nhưng trùng tên trong
+    // cùng khu. Chỉ hiển thị một bàn đại diện, ưu tiên bàn đang có nghiệp vụ:
+    // Có khách > Đã đặt > Đang dọn > Trống; nếu ngang nhau lấy TableId mới hơn.
+    // Không xóa record cũ ở đây để tránh ảnh hưởng lịch sử đơn/đặt bàn.
+    private static List<TableDto> NormalizePhysicalTables(
+        IEnumerable<TableDto> source)
+    {
+        return source
+            .GroupBy(table => new
+            {
+                table.AreaId,
+                Name = NormalizeTableName(table.TableName)
+            })
+            .Select(group => group
+                .OrderByDescending(table => TableDisplayPriority(table.Status))
+                .ThenByDescending(table => table.Id)
+                .First())
+            .OrderBy(table => table.AreaName)
+            .ThenBy(table => table.TableName)
+            .ToList();
+    }
+
+    private static string NormalizeTableName(string? value)
+        => (value ?? "")
+            .Trim()
+            .ToUpperInvariant();
+
+    private static int TableDisplayPriority(int status) => status switch
+    {
+        1 => 400, // Có khách
+        2 => 300, // Đã đặt
+        3 => 200, // Đang dọn
+        _ => 100  // Trống
+    };
 
     private IEnumerable<TableDto> FilterTables()
     {
@@ -152,9 +267,24 @@ public partial class TableManagementControl : UserControl
         _ => (AppColors.TableTrong, Color.FromArgb(235, 247, 243), "Trống"),
     };
 
+    private static string ReservationDateTimeLabel(DateTime? value)
+        => value.HasValue
+            ? value.Value.ToString("dd/MM • HH:mm")
+            : "";
+
+    private static string SessionLabel(TableDto table)
+        => table.IsReservationSession ? "📅 ĐẶT" : "👤 THƯỜNG";
+
+    private static bool IsIdleWithReservation(TableDto table)
+        => table.Status != (int)TableStatusEnum.DangPhucVu &&
+           table.HasUpcomingReservation;
+
     private Panel BuildTableTile(TableDto table)
     {
-        var (border, bg, label) = StyleFor(table.Status);
+        var visualStatus = IsIdleWithReservation(table)
+            ? (int)TableStatusEnum.DaDat
+            : table.Status;
+        var (border, bg, label) = StyleFor(visualStatus);
         var waitingPayment =
             CanCompletePayment &&
             _paymentRequestedTableIds.Contains(table.Id);
@@ -165,34 +295,93 @@ public partial class TableManagementControl : UserControl
             bg = Color.FromArgb(255, 238, 233);
             label = "Chờ thanh toán";
         }
+        else if (table.Status == (int)TableStatusEnum.DangPhucVu)
+        {
+            // Giữ trạng thái chính là Có khách; reservation kế tiếp chỉ là badge phụ.
+            bg = Color.FromArgb(255, 247, 237);
+        }
+        else if (table.HasUpcomingReservation)
+        {
+            bg = Color.FromArgb(239, 246, 255);
+        }
 
         var linked = table.IsLinked;
         if (linked && !waitingPayment)
-            bg = Color.FromArgb(255, 244, 238); // nền kem nhạt = đang ghép
+            bg = Color.FromArgb(255, 244, 238);
 
         var tile = new Panel
         {
-            Size = new Size(140, 110),
+            Size = new Size(156, 154),
             BackColor = bg,
             Margin = new Padding(8),
             Cursor = Cursors.Hand,
             Tag = table,
         };
-        tile.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(border, 2), 1, 1, tile.Width - 3, tile.Height - 3);
+        tile.Paint += (s, e) =>
+        {
+            using var pen = new Pen(border, 2);
+            e.Graphics.DrawRectangle(
+                pen,
+                1,
+                1,
+                tile.Width - 3,
+                tile.Height - 3);
+        };
 
-        var lblName = new Label { Text = table.TableName, Font = AppFonts.HeadlineSm, Location = new Point(12, 10), AutoSize = true };
-        var lblCapacity = new Label { Text = $"{table.Capacity} khách", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(12, 36), AutoSize = true };
-        var lblStatus = new Label { Text = label, Font = AppFonts.LabelMd, ForeColor = border, Location = new Point(12, 78), AutoSize = true };
+        var lblName = new Label
+        {
+            Text = table.TableName,
+            Font = AppFonts.HeadlineSm,
+            Location = new Point(12, 10),
+            Size = new Size(132, 28),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
 
-        tile.Controls.Add(lblName);
-        tile.Controls.Add(lblCapacity);
-        tile.Controls.Add(lblStatus);
+        var lblCapacity = new Label
+        {
+            Text = $"{table.Capacity} khách",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(12, 40),
+            Size = new Size(132, 20),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
 
-        void onClick(object? s, EventArgs e) => ShowDetail(table);
-        tile.Click += onClick;
-        lblName.Click += onClick;
-        lblCapacity.Click += onClick;
-        lblStatus.Click += onClick;
+        var y = 64;
+
+        if (table.Status == (int)TableStatusEnum.DangPhucVu)
+        {
+            var lblSession = new Label
+            {
+                Text = SessionLabel(table),
+                Font = AppFonts.LabelMd,
+                ForeColor = table.IsReservationSession
+                    ? Color.FromArgb(37, 99, 235)
+                    : Color.FromArgb(75, 85, 99),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
+                AutoEllipsis = true
+            };
+            tile.Controls.Add(lblSession);
+            y += 20;
+        }
+
+        if (table.HasUpcomingReservation)
+        {
+            var lblReservation = new Label
+            {
+                Text = $"📅 {ReservationDateTimeLabel(table.NextReservationTime)}",
+                Font = AppFonts.LabelMd,
+                ForeColor = Color.FromArgb(37, 99, 235),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
+                AutoEllipsis = true
+            };
+            tile.Controls.Add(lblReservation);
+            y += 20;
+        }
 
         if (linked)
         {
@@ -201,13 +390,42 @@ public partial class TableManagementControl : UserControl
                 Text = "Ghép: " + table.LinkedWith,
                 Font = AppFonts.LabelMd,
                 ForeColor = AppColors.OnSurfaceVariant,
-                Location = new Point(12, 58),
-                Size = new Size(120, 18),
+                Location = new Point(12, y),
+                Size = new Size(132, 18),
                 AutoEllipsis = true,
             };
-            lblLink.Click += onClick;
             tile.Controls.Add(lblLink);
+            y += 20;
         }
+
+        var lblStatus = new Label
+        {
+            Text = label,
+            Font = AppFonts.LabelMd,
+            ForeColor = border,
+            Location = new Point(12, Math.Min(y + 4, 132)),
+            Size = new Size(132, 18),
+            AutoEllipsis = true
+        };
+
+        tile.Controls.Add(lblName);
+        tile.Controls.Add(lblCapacity);
+        tile.Controls.Add(lblStatus);
+
+        void onClick(object? s, EventArgs e)
+        {
+            if (IsIdleWithReservation(table))
+            {
+                _ = ReceiveReservedOrWalkInFromTileAsync(table);
+                return;
+            }
+
+            ShowDetail(table);
+        }
+
+        tile.Click += onClick;
+        foreach (Control child in tile.Controls)
+            child.Click += onClick;
 
         return tile;
     }
@@ -225,8 +443,26 @@ public partial class TableManagementControl : UserControl
     private void ApplyDetailHeader(TableDto table)
     {
         lblDetailName.Text = table.TableName;
-        lblDetailInfo.Text = $"{table.AreaName} · Sức chứa: {table.Capacity} khách";
-        var (_, _, label) = StyleFor(table.Status);
+
+        var infoParts = new List<string>
+        {
+            table.AreaName,
+            $"Sức chứa: {table.Capacity} khách"
+        };
+
+        if (table.Status == (int)TableStatusEnum.DangPhucVu)
+            infoParts.Add(SessionLabel(table));
+
+        if (table.HasUpcomingReservation)
+            infoParts.Add($"📅 {ReservationDateTimeLabel(table.NextReservationTime)}");
+
+        lblDetailInfo.Text = string.Join(" · ", infoParts.Where(part =>
+            !string.IsNullOrWhiteSpace(part)));
+
+        var visualStatus = IsIdleWithReservation(table)
+            ? (int)TableStatusEnum.DaDat
+            : table.Status;
+        var (_, _, label) = StyleFor(visualStatus);
 
         if (CanCompletePayment &&
             _paymentRequestedTableIds.Contains(table.Id))
@@ -288,7 +524,9 @@ public partial class TableManagementControl : UserControl
             _btnCheckIn.Click += async (s, e) => await CheckInSelectedTableAsync();
             panelDetail.Controls.Add(_btnCheckIn);
         }
-        _btnCheckIn.Visible = _selectedTable!.Status == 0;
+        _btnCheckIn.Visible =
+            _selectedTable!.Status != (int)TableStatusEnum.DangPhucVu &&
+            _selectedTable.Status != (int)TableStatusEnum.DangDonDep;
 
         if (_btnGoToSales is null)
         {
@@ -313,20 +551,170 @@ public partial class TableManagementControl : UserControl
     private async Task CheckInSelectedTableAsync()
     {
         if (_selectedTable is null) return;
-        if (_btnCheckIn is not null) _btnCheckIn.Enabled = false;
+
+        if (_selectedTable.HasUpcomingReservation)
+        {
+            await ReceiveReservedOrWalkInAsync(_selectedTable);
+            return;
+        }
+
+        await ReceiveTableAsync(_selectedTable, reservationId: null);
+    }
+
+    private async Task ReceiveReservedOrWalkInFromTileAsync(TableDto table)
+    {
+        _selectedTable = table;
+        ApplyDetailHeader(table);
+        panelDetail.Visible = true;
+        EnsureDetailActionButtons();
+
+        await ReceiveReservedOrWalkInAsync(table);
+    }
+
+    private async Task ReceiveReservedOrWalkInAsync(TableDto table)
+    {
+        if (!table.HasUpcomingReservation)
+        {
+            await ReceiveTableAsync(table, reservationId: null);
+            return;
+        }
+
+        using var dialog = new Form
+        {
+            Text = "Bàn có lịch đặt",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new Size(520, 245)
+        };
+
+        var customer = string.IsNullOrWhiteSpace(table.NextReservationCustomerName)
+            ? "Khách"
+            : table.NextReservationCustomerName.Trim();
+        var guest = table.NextReservationGuestCount.HasValue
+            ? Environment.NewLine + $"Số khách: {table.NextReservationGuestCount.Value}"
+            : "";
+
+        var content = new Label
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Padding = new Padding(22, 18, 22, 12),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Font = AppFonts.BodyMd,
+            Text =
+                $"{table.TableName} có lịch đặt tiếp theo:" +
+                Environment.NewLine +
+                $"{ReservationDateTimeLabel(table.NextReservationTime)}" +
+                Environment.NewLine +
+                $"Khách: {customer}{guest}" +
+                Environment.NewLine + Environment.NewLine +
+                "Chọn cách nhận bàn:"
+        };
+
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 62,
+            FlowDirection = FlowDirection.RightToLeft,
+            Padding = new Padding(10),
+            WrapContents = false
+        };
+
+        var btnReservation = new Button
+        {
+            Text = "Nhận bàn đặt",
+            DialogResult = DialogResult.Yes,
+            Width = 130,
+            Height = 36,
+            BackColor = AppColors.Primary,
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat
+        };
+        btnReservation.FlatAppearance.BorderSize = 0;
+
+        var btnWalkIn = new Button
+        {
+            Text = "Nhận bàn thường",
+            DialogResult = DialogResult.No,
+            Width = 140,
+            Height = 36,
+            FlatStyle = FlatStyle.Flat
+        };
+
+        var btnCancel = new Button
+        {
+            Text = "Hủy",
+            DialogResult = DialogResult.Cancel,
+            Width = 90,
+            Height = 36,
+            FlatStyle = FlatStyle.Flat
+        };
+
+        buttons.Controls.Add(btnReservation);
+        buttons.Controls.Add(btnWalkIn);
+        buttons.Controls.Add(btnCancel);
+        dialog.Controls.Add(content);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = btnReservation;
+        dialog.CancelButton = btnCancel;
+
+        var owner = FindForm();
+        var result = owner is null
+            ? dialog.ShowDialog()
+            : dialog.ShowDialog(owner);
+
+        if (result == DialogResult.Cancel)
+            return;
+
+        var reservationId = result == DialogResult.Yes
+            ? table.NextReservationId
+            : null;
+
+        await ReceiveTableAsync(table, reservationId);
+    }
+
+    private async Task ReceiveTableAsync(
+        TableDto table,
+        int? reservationId)
+    {
+        if (_btnCheckIn is not null)
+            _btnCheckIn.Enabled = false;
+
         try
         {
-            await _api.CheckInTableAsync(_selectedTable.Id, _userId);
+            await _api.CheckInTableAsync(
+                table.Id,
+                _userId,
+                reservationId);
+
             await LoadAllAsync();
+
+            if (reservationId.HasValue)
+            {
+                MessageBox.Show(
+                    "Đã nhận bàn đặt. Lượt đặt được chuyển sang Đã nhận bàn.",
+                    "Nhận bàn",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+
             panelDetail.Visible = false;
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Không nhận bàn được: {ex.Message}");
+            MessageBox.Show(
+                $"Không nhận bàn được: {ex.Message}",
+                "Nhận bàn",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
         finally
         {
-            if (_btnCheckIn is not null) _btnCheckIn.Enabled = true;
+            if (_btnCheckIn is not null)
+                _btnCheckIn.Enabled = true;
         }
     }
 
@@ -380,32 +768,64 @@ public partial class TableManagementControl : UserControl
     private Panel BuildServingItemRow(OrderItemStatusDto item)
     {
         var statusIndex = Math.Clamp(item.KitchenStatus, 0, KitchenStatusLabels.Length - 1);
-        var row = new Panel { Size = new Size(268, 62), BackColor = Color.White, Margin = new Padding(0, 0, 0, 6) };
+        var row = new Panel { Size = new Size(268, 80), BackColor = Color.White, Margin = new Padding(0, 0, 0, 6) };
         row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
 
         var lblName = new Label { Text = $"{item.Quantity}x {item.MenuItemName}", Font = AppFonts.LabelLg, Location = new Point(10, 6), Size = new Size(180, 20), AutoEllipsis = true };
-        var lblStatus = new Label { Text = KitchenStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = KitchenStatusColor(statusIndex), Location = new Point(10, 28), AutoSize = true };
+        var lblTime = new Label
+        {
+            Text = item.CreatedAt > DateTime.MinValue
+                ? TimeDisplay.FormatClock(item.CreatedAt)
+                : "",
+            Font = AppFonts.LabelMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(10, 28),
+            Size = new Size(238, 18),
+            AutoEllipsis = true
+        };
+        var lblStatus = new Label { Text = KitchenStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = KitchenStatusColor(statusIndex), Location = new Point(10, 50), AutoSize = true };
 
         row.Controls.Add(lblName);
+        row.Controls.Add(lblTime);
         row.Controls.Add(lblStatus);
 
-        // Chỉ cho phép bấm "Đã phục vụ" khi món ở trạng thái Đã chế biến (DaCheBien = 2)
+        // Món đã chế biến, đang chờ nhân viên phục vụ xác nhận
         if (statusIndex == 2)
         {
+            if (!CanMarkServed)
+            {
+                row.Controls.Add(new Label
+                {
+                    Text = "Chờ phục vụ xác nhận",
+                    Font = new Font(AppFonts.LabelMd, FontStyle.Italic),
+                    ForeColor = AppColors.Outline,
+                    AutoSize = true,
+                    Location = new Point(110, 50)
+                });
+                return row;
+            }
+
             var btnServe = new Button
             {
-                Text = "Đã phục vụ",
-                Location = new Point(150, 24),
-                Size = new Size(108, 28),
+                Text = "✓  Đã phục vụ",
+                Size = new Size(116, 30),
+                Location = new Point(row.Width - 116 - 10, 42),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Tertiary,
                 ForeColor = Color.White,
                 Font = AppFonts.LabelMd,
+                Cursor = Cursors.Hand,
+                UseVisualStyleBackColor = false,
             };
             btnServe.FlatAppearance.BorderSize = 0;
+            btnServe.FlatAppearance.MouseOverBackColor = AppColors.TertiaryContainer;
+            btnServe.FlatAppearance.MouseDownBackColor = AppColors.Success;
+            btnServe.Region = new Region(RoundedRect(new Rectangle(0, 0, btnServe.Width, btnServe.Height), 8));
+
             btnServe.Click += async (s, e) =>
             {
                 btnServe.Enabled = false;
+                btnServe.Text = "Đang lưu...";
                 try
                 {
                     await _api.UpdateOrderItemStatusAsync(item.Id, (int)KitchenStatus.DaPhucVu, _userId, null, item.RowVer);
@@ -414,6 +834,7 @@ public partial class TableManagementControl : UserControl
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Không cập nhật được: {ex.Message}", "Cảnh báo / Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    btnServe.Text = "✓  Đã phục vụ";
                     btnServe.Enabled = true;
                 }
             };
@@ -434,6 +855,9 @@ public partial class TableManagementControl : UserControl
         NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
         NotificationHubClient.PaymentRequested += OnPaymentRequested;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated += OnReservationUpdatedRealtime;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
     }
 
     private void UnsubscribeRealtime()
@@ -443,23 +867,36 @@ public partial class TableManagementControl : UserControl
         NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
         NotificationHubClient.PaymentRequested -= OnPaymentRequested;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ReservationUpdated -= OnReservationUpdatedRealtime;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
     }
 
     // Các handler này chạy trên luồng nền của SignalR -> phải đẩy về luồng giao diện
     private void OnTableStatusUpdated(TableStatusUpdatedPayload p) =>
-        QueueRefresh(tables: true, items: false);
+        // Chuyển/gộp/ghép/tách bàn có thể đổi cả món của bàn, không chỉ trạng thái.
+        QueueRefresh(tables: true, items: true);
 
     private void OnItemStatusUpdated(ItemStatusUpdatedPayload p) =>
-        QueueRefresh(tables: false, items: true);
+        QueueRefresh(tables: true, items: true);
 
     private void OnOrderItemCancelled(OrderItemCancelledPayload p) =>
-        QueueRefresh(tables: false, items: true);
+        QueueRefresh(tables: true, items: true);
 
     private void OnPaymentRequested(PaymentRequestedPayload p) =>
         QueueRefresh(tables: true, items: false);
 
     private void OnPaymentCompleted(PaymentCompletedPayload p) =>
+        QueueRefresh(tables: true, items: true);
+
+    private void OnOrderUpdated(OrderUpdatedPayload p) =>
+        QueueRefresh(tables: true, items: true);
+
+    private void OnReservationUpdatedRealtime(ReservationUpdatedPayload p) =>
         QueueRefresh(tables: true, items: false);
+
+    private void OnConnectionRestored() =>
+        QueueRefresh(tables: true, items: true);
 
     private void QueueRefresh(bool tables, bool items)
     {
@@ -513,7 +950,9 @@ public partial class TableManagementControl : UserControl
                 // Giữ vị trí cuộn của lưới bàn (Clear() sẽ làm nhảy về đầu)
                 var scroll = new Point(-flowTables.AutoScrollPosition.X, -flowTables.AutoScrollPosition.Y);
 
-                _tables = (await _api.GetTablesAsync()).Where(t => !IsTakeawaySlot(t)).ToList();
+                _tables = NormalizePhysicalTables(
+                    (await _api.GetTablesAsync())
+                        .Where(t => !IsTakeawaySlot(t)));
 
                 if (CanCompletePayment)
                 {
@@ -772,7 +1211,7 @@ public partial class TableManagementControl : UserControl
 
         var lblFilter = new Label { Text = "Trạng thái:", Font = AppFonts.BodyMd, Location = new Point(16, 18), AutoSize = true };
         var cbStatusFilter = new ComboBox { Location = new Point(120, 14), Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
-        cbStatusFilter.Items.AddRange(new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" });
+        cbStatusFilter.Items.AddRange(new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" });
         cbStatusFilter.SelectedIndex = 0;
 
         var btnNew = new Button { Text = "+ Đặt bàn mới", Location = new Point(430, 12), Size = new Size(150, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Primary, ForeColor = Color.White };
@@ -797,8 +1236,8 @@ public partial class TableManagementControl : UserControl
         dialog.Controls.Add(btnClose);
         dialog.AcceptButton = btnClose;
 
-        var upcomingStatusItems = new object[] { "Đang chờ (Đã xác nhận)", "Tất cả" };
-        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất" };
+        var upcomingStatusItems = new object[] { "Chờ quản lý xác nhận", "Đã xác nhận", "Tất cả" };
+        var historyStatusItems = new object[] { "Tất cả", "Đã xác nhận", "Đã nhận bàn", "Đã hủy", "Không đến", "Hoàn tất", "Chờ xác nhận" };
 
         void ApplyModeToStatusCombo()
         {
@@ -818,18 +1257,28 @@ public partial class TableManagementControl : UserControl
                 int? statusFilter;
                 if (chkHistory.Checked)
                 {
-                    // Lich su: luon loc theo 1 ngay cu the (co the la qua khu),
-                    // muc 0 = "Tat ca" (khong loc trang thai), tu 1 tro di khop
-                    // thang voi ReservationStatusEnum (index-1).
                     dateFilter = dtpHistoryDate.Value;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? null : cbStatusFilter.SelectedIndex - 1;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        1 => 0, // Đã xác nhận
+                        2 => 1, // Đã nhận bàn
+                        3 => 2, // Đã hủy
+                        4 => 3, // Không đến
+                        5 => 4, // Hoàn tất
+                        6 => 5, // Chờ xác nhận
+                        _ => null
+                    };
                 }
                 else
                 {
-                    // Sap toi (mac dinh): khong loc ngay (Backend tu tra tu HOM
-                    // NAY tro di), muc 0 = "Dang cho" (DaXacNhan = 0).
+                    // Mặc định ưu tiên yêu cầu Web/nhân viên vừa tạo đang chờ Quản lý duyệt.
                     dateFilter = null;
-                    statusFilter = cbStatusFilter.SelectedIndex == 0 ? 0 : null;
+                    statusFilter = cbStatusFilter.SelectedIndex switch
+                    {
+                        0 => 5, // Chờ quản lý xác nhận
+                        1 => 0, // Đã xác nhận
+                        _ => null
+                    };
                 }
 
                 var reservations = await _api.GetReservationsAsync(date: dateFilter, status: statusFilter);
@@ -857,7 +1306,7 @@ public partial class TableManagementControl : UserControl
 
         // Realtime: khi Mobile nhận bàn / hủy / đặt bàn, backend phát TableStatusUpdated
         // -> tải lại danh sách ngay trong hộp thoại (đang mở dạng modal nên phải tự đăng ký).
-        void OnReservationRealtime(TableStatusUpdatedPayload p)
+        void RefreshReservationDialog()
         {
             try
             {
@@ -871,7 +1320,14 @@ public partial class TableManagementControl : UserControl
             catch (InvalidOperationException) { /* dialog đang đóng */ }
         }
 
+        void OnReservationRealtime(TableStatusUpdatedPayload p) =>
+            RefreshReservationDialog();
+
+        void OnReservationUpdated(ReservationUpdatedPayload p) =>
+            RefreshReservationDialog();
+
         NotificationHubClient.TableStatusUpdated += OnReservationRealtime;
+        NotificationHubClient.ReservationUpdated += OnReservationUpdated;
         try
         {
             _ = RefreshAsync();
@@ -880,6 +1336,7 @@ public partial class TableManagementControl : UserControl
         finally
         {
             NotificationHubClient.TableStatusUpdated -= OnReservationRealtime;
+            NotificationHubClient.ReservationUpdated -= OnReservationUpdated;
         }
         _ = LoadAllAsync();
     }
@@ -909,7 +1366,15 @@ public partial class TableManagementControl : UserControl
 
         // Hien ca gio den VA gio tra ban du kien (truoc day chi co gio den, khong
         // biet giu ban toi may gio) tren 1 dong rieng de khong dam vao cot trang thai.
-        var lblTime = new Label { Text = $"{r.ReservationTime:HH:mm dd/MM} → {r.ReservationEndTime:HH:mm dd/MM}", Font = AppFonts.LabelLg, Location = new Point(10, 6), AutoSize = true };
+        var holdUntil = r.HoldUntil == default ? r.ReservationEndTime : r.HoldUntil;
+        var holdExpired = r.IsHoldExpired || DateTime.Now >= holdUntil;
+        var lblTime = new Label
+        {
+            Text = $"{r.ReservationTime:HH:mm dd/MM} · Giữ đến {holdUntil:HH:mm}",
+            Font = AppFonts.LabelLg,
+            Location = new Point(10, 6),
+            AutoSize = true
+        };
         var lblTable = new Label { Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(10, 30), AutoSize = true };
         var customerText = string.IsNullOrWhiteSpace(r.CustomerName) && string.IsNullOrWhiteSpace(r.CustomerPhone)
             ? "(Chưa có thông tin khách)"
@@ -951,9 +1416,100 @@ public partial class TableManagementControl : UserControl
             row.Controls.Add(lblCancelInfo);
         }
 
-        if (statusIndex == 0)
+        if (statusIndex == 5)
         {
-            var btnCheckIn = new Button { Text = "Nhận bàn", Location = new Point(320, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Tertiary, ForeColor = Color.White, Font = AppFonts.LabelMd };
+            if (CanConfirmReservations)
+            {
+                var btnConfirm = new Button
+                {
+                    Text = "Xác nhận",
+                    Location = new Point(320, 32),
+                    Size = new Size(100, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = AppColors.Success,
+                    ForeColor = Color.White,
+                    Font = AppFonts.LabelMd
+                };
+                btnConfirm.FlatAppearance.BorderSize = 0;
+                btnConfirm.Click += async (s, e) =>
+                {
+                    if (MessageBox.Show(
+                        $"Xác nhận đặt {r.TableName} lúc {r.ReservationTime:HH:mm dd/MM} cho \"{r.CustomerName}\"?",
+                        "Xác nhận đặt bàn",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question) != DialogResult.Yes)
+                    {
+                        return;
+                    }
+
+                    btnConfirm.Enabled = false;
+                    try
+                    {
+                        await _api.UpdateReservationStatusAsync(r.Id, 0);
+                        await onChanged();
+                        MessageBox.Show(
+                            "Đã xác nhận đặt bàn. Lịch đặt hiện đã được đồng bộ lên sơ đồ bàn Mobile và WinForms.",
+                            "Đặt bàn",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Không xác nhận được: {ex.Message}");
+                        btnConfirm.Enabled = true;
+                    }
+                };
+                row.Controls.Add(btnConfirm);
+            }
+
+            var btnReject = new Button
+            {
+                Text = "Hủy",
+                Location = new Point(430, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Error,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
+            btnReject.FlatAppearance.BorderSize = 0;
+            btnReject.Click += async (s, e) =>
+            {
+                if (MessageBox.Show(
+                    $"Hủy yêu cầu đặt bàn của \"{r.CustomerName}\"?",
+                    "Xác nhận",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                btnReject.Enabled = false;
+                try
+                {
+                    await _api.UpdateReservationStatusAsync(r.Id, 2);
+                    await onChanged();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Không hủy được: {ex.Message}");
+                    btnReject.Enabled = true;
+                }
+            };
+            row.Controls.Add(btnReject);
+        }
+        else if (statusIndex == 0)
+        {
+            var btnCheckIn = new Button
+            {
+                Text = "Nhận bàn",
+                Location = new Point(320, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Tertiary,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
             btnCheckIn.FlatAppearance.BorderSize = 0;
             btnCheckIn.Click += async (s, e) =>
             {
@@ -971,15 +1527,33 @@ public partial class TableManagementControl : UserControl
             };
             row.Controls.Add(btnCheckIn);
 
-            var btnCancel = new Button { Text = "Hủy", Location = new Point(430, 32), Size = new Size(100, 32), FlatStyle = FlatStyle.Flat, BackColor = AppColors.Error, ForeColor = Color.White, Font = AppFonts.LabelMd };
+            var btnCancel = new Button
+            {
+                Text = holdExpired ? "Không đến" : "Hủy",
+                Location = new Point(430, 32),
+                Size = new Size(100, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = AppColors.Error,
+                ForeColor = Color.White,
+                Font = AppFonts.LabelMd
+            };
             btnCancel.FlatAppearance.BorderSize = 0;
             btnCancel.Click += async (s, e) =>
             {
-                if (MessageBox.Show($"Hủy đặt bàn của \"{r.CustomerName}\"?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                var confirmText = holdExpired
+                    ? $"Đã quá thời gian giữ đến {holdUntil:HH:mm}. Đánh dấu \"{r.CustomerName}\" không đến và nhả bàn?"
+                    : $"Hủy đặt bàn của \"{r.CustomerName}\"?";
+
+                if (MessageBox.Show(confirmText, "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes)
+                    return;
+
                 btnCancel.Enabled = false;
                 try
                 {
-                    await _api.UpdateReservationStatusAsync(r.Id, 2);
+                    if (holdExpired)
+                        await _api.ReleaseOverdueReservationAsync(r.Id);
+                    else
+                        await _api.UpdateReservationStatusAsync(r.Id, 2);
                     await onChanged();
                 }
                 catch (Exception ex)

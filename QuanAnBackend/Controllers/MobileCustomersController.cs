@@ -25,18 +25,64 @@ public class MobileCustomersController : ControllerBase
     [HttpGet("table/{tableId}")]
     public async Task<IActionResult> GetForTable(int tableId)
     {
-        var orderId = await FindOpenOrderIdAsync(tableId);
-        if (!orderId.HasValue) return Ok(new { customer = (object?)null });
+        int? customerId = null;
 
-        var customer = await _db.Orders.AsNoTracking()
-            .Where(o => o.OrderId == orderId.Value && o.CustomerId.HasValue)
-            .Select(o => new
+        var orderId = await FindOpenOrderIdAsync(tableId);
+        if (orderId.HasValue)
+        {
+            customerId = await _db.Orders
+                .AsNoTracking()
+                .Where(o => o.OrderId == orderId.Value)
+                .Select(o => o.CustomerId)
+                .FirstOrDefaultAsync();
+        }
+
+        // Nếu bàn vừa nhận từ reservation thì Order có thể chưa được tạo hoặc
+        // chưa gắn CustomerId. Fallback trực tiếp về reservation đang Đã nhận bàn
+        // để Mobile vẫn thấy đúng thành viên đã đặt bàn như WinForms.
+        if (!customerId.HasValue)
+        {
+            var tableIdentity = await _db.Tables
+                .AsNoTracking()
+                .Where(t => t.TableId == tableId)
+                .Select(t => new
+                {
+                    t.AreaId,
+                    Name = (t.TableName ?? "").Trim().ToUpper()
+                })
+                .FirstOrDefaultAsync();
+
+            if (tableIdentity is not null)
             {
-                Id = o.Customer!.CustomerId,
-                o.Customer.FullName,
-                o.Customer.Phone,
-                o.Customer.LoyaltyPoint,
-                MemberLevel = o.Customer.MemberLevel.ToString()
+                customerId = await _db.Reservations
+                    .AsNoTracking()
+                    .Where(r =>
+                        r.Status == ReservationStatus.DaNhanBan &&
+                        r.CustomerId.HasValue &&
+                        r.Table != null &&
+                        r.Table.AreaId == tableIdentity.AreaId &&
+                        (r.Table.TableName ?? "").Trim().ToUpper() ==
+                            tableIdentity.Name)
+                    .OrderByDescending(r => r.ReservationTime)
+                    .ThenByDescending(r => r.ReservationId)
+                    .Select(r => r.CustomerId)
+                    .FirstOrDefaultAsync();
+            }
+        }
+
+        if (!customerId.HasValue)
+            return Ok(new { customer = (object?)null });
+
+        var customer = await _db.Customers
+            .AsNoTracking()
+            .Where(item => item.CustomerId == customerId.Value)
+            .Select(item => new
+            {
+                Id = item.CustomerId,
+                item.FullName,
+                item.Phone,
+                item.LoyaltyPoint,
+                MemberLevel = item.MemberLevel.ToString()
             })
             .FirstOrDefaultAsync();
 

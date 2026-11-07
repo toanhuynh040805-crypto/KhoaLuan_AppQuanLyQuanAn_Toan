@@ -9,6 +9,11 @@ using QuanAnBackend.Hubs;
 
 namespace QuanAnBackend.Controllers;
 
+public record MobileReceiveTableRequest(
+    string? Mode = null,
+    int? ReservationId = null
+);
+
 /// <summary>
 /// Endpoint nhận bàn dành cho Mobile trên database dùng chung.
 ///
@@ -34,7 +39,9 @@ public sealed class MobileTableReceiveController : ControllerBase
 
     [HttpPut("{id:int}/receive")]
     [RequireMobilePermission("table.manage")]
-    public async Task<IActionResult> Receive(int id)
+    public async Task<IActionResult> Receive(
+        int id,
+        [FromBody] MobileReceiveTableRequest? request)
     {
         var connection = _db.Database.GetDbConnection();
         var shouldClose = connection.State != ConnectionState.Open;
@@ -46,6 +53,7 @@ public sealed class MobileTableReceiveController : ControllerBase
 
         string? tableName = null;
         string? rawStatus = null;
+        int? receivedReservationId = null;
 
         try
         {
@@ -86,32 +94,82 @@ public sealed class MobileTableReceiveController : ControllerBase
                 return Conflict(new { message = "Bàn đang dọn dẹp" });
             }
 
-            // Nếu đây là bàn đã đặt, nhận reservation gần thời điểm hiện tại nhất.
-            // Dùng SQL trực tiếp để không phụ thuộc enum ReservationStatus của DB cũ.
-            if (status == "reserved")
+            // Một bàn có reservation tương lai vẫn có thể nhận khách thường.
+            // Chỉ khi Mobile gửi Mode = "reservation" mới chuyển đúng lượt đặt
+            // sang DaNhanBan. Mode = "walkin" giữ nguyên reservation để badge
+            // ngày/giờ tiếp tục hiển thị trên sơ đồ bàn.
+            var receiveMode = request?.Mode?.Trim().ToLowerInvariant();
+            var receiveReservation =
+                receiveMode == "reservation" ||
+                (string.IsNullOrWhiteSpace(receiveMode) && status == "reserved");
+
+            if (receiveReservation)
             {
                 await using var reservation = connection.CreateCommand();
                 reservation.Transaction = transaction;
                 reservation.CommandText = """
-                    DECLARE @ReservationId INT = (
-                        SELECT TOP 1 ReservationId
+                    DECLARE @SelectedReservationId INT = @RequestedReservationId;
+
+                    IF @SelectedReservationId IS NULL
+                    BEGIN
+                        SELECT TOP 1 @SelectedReservationId = ReservationId
                         FROM dbo.Reservations
                         WHERE TableId = @TableId
                           AND CONVERT(NVARCHAR(50), Status) IN
-                              (N'DaXacNhan', N'Đã xác nhận', N'Da Xac Nhan')
-                        ORDER BY ABS(DATEDIFF(MINUTE, ReservationTime, GETDATE())),
-                                 ReservationId DESC
-                    );
+                              (
+                                  N'DaXacNhan',
+                                  N'Đã xác nhận',
+                                  N'Da Xac Nhan'
+                              )
+                          AND DATEADD(
+                                MINUTE,
+                                ISNULL(DurationMinutes, 30),
+                                ReservationTime
+                              ) >= GETDATE()
+                        ORDER BY ReservationTime, ReservationId;
+                    END;
 
-                    IF @ReservationId IS NOT NULL
+                    IF @SelectedReservationId IS NOT NULL
                     BEGIN
                         UPDATE dbo.Reservations
                         SET Status = N'DaNhanBan'
-                        WHERE ReservationId = @ReservationId;
+                        WHERE ReservationId = @SelectedReservationId
+                          AND CONVERT(NVARCHAR(50), Status) IN
+                              (
+                                  N'DaXacNhan',
+                                  N'Đã xác nhận',
+                                  N'Da Xac Nhan'
+                              );
+
+                        IF @@ROWCOUNT = 0
+                            SET @SelectedReservationId = NULL;
                     END;
+
+                    SELECT @SelectedReservationId;
                     """;
                 AddParameter(reservation, "@TableId", id);
-                await reservation.ExecuteNonQueryAsync();
+                AddParameter(
+                    reservation,
+                    "@RequestedReservationId",
+                    request?.ReservationId.HasValue == true
+                        ? request.ReservationId.Value
+                        : DBNull.Value);
+
+                var rawReservationId = await reservation.ExecuteScalarAsync();
+                if (rawReservationId is not null &&
+                    rawReservationId != DBNull.Value)
+                {
+                    receivedReservationId = Convert.ToInt32(rawReservationId);
+                }
+
+                if (!receivedReservationId.HasValue)
+                {
+                    await transaction.RollbackAsync();
+                    return Conflict(new
+                    {
+                        message = "Lượt đặt bàn không còn khả dụng để nhận. Hãy tải lại sơ đồ bàn."
+                    });
+                }
             }
 
             await using (var update = connection.CreateCommand())
@@ -158,11 +216,27 @@ public sealed class MobileTableReceiveController : ControllerBase
             Status = 1
         });
 
+        if (receivedReservationId.HasValue)
+        {
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = receivedReservationId.Value,
+                    Status = "DaNhanBan",
+                    Stage = "Received"
+                });
+        }
+
         return Ok(new
         {
             id,
             tableName,
-            status = "DangPhucVu"
+            status = "DangPhucVu",
+            currentSessionType = receivedReservationId.HasValue
+                ? "Reservation"
+                : "WalkIn",
+            receivedReservationId
         });
     }
 

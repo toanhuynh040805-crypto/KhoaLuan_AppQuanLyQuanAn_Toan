@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 using System;
@@ -13,7 +14,8 @@ using System.Threading.Tasks;
 
 [Route("api/customers")]
 [ApiController]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public class WebProfileController : ControllerBase
 {
     private readonly AppDbContext _context;

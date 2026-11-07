@@ -29,7 +29,8 @@ public record AddedOrderItemDto(
     decimal UnitPrice,
     string Status,
     string? Note,
-    bool IsTakeaway = false
+    bool IsTakeaway = false,
+    DateTime? CreatedAt = null
 );
 public record CheckInRequest(int TableId, int UserId, int? ReservationId, string? Note);
 public record CancelOrderDto(int UserId, string? Reason);
@@ -44,19 +45,21 @@ public class OrdersController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly ILogger<OrdersController> _logger;
-
-    public OrdersController(
+    private readonly KitchenHoursService _kitchenHours;
+        public OrdersController(
         AppDbContext db,
         OrderRoutingService routingService,
         IHubContext<OrderHub> hub,
         NotificationService notifications,
-        ILogger<OrdersController> logger)
+        ILogger<OrdersController> logger,
+        KitchenHoursService kitchenHours)
     {
         _db = db;
         _routingService = routingService;
         _hub = hub;
         _notifications = notifications;
         _logger = logger;
+        _kitchenHours = kitchenHours;
     }
 
     [HttpPost("add-items")]
@@ -64,7 +67,9 @@ public class OrdersController : ControllerBase
     public async Task<IActionResult> AddItems([FromBody] AddItemsRequest request)
     {
         var items = request.Items ?? new List<CreateOrderItemDto>();
-
+        // Bếp đóng cửa: chặn gọi món (cả tại bàn lẫn mang về).
+        if (!_kitchenHours.IsOpenNow(out var kitchenClosedMessage))
+            return BadRequest(new { code = "KITCHEN_CLOSED", message = kitchenClosedMessage });
         if (items.Count == 0)
             return BadRequest(new { message = "Danh sách món đang trống" });
 
@@ -346,7 +351,8 @@ public class OrdersController : ControllerBase
                         price,
                         "Chờ chế biến",
                         dto.Note,
-                        dto.IsTakeaway
+                        dto.IsTakeaway,
+                        batchCreatedAt
                     )
                 );
 
@@ -385,6 +391,10 @@ public class OrdersController : ControllerBase
                 Status = TableStatus.DangPhucVu
             });
 
+            await _hub.Clients
+                .Group("internal-users")
+                .SendAsync("OrderUpdated", new { orderId = orderId.Value });
+
             foreach (var stationGroup in realtimeTickets.GroupBy(x => x.StationName))
             {
                 await _hub.Clients
@@ -402,7 +412,7 @@ public class OrdersController : ControllerBase
                             x.Quantity,
                             x.Note,
                             x.IsTakeaway,
-                            CreatedAt = DateTime.Now
+                            CreatedAt = batchCreatedAt
                         }).ToList()
                     });
             }
@@ -530,7 +540,8 @@ public class OrdersController : ControllerBase
                     menuItem.Price,
                     "Chờ chế biến",
                     dto.Note,
-                    true));
+                    true,
+                    batchCreatedAt));
             }
 
             await _db.SaveChangesAsync();
@@ -592,6 +603,16 @@ public class OrdersController : ControllerBase
             var reservation = await _db.Reservations.FindAsync(request.ReservationId.Value);
             if (reservation is not null)
             {
+                if (reservation.Status != ReservationStatus.DaXacNhan)
+                {
+                    return Conflict(new
+                    {
+                        message = reservation.Status == ReservationStatus.ChoXacNhan
+                            ? "Lượt đặt bàn đang chờ Quản lý xác nhận."
+                            : "Lượt đặt bàn không còn ở trạng thái có thể nhận bàn."
+                    });
+                }
+
                 reservation.Status = ReservationStatus.DaNhanBan;
 
                 // Gắn khách thành viên của lượt đặt bàn vào đơn ngay khi nhận bàn
@@ -824,7 +845,7 @@ public class OrdersController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId = order.OrderId
             });
@@ -1421,7 +1442,8 @@ public class OrdersController : ControllerBase
                 oi.IsTakeaway,
                 KitchenStatus = oi.Status,
                 oi.CancelReason,
-                oi.RowVer
+                oi.RowVer,
+                oi.CreatedAt
             })
         });
     }

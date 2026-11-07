@@ -7,7 +7,8 @@ using QuanAnBackend.Models;
 // 2 nơi (vd 1 nơi tính hạng theo ngưỡng khác nơi kia).
 public static class CustomerLoyaltyHelper
 {
-    // Cứ 10.000đ chi tiêu (SAU khi trừ khuyến mãi) tích 1 điểm.
+    // Cứ 10.000đ giá trị món trong TẠM TÍNH (TRƯỚC khuyến mãi/đổi điểm)
+    // tích 1 điểm.
     public const decimal EarnRateVndPerPoint = 10_000m;
 
     // 1 điểm quy đổi = 1.000đ giảm giá khi khách dùng điểm thanh toán.
@@ -25,6 +26,7 @@ public static class CustomerLoyaltyHelper
         _ => MemberLevel.ThanhVien
     };
 
-    public static int CalculateEarnedPoints(decimal amountAfterDiscount)
-        => (int)Math.Floor(amountAfterDiscount / EarnRateVndPerPoint);
+    public static int CalculateEarnedPoints(decimal subTotalBeforeDiscount)
+        => (int)Math.Floor(
+            subTotalBeforeDiscount / EarnRateVndPerPoint);
 }

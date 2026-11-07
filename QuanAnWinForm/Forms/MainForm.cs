@@ -16,6 +16,9 @@ public partial class MainForm : Form
     private readonly NotificationPopupForm _notificationPopup = new();
     private readonly SearchPopupForm _searchPopup = new();
     private System.Windows.Forms.Timer? _searchDebounceTimer;
+    private readonly System.Windows.Forms.Timer _realtimeHealthTimer =
+        new() { Interval = 5000 };
+    private bool _realtimeHealthRunning;
 
     private List<NotificationDto> _notifications = new();
 
@@ -57,10 +60,32 @@ public partial class MainForm : Form
         headerBar.LogoutRequested += OnLogoutRequested;
         headerBar.ChangePasswordRequested += OnChangePasswordRequested;
 
+        _realtimeHealthTimer.Tick += async (s, e) =>
+        {
+            if (_realtimeHealthRunning || _notificationHub.IsConnected)
+                return;
+
+            _realtimeHealthRunning = true;
+            try
+            {
+                await _notificationHub.EnsureConnectedAsync();
+            }
+            catch
+            {
+                // Backend/Hub có thể đang restart. Timer sẽ thử lại sau 5 giây.
+            }
+            finally
+            {
+                _realtimeHealthRunning = false;
+            }
+        };
+
         FormClosed += async (s, e) =>
         {
             _searchDebounceTimer?.Stop();
             _searchDebounceTimer?.Dispose();
+            _realtimeHealthTimer.Stop();
+            _realtimeHealthTimer.Dispose();
             // 2 popup la Form rieng (khong phai con cua MainForm) nen khong tu dong dispose.
             _notificationPopup.Dispose();
             _searchPopup.Dispose();
@@ -69,7 +94,11 @@ public partial class MainForm : Form
 
         OnNavItemSelected(DefaultTabFor(roleName, _stationName));
 
-        Load += async (s, e) => await InitNotificationsAsync();
+        Load += async (s, e) =>
+        {
+            await InitNotificationsAsync();
+            _realtimeHealthTimer.Start();
+        };
     }
 
     // Nhân viên (mọi vai trò) tự đổi mật khẩu của mình
@@ -104,31 +133,41 @@ public partial class MainForm : Form
 
     private async Task InitNotificationsAsync()
     {
+        // Tải lịch sử thông báo và kết nối realtime là hai việc độc lập.
+        // Một request thông báo lỗi không được phép làm mất SignalR cả phiên.
         try
         {
             _notifications = await _api.GetNotificationsAsync(_userId, _roleName);
             UpdateBadge();
+        }
+        catch
+        {
+            _notifications = new List<NotificationDto>();
+            UpdateBadge();
+        }
 
-            _notificationHub.OnNewNotification += noti =>
+        _notificationHub.OnNewNotification += noti =>
+        {
+            // Callback SignalR chạy trên thread nền -> đẩy về UI thread.
+            if (IsHandleCreated)
             {
-                // Callback SignalR chay tren thread nen - phai Invoke ve UI thread
-                // truoc khi dong bo dong (cap nhat badge/list) hoac cham vao Control.
-                if (IsHandleCreated)
+                BeginInvoke(new Action(() =>
                 {
-                    BeginInvoke(new Action(() =>
-                    {
-                        _notifications.Insert(0, noti);
-                        UpdateBadge();
-                        if (_notificationPopup.Visible) _notificationPopup.Render(_notifications);
-                    }));
-                }
-            };
+                    _notifications.Insert(0, noti);
+                    UpdateBadge();
+                    if (_notificationPopup.Visible)
+                        _notificationPopup.Render(_notifications);
+                }));
+            }
+        };
 
+        try
+        {
             await _notificationHub.ConnectAsync(_userId, _roleName);
         }
         catch
         {
-            // Khong chan luong dang nhap/su dung app chi vi loi tai thong bao
+            // Không chặn ứng dụng. Health timer sẽ thử nối lại sau 5 giây.
         }
     }
 
@@ -302,7 +341,7 @@ public partial class MainForm : Form
         int? takeawayOrderId) => key switch
     {
         "dashboard" => new DashboardControl(),
-        "sales" => new SalesControl(_userId, preselectedTableId, takeawayOrderId),
+        "sales" => BuildSalesControl(preselectedTableId, takeawayOrderId),
         "tables" => BuildDiningTabsControl(),
         "orders" => new OrderManagementControl(_userId),
         "menu" => new MenuManagementControl(),
@@ -343,6 +382,8 @@ public partial class MainForm : Form
             takeawayOrderId is null &&
             _currentContent is { IsDisposed: false })
         {
+            if (_currentContent is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
             return;
         }
 
@@ -371,11 +412,13 @@ public partial class MainForm : Form
             }
 
             UserControl content;
+            var reusedCachedContent = false;
             if (IsCacheableContent(key) &&
                 _contentCache.TryGetValue(key, out var cached) &&
                 !cached.IsDisposed)
             {
                 content = cached;
+                reusedCachedContent = true;
             }
             else
             {
@@ -396,11 +439,43 @@ public partial class MainForm : Form
 
             _currentContent = content;
             _currentContentKey = key;
+
+            if (reusedCachedContent && content is IRefreshableContent refreshable)
+                _ = refreshable.RefreshDataAsync();
         }
         finally
         {
             panelContent.ResumeLayout(performLayout: true);
         }
+    }
+
+    private SalesControl BuildSalesControl(
+        int? preselectedTableId,
+        int? takeawayOrderId)
+    {
+        var control = new SalesControl(
+            _userId,
+            preselectedTableId,
+            takeawayOrderId);
+
+        control.ReturnToTablesRequested += () =>
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            void NavigateBack()
+            {
+                sidebar.SelectNavItem("tables");
+                ShowContent("tables", preselectedTableId: null);
+            }
+
+            if (InvokeRequired)
+                BeginInvoke(new Action(NavigateBack));
+            else
+                NavigateBack();
+        };
+
+        return control;
     }
 
     // Màn "Sơ đồ bàn" gồm 2 tab: Ăn tại chỗ (sơ đồ bàn) và Mang về (danh sách đơn mang về).

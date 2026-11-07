@@ -63,6 +63,8 @@ builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<MobilePermissionService>();
 builder.Services.AddScoped<MobilePermissionSchemaService>();
 builder.Services.AddScoped<AreaAccessService>();
+builder.Services.AddScoped<TableStateService>();
+builder.Services.AddScoped<ReservationAudienceService>();
 builder.Services.AddScoped<AreaAssignmentSchemaService>();
 builder.Services.AddScoped<AttendanceSettingsService>();
 builder.Services.AddScoped<CustomerAccountSchemaService>();
@@ -71,8 +73,13 @@ builder.Services.AddScoped<WinFormsCompatibilitySchemaService>();
 builder.Services.AddScoped<SharedMenuCatalogService>();
 builder.Services.AddScoped<BundledMenuImageService>();
 builder.Services.AddScoped<WebProfileSchemaService>();
+builder.Services.AddScoped<DiscountCampaignSchemaService>();
+builder.Services.AddScoped<CampaignEligibilityService>();
 builder.Services.AddSingleton<IWebReviewContentClassifier, WebReviewModerationService>();
 builder.Services.AddHostedService<TimeoutMonitorService>();
+builder.Services.AddHostedService<ReservationReminderService>();
+builder.Services.AddScoped<OrderRoutingService>();
+builder.Services.AddSingleton<KitchenHoursService>();
 
 // JWT & Google Authentication for Web, Mobile and WinForms.
 var jwtSection = builder.Configuration.GetSection("Jwt");
@@ -352,7 +359,9 @@ using (var scope = app.Services.CreateScope())
     var webProfileSchema =
         scope.ServiceProvider.GetRequiredService<WebProfileSchemaService>();
     await webProfileSchema.EnsureAsync();
-
+    var discountCampaignSchema =
+        scope.ServiceProvider.GetRequiredService<DiscountCampaignSchemaService>();
+    await discountCampaignSchema.EnsureAsync();
     // Đồng bộ bộ thực đơn mới nhất của WinForms vào database dùng chung.
     // Chỉ thêm món/ảnh còn thiếu nên không ghi đè dữ liệu vận hành hiện tại.
     var sharedMenuCatalog =
