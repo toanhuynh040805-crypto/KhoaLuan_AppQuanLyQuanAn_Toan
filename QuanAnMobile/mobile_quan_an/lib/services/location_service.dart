@@ -10,6 +10,7 @@ class LocationCheckResult {
   final double? latitude;
   final double? longitude;
   final double? distanceMeters;
+  final double? radiusMeters;
   final double? accuracyMeters;
   final bool isMocked;
   final bool requiresSecureContext;
@@ -23,6 +24,7 @@ class LocationCheckResult {
     this.latitude,
     this.longitude,
     this.distanceMeters,
+    this.radiusMeters,
     this.accuracyMeters,
     this.isMocked = false,
     this.requiresSecureContext = false,
