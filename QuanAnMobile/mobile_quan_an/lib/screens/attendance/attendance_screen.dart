@@ -7,6 +7,7 @@ import '../../models/attendance_state.dart';
 import '../../models/employee_profile.dart';
 import '../../services/app_services.dart';
 import '../../services/api_client.dart';
+import '../../services/attendance_service.dart';
 import '../../services/location_service.dart';
 import '../../widgets/top_message.dart';
 import 'shift_history_screen.dart';
