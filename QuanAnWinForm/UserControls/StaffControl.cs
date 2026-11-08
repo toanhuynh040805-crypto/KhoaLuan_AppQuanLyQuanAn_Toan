@@ -1128,8 +1128,25 @@ public partial class StaffControl : UserControl, IRefreshableContent
                 }
             };
 
-            var lblDelete = MakeLink("Xóa", AppColors.Error);
-            lblDelete.Click += async (s, e) => await DeleteAssignmentAsync(assignment);
+            var hasCheckedIn =
+                assignment.CheckInTime.HasValue ||
+                assignment.Status == 1 ||
+                assignment.Status == 3;
+
+            var lblDelete = MakeLink(
+                hasCheckedIn ? "Đã điểm danh" : "Xóa",
+                hasCheckedIn ? AppColors.Outline : AppColors.Error);
+
+            if (hasCheckedIn)
+            {
+                lblDelete.Cursor = Cursors.Default;
+                lblDelete.Enabled = false;
+            }
+            else
+            {
+                lblDelete.Click += async (s, e) =>
+                    await DeleteAssignmentAsync(assignment);
+            }
 
             row.Controls.Add(sep);
             row.Controls.Add(lblShift);
@@ -1150,7 +1167,9 @@ public partial class StaffControl : UserControl, IRefreshableContent
             {
                 sep.SetBounds(pad, y, w - pad * 2, 1);
 
-                del.Location = new Point(w - pad - TextW("Xóa", FLink), y + (subH - FLink.Height) / 2);
+                del.Location = new Point(
+                    w - pad - TextW(del.Text, FLink),
+                    y + (subH - FLink.Height) / 2);
                 status.Location = new Point(del.Left - Dp(16) - status.Width, y + (subH - status.Height) / 2);
 
                 var areaLeft = Math.Max(Dp(320), (int)(w * 0.40));
@@ -1293,6 +1312,21 @@ public partial class StaffControl : UserControl, IRefreshableContent
 
     private async Task DeleteAssignmentAsync(ShiftAssignmentDto a)
     {
+        var hasCheckedIn =
+            a.CheckInTime.HasValue ||
+            a.Status == 1 ||
+            a.Status == 3;
+
+        if (hasCheckedIn)
+        {
+            MessageBox.Show(
+                "Nhân viên đã điểm danh ca này, không thể xóa phân ca.",
+                "Không thể xóa",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         if (MessageBox.Show($"Xóa phân công của \"{a.UserName}\"?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
         try
         {
