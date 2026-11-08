@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
 using QuanAnBackend.Models;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
+using QuanAnBackend.Hubs;
 using QuanAnBackend.Services;
 namespace QuanAnBackend.Controllers;
 
@@ -44,10 +46,16 @@ public class ShiftsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly NotificationService _notifications;
-    public ShiftsController(AppDbContext db, NotificationService notifications)
+    private readonly IHubContext<OrderHub> _hub;
+
+    public ShiftsController(
+        AppDbContext db,
+        NotificationService notifications,
+        IHubContext<OrderHub> hub)
     {
         _db = db;
         _notifications = notifications;
+        _hub = hub;
     }
 
     [HttpGet]
@@ -65,6 +73,9 @@ public class ShiftsController : ControllerBase
         var shift = new Shift { ShiftName = request.Name.Trim(), StartTime = request.StartTime, EndTime = request.EndTime };
         _db.Shifts.Add(shift);
         await _db.SaveChangesAsync();
+
+        await BroadcastShiftChangedAsync("Created", shift.ShiftId);
+
         return Ok(new { Id = shift.ShiftId, Name = shift.ShiftName, shift.StartTime, shift.EndTime });
     }
 
@@ -81,6 +92,9 @@ public class ShiftsController : ControllerBase
         shift.StartTime = request.StartTime;
         shift.EndTime = request.EndTime;
         await _db.SaveChangesAsync();
+
+        await BroadcastShiftChangedAsync("Updated", shift.ShiftId);
+
         return Ok(new { Id = shift.ShiftId, Name = shift.ShiftName, shift.StartTime, shift.EndTime });
     }
 
@@ -96,8 +110,20 @@ public class ShiftsController : ControllerBase
 
         _db.Shifts.Remove(shift);
         await _db.SaveChangesAsync();
+
+        await BroadcastShiftChangedAsync("Deleted", id);
+
         return NoContent();
     }
+
+    private Task BroadcastShiftChangedAsync(string action, int shiftId)
+        => _hub.Clients.Group("internal-users").SendAsync(
+            "ShiftChanged",
+            new
+            {
+                action,
+                shiftId
+            });
 
     [HttpGet("assignments")]
     public async Task<IActionResult> GetAssignments(
