@@ -264,10 +264,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       }
     }
 
-    return 'NV' +
-        (maxNumber + 1)
-            .toString()
-            .padLeft(3, '0');
+    return 'NV${(maxNumber + 1).toString().padLeft(3, '0')}';
   }
 
   Future<void> _addEmployee() async {
@@ -476,7 +473,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<
                       ManagedRole>(
-                    value: role,
+                    initialValue: role,
                     isExpanded: true,
                     decoration:
                         const InputDecoration(
@@ -521,7 +518,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     const SizedBox(height: 12),
                     DropdownButtonFormField<
                         ManagedStation>(
-                      value: station,
+                      initialValue: station,
                       isExpanded: true,
                       decoration:
                           const InputDecoration(
@@ -1497,7 +1494,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<ManagedEmployee>(
-                  value: employee,
+                  initialValue: employee,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Nhân viên',
