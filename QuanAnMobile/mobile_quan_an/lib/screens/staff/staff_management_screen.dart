@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
@@ -33,11 +35,31 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   bool loadingTasks = false;
   bool loadingHistory = false;
   String? error;
+  StreamSubscription<void>? _shiftChangesSubscription;
 
   @override
   void initState() {
     super.initState();
+    _shiftChangesSubscription =
+        AppServices.realtimeService.shiftChanges.listen((_) {
+      if (!mounted) return;
+      _refreshShiftDataFromRealtime();
+    });
     _loadBase();
+  }
+
+  @override
+  void dispose() {
+    _shiftChangesSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshShiftDataFromRealtime() async {
+    await Future.wait<void>([
+      _loadShifts(),
+      _loadAssignments(),
+      _loadHistory(),
+    ]);
   }
 
   Future<void> _loadBase() async {
