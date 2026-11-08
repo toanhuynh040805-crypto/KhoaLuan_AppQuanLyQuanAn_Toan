@@ -978,6 +978,11 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       ),
     );
 
+    // Chờ BottomSheet đóng xong rồi mới dispose controller để tránh
+    // TextField còn ở frame thoát đọc controller đã bị hủy.
+    await Future<void>.delayed(
+      const Duration(milliseconds: 250),
+    );
     name.dispose();
 
     if (saved == true && mounted) {
