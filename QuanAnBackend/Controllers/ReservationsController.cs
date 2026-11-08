@@ -387,6 +387,21 @@ public class ReservationsController : ControllerBase
         return aStart < bEnd && bStart < aEnd;
     }
 
+    // Giờ nhận đặt bàn: 08:00 - 20:30 (đồng bộ với web và WinForm).
+    private static readonly TimeSpan BookingOpenTime = new(8, 0, 0);
+    private static readonly TimeSpan BookingLastTime = new(20, 30, 0);
+
+    private static IActionResult? ValidateBookingHours(DateTime reservationTime)
+    {
+        var t = reservationTime.TimeOfDay;
+        if (t < BookingOpenTime || t > BookingLastTime)
+            return new BadRequestObjectResult(new
+            {
+                message = "Nhà hàng chỉ nhận đặt bàn từ 08:00 đến 20:30 (đóng cửa lúc 22:00)."
+            });
+        return null;
+    }
+
     private static IActionResult? ValidateDuration(int? requested, out int durationMinutes)
     {
         durationMinutes = requested.GetValueOrDefault(Reservation.DefaultDurationMinutes);
@@ -504,6 +519,9 @@ public class ReservationsController : ControllerBase
 
         if (request.ReservationTime < DateTime.Now.AddMinutes(-5))
             return BadRequest(new { message = "Giờ đến phải ở hiện tại hoặc trong tương lai" });
+
+        var hoursError = ValidateBookingHours(request.ReservationTime);
+        if (hoursError is not null) return hoursError;
 
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
@@ -632,6 +650,9 @@ public class ReservationsController : ControllerBase
 
         if (request.ReservationTime < DateTime.Now.AddMinutes(-5))
             return BadRequest(new { message = "Giờ đến phải ở hiện tại hoặc trong tương lai" });
+
+        var hoursError = ValidateBookingHours(request.ReservationTime);
+        if (hoursError is not null) return hoursError;
 
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;
@@ -1020,6 +1041,12 @@ public class ReservationsController : ControllerBase
         var table = await _db.Tables.FindAsync(reservation.TableId);
         if (table is not null && request.NumberOfGuests > table.Capacity)
             return BadRequest(new { message = $"Bàn chỉ chứa tối đa {table.Capacity} khách" });
+
+        if (request.ReservationTime != reservation.ReservationTime)
+        {
+            var hoursError = ValidateBookingHours(request.ReservationTime);
+            if (hoursError is not null) return hoursError;
+        }
 
         var durationError = ValidateDuration(request.DurationMinutes, out var durationMinutes);
         if (durationError is not null) return durationError;

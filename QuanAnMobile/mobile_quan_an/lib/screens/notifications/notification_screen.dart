@@ -39,12 +39,6 @@ class _NotificationScreenState
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) {
-        _markAllAsRead();
-      },
-    );
-
     _realtimeSubscription =
         AppServices
             .realtimeService
@@ -75,20 +69,6 @@ class _NotificationScreenState
             );
           }
         });
-
-        // Đang đứng ngay màn Thông báo thì coi như đã xem.
-        final int newIndex =
-            notification.id == null
-                ? -1
-                : widget.notifications.indexWhere(
-                    (item) =>
-                        item.id ==
-                        notification.id,
-                  );
-
-        if (newIndex >= 0) {
-          await _markAsRead(newIndex);
-        }
       },
     );
   }
@@ -231,7 +211,14 @@ class _NotificationScreenState
 
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0,
+                elevation: 0,
+        actions: [
+          if (widget.notifications.any((item) => !item.isRead))
+            TextButton(
+              onPressed: _markAllAsRead,
+              child: const Text('Đọc tất cả'),
+            ),
+        ],
         title: const Text(
           'Thông báo',
           style: TextStyle(

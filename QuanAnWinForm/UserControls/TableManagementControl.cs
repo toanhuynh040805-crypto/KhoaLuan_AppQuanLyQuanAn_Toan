@@ -1694,6 +1694,165 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         }
         return fallback;
     }
+    // Ô chọn ngày + giờ + phút: chỉ nhận đặt 08:00 - 20:30 (như web), không cho quá khứ.
+    // Vừa chọn từ danh sách, vừa gõ số trực tiếp.
+    private sealed class DateTimeQuickPicker : FlowLayoutPanel
+    {
+        private const int OpenHour = 8;      // giờ mở nhận đặt: 08:00
+        private const int LastHour = 20;     // giờ cuối nhận đặt: 20:30
+        private const int LastMinute = 30;
+        private const int Step = 30;         // bước phút (đổi thành 30 nếu muốn giống hệt web)
+
+        private readonly DateTimePicker _date = new();
+        private readonly ComboBox _hour = new();
+        private readonly ComboBox _minute = new();
+        private int _h, _m;
+        private bool _updating;
+        private DateTime _last;
+
+        public event EventHandler? ValueChanged;
+
+        private static DateTime RoundUpStep(DateTime d)
+        {
+            var t = new DateTime(d.Year, d.Month, d.Day, d.Hour, d.Minute, 0);
+            return t.AddMinutes((Step - t.Minute % Step) % Step);
+        }
+
+        // Mốc hợp lệ sớm nhất kể từ thời điểm d (trong khung 08:00 - 20:30)
+        private static DateTime NextValid(DateTime d)
+        {
+            var t = RoundUpStep(d);
+            var open = t.Date.AddHours(OpenHour);
+            var last = t.Date.AddHours(LastHour).AddMinutes(LastMinute);
+            if (t < open) return open;
+            if (t > last) return t.Date.AddDays(1).AddHours(OpenHour);
+            return t;
+        }
+
+        public DateTimeQuickPicker(Font font)
+        {
+            FlowDirection = FlowDirection.LeftToRight;
+            WrapContents = false;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            Font = font;
+
+            _date.Format = DateTimePickerFormat.Custom;
+            _date.CustomFormat = "dd/MM/yyyy";
+            _date.MinDate = DateTime.Today;
+            _date.Width = 120;
+            _date.Font = font;
+            _date.Margin = new Padding(0, 0, 8, 0);
+
+            SetupCombo(_hour, OpenHour, LastHour, 1);
+            SetupCombo(_minute, 0, 60 - Step, Step);
+
+            var colon = new Label { Text = ":", AutoSize = true, Font = font, Margin = new Padding(2, 6, 2, 0) };
+
+            Controls.Add(_date);
+            Controls.Add(_hour);
+            Controls.Add(colon);
+            Controls.Add(_minute);
+
+            SetValue(NextValid(DateTime.Now.AddHours(1)));
+
+            _date.ValueChanged += (s, e) => { if (!_updating) OnPartChanged(); };
+        }
+
+        private void SetupCombo(ComboBox cbo, int from, int to, int step)
+        {
+            cbo.DropDownStyle = ComboBoxStyle.DropDown; // cho phép gõ
+            cbo.Font = Font;
+            cbo.Width = 56;
+            cbo.MaxLength = 2;
+            cbo.Margin = Padding.Empty;
+            for (var i = from; i <= to; i += step) cbo.Items.Add(i.ToString("00"));
+
+            cbo.Enter += (s, e) => cbo.BeginInvoke(new Action(cbo.SelectAll));
+            cbo.KeyPress += (s, e) =>
+            {
+                if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true; // chỉ nhận số
+            };
+            cbo.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true; // không kích hoạt nút Đặt bàn
+                    Commit();
+                    cbo.SelectAll();
+                }
+            };
+            cbo.SelectedIndexChanged += (s, e) => Commit(); // chọn từ danh sách
+            cbo.Leave += (s, e) => Commit();                // gõ xong rồi click ra ngoài
+        }
+
+        public DateTime Value => _date.Value.Date.AddHours(_h).AddMinutes(_m);
+
+        private static int ParseOr(string text, int fallback)
+            => int.TryParse(text.Trim(), out var n) ? n : fallback;
+
+        private void Commit()
+        {
+            if (_updating) return;
+            _h = Math.Clamp(ParseOr(_hour.Text, _h), 0, 23);
+            _m = Math.Clamp(ParseOr(_minute.Text, _m), 0, 59);
+            _m = _m / Step * Step; // gõ 50 -> 45, gõ 20 -> 15 (theo bước phút)
+            OnPartChanged();
+        }
+
+        private void ShowTexts()
+        {
+            _updating = true;
+            try
+            {
+                _hour.Text = _h.ToString("00");
+                _minute.Text = _m.ToString("00");
+            }
+            finally { _updating = false; }
+        }
+
+        private void SetValue(DateTime v)
+        {
+            _updating = true;
+            try
+            {
+                _date.Value = v.Date < DateTime.Today ? DateTime.Today : v.Date;
+                _h = v.Hour;
+                _m = v.Minute;
+            }
+            finally { _updating = false; }
+            ShowTexts();
+            RaiseIfChanged();
+        }
+
+        private void OnPartChanged()
+        {
+            var v = Value;
+            var open = v.Date.AddHours(OpenHour);
+            var last = v.Date.AddHours(LastHour).AddMinutes(LastMinute);
+
+            // 1) Ngoài khung 08:00 - 20:30 -> kéo về mốc gần nhất trong khung
+            if (v < open) v = open;
+            else if (v > last) v = last;
+
+            // 2) Quá khứ -> đẩy về mốc hợp lệ sớm nhất từ bây giờ
+            var min = NextValid(DateTime.Now);
+            if (v < min) v = min;
+
+            if (v != Value) { SetValue(v); return; }
+            ShowTexts();
+            RaiseIfChanged();
+        }
+
+        private void RaiseIfChanged()
+        {
+            var v = Value;
+            if (v == _last) return;
+            _last = v;
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     private void OpenAddReservationDialog(Func<Task> onCreated)
     {
@@ -1757,19 +1916,18 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         var txtName = new TextBox { Font = AppFonts.BodyMd };
         var txtPhone = new TextBox { Font = AppFonts.BodyMd };
 
-        var dtpTime = new DateTimePicker { Font = AppFonts.BodyMd, Format = DateTimePickerFormat.Custom, CustomFormat = "HH:mm dd/MM/yyyy", Value = DateTime.Now.AddHours(1) };
+        var dtpTime = new DateTimeQuickPicker(AppFonts.BodyMd);
+        // Thời gian giữ chỗ cố định 30 phút, không cho chọn (không hiển thị trên giao diện).
         var numDuration = new NumericUpDown
         {
-            Font = AppFonts.BodyMd,
-            Minimum = ReservationMinDurationMinutes,
-            Maximum = ReservationMaxDurationMinutes,
-            Increment = 15,
+            Minimum = ReservationDefaultDurationMinutes,
+            Maximum = ReservationDefaultDurationMinutes,
             Value = ReservationDefaultDurationMinutes
         };
         var lblEndTime = new Label { Text = "Hết hạn giữ chỗ lúc: --:--", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
 
         var numGuests = new NumericUpDown { Font = AppFonts.BodyMd, Minimum = 1, Maximum = 100, Value = 4 };
-        var numDeposit = new NumericUpDown { Font = AppFonts.BodyMd, Minimum = 0, Maximum = 50_000_000, Increment = 50_000, ThousandsSeparator = true };
+        
 
         // ---------- Gợi ý khách cũ ----------
         var lblHint = new Label { Font = AppFonts.BodyMd, ForeColor = AppColors.Tertiary, AutoSize = true, MaximumSize = new Size(fullWidth - 130, 0), Anchor = AnchorStyles.Left | AnchorStyles.Top, Margin = Padding.Empty };
@@ -1836,9 +1994,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         root.Controls.Add(pnlHint);
         root.Controls.Add(chkMember);
         root.Controls.Add(pnlMember);
-        root.Controls.Add(Row(Field("Giờ đến *", dtpTime, colWidth, colGap), Field($"Giữ chỗ tối đa (phút) [{ReservationMinDurationMinutes}-{ReservationMaxDurationMinutes}]", numDuration, colWidth)));
+        root.Controls.Add(Row(Field("Giờ đến *", dtpTime, colWidth, colGap), new Panel { Width = 0, Height = 0, Margin = Padding.Empty }));
         root.Controls.Add(lblEndTime);
-        root.Controls.Add(Row(Field("Số khách (cả nhóm) *", numGuests, colWidth, colGap), Field("Tiền cọc (đ)", numDeposit, colWidth)));
+        root.Controls.Add(Row(Field("Số khách (cả nhóm) *", numGuests, colWidth, colGap), new Panel { Width = 0, Height = 0, Margin = Padding.Empty }));
         root.Controls.Add(pnlTablesHeader);
         root.Controls.Add(clbTables);
         root.Controls.Add(lblStatus);
@@ -2199,6 +2357,12 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         btnSave.Click += (s, e) =>
         {
+            if (dtpTime.Value < DateTime.Now.AddMinutes(-1))
+            {
+                MessageBox.Show("Giờ đến không được ở quá khứ. Vui lòng chọn lại.");
+                return;
+            }
+
             var chosen = GetChosen();
             var guests = (int)numGuests.Value;
 
@@ -2244,7 +2408,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             txtPhone.Text.Trim(),
             dtpTime.Value,
             (int)numDuration.Value,
-            numDeposit.Value,
+            0m, // không còn đặt cọc
             onCreated);
     }
 
