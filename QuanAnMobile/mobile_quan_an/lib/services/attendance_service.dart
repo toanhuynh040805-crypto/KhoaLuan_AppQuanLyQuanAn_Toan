@@ -123,6 +123,8 @@ class AttendanceService {
     required double longitude,
     required double radiusMeters,
     required double maxAccuracyMeters,
+    required double accuracyMeters,
+    required bool isMocked,
   }) async {
     final dynamic response =
         await _apiClient.put(
@@ -133,6 +135,9 @@ class AttendanceService {
         'radiusMeters': radiusMeters,
         'maxAccuracyMeters':
             maxAccuracyMeters,
+        'accuracyMeters':
+            accuracyMeters,
+        'isMocked': isMocked,
       },
     );
 
