@@ -148,6 +148,10 @@ class RealtimeService {
   final StreamController<void> _orderController =
       StreamController<void>.broadcast();
 
+  final StreamController<void> _shiftController =
+      StreamController<void>.broadcast();
+
+
   Stream<AppNotification> get notifications =>
       _notificationController.stream;
 
@@ -171,6 +175,10 @@ class RealtimeService {
 
   Stream<void> get orderChanges =>
       _orderController.stream;
+
+  Stream<void> get shiftChanges =>
+      _shiftController.stream;
+
 
   Future<void> start({
     required String employeeCode,
@@ -250,6 +258,11 @@ class RealtimeService {
     connection.on(
       'OrderUpdated',
       (_) => _orderController.add(null),
+    );
+
+    connection.on(
+      'ShiftChanged',
+      (_) => _shiftController.add(null),
     );
 
     connection.on(
