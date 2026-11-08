@@ -70,6 +70,29 @@ class StaffManagementService {
         .toList();
   }
 
+  Future<ManagedShift> createShift({
+    required String name,
+    required String startTime,
+    required String endTime,
+  }) async {
+    final dynamic response = await _apiClient.post(
+      '/shifts',
+      body: {
+        'name': name.trim(),
+        'startTime': startTime,
+        'endTime': endTime,
+      },
+    );
+
+    if (response is Map) {
+      return ManagedShift.fromJson(
+        Map<String, dynamic>.from(response),
+      );
+    }
+
+    throw const FormatException('Phản hồi tạo ca làm không hợp lệ');
+  }
+
   Future<List<ManagedArea>> getAreas() async {
     final dynamic response = await _apiClient.get('/areas');
     if (response is! List) return <ManagedArea>[];
