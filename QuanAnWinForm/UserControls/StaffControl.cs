@@ -59,6 +59,7 @@ public partial class StaffControl : UserControl, IRefreshableContent
     }
     private List<ShiftDto> _shifts = new();
     private List<ShiftAssignmentDto> _assignments = new();
+    private bool _refreshingShiftRealtime;
     private List<StaffTaskDto> _tasks = new();
     private List<AreaDto> _areas = new();
     private List<ShiftAssignmentDto> _history = new();
@@ -204,6 +205,10 @@ public partial class StaffControl : UserControl, IRefreshableContent
     public StaffControl()
     {
         InitializeComponent();
+
+        NotificationHubClient.ShiftChanged += OnRealtimeShiftChanged;
+        Disposed += (s, e) =>
+            NotificationHubClient.ShiftChanged -= OnRealtimeShiftChanged;
 
         // Cac danh sach cuon doc: tat thanh cuon ngang + dong tu gian theo chieu rong.
         foreach (var flow in new[] { flowShiftDefs, flowAssignments, flowTasks, flowHistory })
@@ -776,6 +781,54 @@ public partial class StaffControl : UserControl, IRefreshableContent
     // =====================================================================
     // TAB 2: CA LÀM & PHÂN CÔNG
     // =====================================================================
+
+    private void OnRealtimeShiftChanged()
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated)
+            return;
+
+        void RefreshOnUiThread()
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _ = RefreshShiftDataFromRealtimeAsync();
+        }
+
+        try
+        {
+            if (InvokeRequired)
+                BeginInvoke((Action)RefreshOnUiThread);
+            else
+                RefreshOnUiThread();
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng; bỏ qua sự kiện realtime cuối cùng.
+        }
+    }
+
+    private async Task RefreshShiftDataFromRealtimeAsync()
+    {
+        if (_refreshingShiftRealtime || IsDisposed || Disposing)
+            return;
+
+        _refreshingShiftRealtime = true;
+        try
+        {
+            await LoadShiftsAsync();
+            if (IsDisposed || Disposing) return;
+
+            await LoadAssignmentsAsync();
+            if (IsDisposed || Disposing) return;
+
+            await LoadHistoryAsync();
+        }
+        finally
+        {
+            _refreshingShiftRealtime = false;
+        }
+    }
 
     private async Task LoadShiftsAsync()
     {
