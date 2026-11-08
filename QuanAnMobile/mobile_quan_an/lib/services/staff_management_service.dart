@@ -70,6 +70,31 @@ class StaffManagementService {
         .toList();
   }
 
+  Future<ManagedShift> createShift({
+    required String name,
+    required String startTime,
+    required String endTime,
+  }) async {
+    final dynamic response = await _apiClient.post(
+      '/shifts',
+      body: {
+        'name': name.trim(),
+        'startTime': startTime,
+        'endTime': endTime,
+      },
+    );
+
+    if (response is! Map) {
+      throw const ApiException(
+        'Máy chủ không trả về dữ liệu ca làm vừa tạo',
+      );
+    }
+
+    return ManagedShift.fromJson(
+      Map<String, dynamic>.from(response),
+    );
+  }
+
   Future<List<ManagedArea>> getAreas() async {
     final dynamic response = await _apiClient.get('/areas');
     if (response is! List) return <ManagedArea>[];
