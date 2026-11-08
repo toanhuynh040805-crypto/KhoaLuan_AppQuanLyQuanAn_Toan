@@ -377,11 +377,24 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         ? -1
         : notifications.indexWhere((item) => item.id == notification.id);
 
+    // Không để payload realtime cũ ghi đè trạng thái đã đọc ở local.
+    // Trường hợp này dễ xảy ra khi người dùng vừa mở Thông báo rồi đổi tab.
+    final AppNotification appliedNotification =
+        existingIndex >= 0 &&
+                notifications[existingIndex].isRead &&
+                !notification.isRead
+            ? notification.copyWith(isRead: true)
+            : notification;
+
     void applyNotification() {
       if (existingIndex >= 0) {
-        notifications[existingIndex] = notification;
+        notifications[existingIndex] =
+            appliedNotification;
       } else {
-        notifications.insert(0, notification);
+        notifications.insert(
+          0,
+          appliedNotification,
+        );
       }
     }
 
@@ -453,6 +466,31 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
 
       if (!mounted) return;
 
+      // Giữ lại trạng thái "đã đọc" vừa được cập nhật trên thiết bị.
+      // Một request tải dữ liệu bắt đầu trước lúc người dùng mở màn Thông báo
+      // có thể trả về muộn với isRead=false; nếu thay toàn bộ list bằng response
+      // đó thì badge sẽ xuất hiện lại dù người dùng vừa đọc xong.
+      final Set<int> locallyReadNotificationIds = notifications
+          .where((item) => item.isRead && item.id != null)
+          .map((item) => item.id!)
+          .toSet();
+
+      final List<AppNotification>? mergedNotifications =
+          loadedNotifications
+              ?.where(_notificationEnabled)
+              .map(
+                (item) =>
+                    item.id != null &&
+                            locallyReadNotificationIds
+                                .contains(item.id) &&
+                            !item.isRead
+                        ? item.copyWith(
+                            isRead: true,
+                          )
+                        : item,
+              )
+              .toList();
+
       setState(() {
         tables
           ..clear()
@@ -461,10 +499,12 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
           ..clear()
           ..addAll(loadedOrders);
 
-        if (loadedNotifications != null) {
+        if (mergedNotifications != null) {
           notifications
             ..clear()
-            ..addAll(loadedNotifications.where(_notificationEnabled));
+            ..addAll(
+              mergedNotifications,
+            );
         }
 
         _isLoading = false;
