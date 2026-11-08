@@ -1051,7 +1051,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 const SizedBox(height: 16),
                 DropdownButtonFormField<
                     ManagedEmployee>(
-                  value: employee,
+                  initialValue: employee,
                   isExpanded: true,
                   decoration:
                       const InputDecoration(
@@ -1086,7 +1086,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<
                     ManagedShift>(
-                  value: shift,
+                  initialValue: shift,
                   isExpanded: true,
                   decoration:
                       const InputDecoration(
@@ -2026,7 +2026,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int>(
-                  value: taskUserId ?? 0,
+                  initialValue: taskUserId ?? 0,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Lọc nhân viên',
@@ -2159,7 +2159,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         padding: const EdgeInsets.all(14),
         children: [
           DropdownButtonFormField<int>(
-            value: historyUserId ?? 0,
+            initialValue: historyUserId ?? 0,
             isExpanded: true,
             decoration:
                 const InputDecoration(
