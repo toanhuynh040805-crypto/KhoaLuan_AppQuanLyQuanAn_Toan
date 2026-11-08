@@ -1550,6 +1550,17 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   }
 
   Future<void> _deleteAssignment(ManagedShiftAssignment a) async {
+    final bool hasCheckedIn =
+        a.checkInTime != null || a.status == 1 || a.status == 3;
+
+    if (hasCheckedIn) {
+      _show(
+        'Nhân viên đã điểm danh ca này, không thể xóa phân ca.',
+        TopMessageType.warning,
+      );
+      return;
+    }
+
     if (!await _confirm(
       'Xóa phân ca',
       'Xóa ca ${a.shiftName} của ${a.userName} ngày ${_date(a.workDate)}?',
@@ -2114,19 +2125,44 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                       if (value == 's3') _changeAssignmentStatus(a, 3);
                       if (value == 'delete') _deleteAssignment(a);
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'areas',
-                        child: Text('Sửa khu vực'),
-                      ),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 's0', child: Text('Đã xếp lịch')),
-                      PopupMenuItem(value: 's1', child: Text('Đã điểm danh')),
-                      PopupMenuItem(value: 's2', child: Text('Vắng mặt')),
-                      PopupMenuItem(value: 's3', child: Text('Đã hoàn thành')),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 'delete', child: Text('Xóa phân ca')),
-                    ],
+                    itemBuilder: (_) {
+                      final bool hasCheckedIn =
+                          a.checkInTime != null || a.status == 1 || a.status == 3;
+
+                      return [
+                        const PopupMenuItem(
+                          value: 'areas',
+                          child: Text('Sửa khu vực'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 's0',
+                          child: Text('Đã xếp lịch'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's1',
+                          child: Text('Đã điểm danh'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's2',
+                          child: Text('Vắng mặt'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's3',
+                          child: Text('Đã hoàn thành'),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: 'delete',
+                          enabled: !hasCheckedIn,
+                          child: Text(
+                            hasCheckedIn
+                                ? 'Không thể xóa - đã điểm danh'
+                                : 'Xóa phân ca',
+                          ),
+                        ),
+                      ];
+                    },
                   ),
                 ),
               ),
