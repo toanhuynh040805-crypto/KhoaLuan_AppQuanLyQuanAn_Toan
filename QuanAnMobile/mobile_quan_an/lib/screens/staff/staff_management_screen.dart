@@ -817,10 +817,30 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     await _loadAssignments();
   }
 
-  Future<void> _addShift() async {
-    final name = TextEditingController();
-    TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
-    TimeOfDay endTime = const TimeOfDay(hour: 16, minute: 0);
+  Future<void> _addShift() => _openShiftForm();
+
+  Future<void> _editShift(ManagedShift shift) =>
+      _openShiftForm(existing: shift);
+
+  Future<void> _openShiftForm({
+    ManagedShift? existing,
+  }) async {
+    final bool isEditing = existing != null;
+    final name = TextEditingController(
+      text: existing?.name ?? '',
+    );
+    TimeOfDay startTime = existing == null
+        ? const TimeOfDay(hour: 8, minute: 0)
+        : _timeOfDayFromApi(
+            existing.startTime,
+            const TimeOfDay(hour: 8, minute: 0),
+          );
+    TimeOfDay endTime = existing == null
+        ? const TimeOfDay(hour: 16, minute: 0)
+        : _timeOfDayFromApi(
+            existing.endTime,
+            const TimeOfDay(hour: 16, minute: 0),
+          );
     bool submitting = false;
 
     final bool? saved = await showModalBottomSheet<bool>(
@@ -859,9 +879,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Thêm ca làm',
-                    style: TextStyle(
+                  Text(
+                    isEditing ? 'Sửa ca làm' : 'Thêm ca làm',
+                    style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                     ),
@@ -924,12 +944,22 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
                               setSheetState(() => submitting = true);
                               try {
-                                await AppServices.staffManagementService
-                                    .createShift(
-                                  name: shiftName,
-                                  startTime: _timeOfDayForApi(startTime),
-                                  endTime: _timeOfDayForApi(endTime),
-                                );
+                                if (existing == null) {
+                                  await AppServices.staffManagementService
+                                      .createShift(
+                                    name: shiftName,
+                                    startTime: _timeOfDayForApi(startTime),
+                                    endTime: _timeOfDayForApi(endTime),
+                                  );
+                                } else {
+                                  await AppServices.staffManagementService
+                                      .updateShift(
+                                    id: existing.id,
+                                    name: shiftName,
+                                    startTime: _timeOfDayForApi(startTime),
+                                    endTime: _timeOfDayForApi(endTime),
+                                  );
+                                }
 
                                 if (sheetContext.mounted) {
                                   Navigator.pop(sheetContext, true);
@@ -948,7 +978,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                                   setSheetState(() => submitting = false);
                                   TopMessage.show(
                                     sheetContext,
-                                    message: 'Không thể tạo ca làm',
+                                    message: isEditing
+                                        ? 'Không thể cập nhật ca làm'
+                                        : 'Không thể tạo ca làm',
                                     type: TopMessageType.error,
                                   );
                                 }
@@ -963,8 +995,14 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Icon(Icons.add_alarm_outlined),
-                      label: const Text('Lưu ca làm'),
+                          : Icon(
+                              isEditing
+                                  ? Icons.save_outlined
+                                  : Icons.add_alarm_outlined,
+                            ),
+                      label: Text(
+                        isEditing ? 'Lưu thay đổi' : 'Lưu ca làm',
+                      ),
                     ),
                   ),
                 ],
@@ -983,11 +1021,65 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     name.dispose();
 
     if (saved == true && mounted) {
-      await _loadShifts();
+      await Future.wait<void>([
+        _loadShifts(),
+        _loadAssignments(),
+      ]);
+      if (!mounted) return;
       _show(
-        'Đã thêm ca làm. Dữ liệu dùng chung với WinForms.',
+        isEditing
+            ? 'Đã cập nhật ca làm. WinForms sẽ dùng dữ liệu mới khi tải lại.'
+            : 'Đã thêm ca làm. Dữ liệu dùng chung với WinForms.',
         TopMessageType.success,
       );
+    }
+  }
+
+  Future<void> _deleteShift(ManagedShift shift) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xóa ca làm?'),
+        content: Text(
+          'Bạn có chắc muốn xóa "${shift.name}" '
+          '(${shift.timeLabel}) không?\n\n'
+          'Ca đã có phân công sẽ không thể xóa để bảo toàn lịch sử.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Xóa ca'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await AppServices.staffManagementService.deleteShift(shift.id);
+      await Future.wait<void>([
+        _loadShifts(),
+        _loadAssignments(),
+      ]);
+      if (!mounted) return;
+      _show(
+        'Đã xóa ca làm. WinForms sẽ cập nhật khi tải lại dữ liệu.',
+        TopMessageType.success,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _show(e.message, TopMessageType.error);
+    } catch (_) {
+      if (!mounted) return;
+      _show('Không thể xóa ca làm', TopMessageType.error);
     }
   }
 
