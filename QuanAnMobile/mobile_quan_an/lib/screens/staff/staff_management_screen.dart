@@ -2013,7 +2013,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                       runSpacing: 8,
                       children: shifts
                           .map(
-                            (shift) => Chip(
+                            (shift) => InputChip(
                               avatar: const Icon(
                                 Icons.schedule,
                                 size: 17,
@@ -2021,6 +2021,14 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                               label: Text(
                                 '${shift.name} · ${shift.timeLabel}',
                               ),
+                              tooltip: 'Chạm để sửa ca',
+                              onPressed: () => _editShift(shift),
+                              onDeleted: () => _deleteShift(shift),
+                              deleteIcon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                              ),
+                              deleteButtonTooltipMessage: 'Xóa ca',
                             ),
                           )
                           .toList(),
@@ -2465,6 +2473,27 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   static String _timeOfDayForApi(TimeOfDay value) =>
       '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:00';
+
+  static TimeOfDay _timeOfDayFromApi(
+    String value,
+    TimeOfDay fallback,
+  ) {
+    final List<String> parts = value.split(':');
+    if (parts.length < 2) return fallback;
+
+    final int? hour = int.tryParse(parts[0]);
+    final int? minute = int.tryParse(parts[1]);
+    if (hour == null ||
+        minute == null ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59) {
+      return fallback;
+    }
+
+    return TimeOfDay(hour: hour, minute: minute);
+  }
 
   static String _time(DateTime v) =>
       '${v.hour.toString().padLeft(2, '0')}:${v.minute.toString().padLeft(2, '0')}';
