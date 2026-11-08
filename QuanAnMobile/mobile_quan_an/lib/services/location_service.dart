@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class LocationCheckResult {
   final bool isConfigured;
@@ -36,6 +35,7 @@ class LocationCheckResult {
         permissionGranted &&
         latitude != null &&
         longitude != null &&
+        !isMocked &&
         (!isConfigured || isInside);
   }
 }
@@ -53,89 +53,10 @@ class LocationService {
         host == '127.0.0.1' ||
         host == '::1';
 
-    return uri.scheme != 'https' &&
-        !localhost;
+    return uri.scheme != 'https' && !localhost;
   }
 
-  static const String _envLatitudeRaw =
-      String.fromEnvironment(
-    'RESTAURANT_LATITUDE',
-    defaultValue: '',
-  );
-
-  static const String _envLongitudeRaw =
-      String.fromEnvironment(
-    'RESTAURANT_LONGITUDE',
-    defaultValue: '',
-  );
-
-  static const String _envRadiusRaw =
-      String.fromEnvironment(
-    'RESTAURANT_RADIUS_METERS',
-    defaultValue: '100',
-  );
-
-  static double get geofenceRadiusMeters {
-    return double.tryParse(
-          _envRadiusRaw,
-        ) ??
-        100;
-  }
-
-  static const String _debugLatitudeKey =
-      'attendance_restaurant_debug_latitude';
-
-  static const String _debugLongitudeKey =
-      'attendance_restaurant_debug_longitude';
-
-  bool get _hasEnvironmentLocation {
-    return double.tryParse(
-              _envLatitudeRaw,
-            ) !=
-            null &&
-        double.tryParse(
-              _envLongitudeRaw,
-            ) !=
-            null;
-  }
-
-  Future<({double latitude, double longitude})?>
-      _getRestaurantLocation() async {
-    if (_hasEnvironmentLocation) {
-      return (
-        latitude:
-            double.parse(_envLatitudeRaw),
-        longitude:
-            double.parse(_envLongitudeRaw),
-      );
-    }
-
-    if (!kDebugMode) {
-      return null;
-    }
-
-    final SharedPreferences prefs =
-        await SharedPreferences.getInstance();
-
-    final double? latitude =
-        prefs.getDouble(_debugLatitudeKey);
-
-    final double? longitude =
-        prefs.getDouble(_debugLongitudeKey);
-
-    if (latitude == null ||
-        longitude == null) {
-      return null;
-    }
-
-    return (
-      latitude: latitude,
-      longitude: longitude,
-    );
-  }
-
-  Future<LocationCheckResult>
-      checkCurrentLocation({
+  Future<LocationCheckResult> checkCurrentLocation({
     bool requestPermission = true,
   }) async {
     if (_isInsecureWebContext) {
@@ -146,14 +67,13 @@ class LocationService {
         isInside: false,
         requiresSecureContext: true,
         message:
-            'Bản Web đang mở bằng HTTP nên Safari không cho truy cập GPS. '
-            'Điểm danh trên iPhone Web cần mở ứng dụng bằng HTTPS.',
+            'Bản Web đang mở bằng HTTP nên trình duyệt không cho truy cập GPS thật. '
+            'Điểm danh trên Web cần chạy bằng HTTPS.',
       );
     }
 
     final bool serviceEnabled =
-        await Geolocator
-            .isLocationServiceEnabled();
+        await Geolocator.isLocationServiceEnabled();
 
     if (!serviceEnabled) {
       return const LocationCheckResult(
@@ -161,36 +81,29 @@ class LocationService {
         serviceEnabled: false,
         permissionGranted: false,
         isInside: false,
-        message:
-            'Dịch vụ vị trí đang tắt.',
+        message: 'Dịch vụ vị trí đang tắt.',
       );
     }
 
     LocationPermission permission =
         await Geolocator.checkPermission();
 
-    if (permission ==
-            LocationPermission.denied &&
+    if (permission == LocationPermission.denied &&
         requestPermission) {
-      permission =
-          await Geolocator
-              .requestPermission();
+      permission = await Geolocator.requestPermission();
     }
 
-    if (permission ==
-        LocationPermission.denied) {
+    if (permission == LocationPermission.denied) {
       return const LocationCheckResult(
         isConfigured: false,
         serviceEnabled: true,
         permissionGranted: false,
         isInside: false,
-        message:
-            'Bạn chưa cấp quyền vị trí.',
+        message: 'Bạn chưa cấp quyền vị trí.',
       );
     }
 
-    if (permission ==
-        LocationPermission.deniedForever) {
+    if (permission == LocationPermission.deniedForever) {
       return const LocationCheckResult(
         isConfigured: false,
         serviceEnabled: true,
@@ -203,19 +116,13 @@ class LocationService {
 
     final Position position =
         await Geolocator.getCurrentPosition(
-      locationSettings:
-          const LocationSettings(
+      locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        timeLimit: Duration(
-          seconds: 12,
-        ),
+        timeLimit: Duration(seconds: 12),
       ),
     );
 
-    final restaurant =
-        await _getRestaurantLocation();
-
-    if (restaurant == null) {
+    if (position.isMocked) {
       return LocationCheckResult(
         isConfigured: false,
         serviceEnabled: true,
@@ -223,156 +130,29 @@ class LocationService {
         isInside: false,
         latitude: position.latitude,
         longitude: position.longitude,
-        accuracyMeters:
-            position.accuracy,
-        isMocked: position.isMocked,
-        message:
-            'Đã lấy vị trí GPS. Máy chủ sẽ kiểm tra phạm vi nhà hàng khi điểm danh.',
-      );
-    }
-
-    final double distance =
-        Geolocator.distanceBetween(
-      position.latitude,
-      position.longitude,
-      restaurant.latitude,
-      restaurant.longitude,
-    );
-
-    final bool inside =
-        distance <=
-            geofenceRadiusMeters;
-
-    if (!kDebugMode &&
-        position.isMocked) {
-      return LocationCheckResult(
-        isConfigured: true,
-        serviceEnabled: true,
-        permissionGranted: true,
-        isInside: false,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        distanceMeters: distance,
-        accuracyMeters:
-            position.accuracy,
+        accuracyMeters: position.accuracy,
         isMocked: true,
         message:
-            'Không thể điểm danh bằng vị trí mô phỏng.',
+            'Thiết bị đang sử dụng vị trí mô phỏng. Hãy dùng GPS thật trên thiết bị tại quán.',
       );
     }
 
     return LocationCheckResult(
-      isConfigured: true,
+      isConfigured: false,
       serviceEnabled: true,
       permissionGranted: true,
-      isInside: inside,
+      isInside: false,
       latitude: position.latitude,
       longitude: position.longitude,
-      distanceMeters: distance,
-      accuracyMeters:
-          position.accuracy,
-      isMocked: position.isMocked,
-      message: inside
-          ? 'Bạn đang ở trong phạm vi điểm danh.'
-          : 'Bạn đang ở ngoài phạm vi điểm danh.',
-    );
-  }
-
-  Future<LocationCheckResult>
-      calibrateDebugRestaurantLocation() async {
-    if (!kDebugMode) {
-      return const LocationCheckResult(
-        isConfigured: false,
-        serviceEnabled: true,
-        permissionGranted: false,
-        isInside: false,
-        message:
-            'Chức năng này chỉ dùng khi debug.',
-      );
-    }
-
-    final bool serviceEnabled =
-        await Geolocator
-            .isLocationServiceEnabled();
-
-    if (!serviceEnabled) {
-      return const LocationCheckResult(
-        isConfigured: false,
-        serviceEnabled: false,
-        permissionGranted: false,
-        isInside: false,
-        message:
-            'Dịch vụ vị trí đang tắt.',
-      );
-    }
-
-    LocationPermission permission =
-        await Geolocator.checkPermission();
-
-    if (permission ==
-        LocationPermission.denied) {
-      permission =
-          await Geolocator
-              .requestPermission();
-    }
-
-    if (permission ==
-            LocationPermission.denied ||
-        permission ==
-            LocationPermission.deniedForever) {
-      return const LocationCheckResult(
-        isConfigured: false,
-        serviceEnabled: true,
-        permissionGranted: false,
-        isInside: false,
-        message:
-            'Cần cấp quyền vị trí để cấu hình vị trí test.',
-      );
-    }
-
-    final Position position =
-        await Geolocator.getCurrentPosition(
-      locationSettings:
-          const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(
-          seconds: 12,
-        ),
-      ),
-    );
-
-    final SharedPreferences prefs =
-        await SharedPreferences.getInstance();
-
-    await prefs.setDouble(
-      _debugLatitudeKey,
-      position.latitude,
-    );
-
-    await prefs.setDouble(
-      _debugLongitudeKey,
-      position.longitude,
-    );
-
-    return LocationCheckResult(
-      isConfigured: true,
-      serviceEnabled: true,
-      permissionGranted: true,
-      isInside: true,
-      latitude: position.latitude,
-      longitude: position.longitude,
-      distanceMeters: 0,
-      accuracyMeters:
-          position.accuracy,
-      isMocked: position.isMocked,
+      accuracyMeters: position.accuracy,
+      isMocked: false,
       message:
-          'Đã lưu vị trí hiện tại làm vị trí nhà hàng để test debug.',
+          'Đã lấy GPS thật từ thiết bị. Máy chủ sẽ đối chiếu với vị trí quán đã lưu.',
     );
   }
 
   Future<bool> openLocationSettings() {
-    return Geolocator
-        .openLocationSettings();
+    return Geolocator.openLocationSettings();
   }
 
   Future<bool> openAppSettings() {
