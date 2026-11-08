@@ -1170,20 +1170,20 @@ class _MenuScreenState extends State<MenuScreen> {
         if (index == 1) return;
         _openUtilityTab(index);
       },
-      items: const [
-        BottomNavigationBarItem(
+      items: [
+        const BottomNavigationBarItem(
           icon: Icon(Icons.grid_view_rounded),
           label: 'Sơ đồ',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.restaurant_menu),
           label: 'Thực đơn',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.notifications_none),
+          icon: _notificationIcon(),
           label: 'Thông báo',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.person_outline),
           label: 'Cá nhân',
         ),
