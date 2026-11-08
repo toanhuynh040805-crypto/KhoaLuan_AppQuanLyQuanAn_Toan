@@ -99,6 +99,18 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     }
   }
 
+  Future<void> _loadShifts() async {
+    try {
+      final rows = await AppServices.staffManagementService.getShifts();
+      if (!mounted) return;
+      setState(() {
+        shifts = rows;
+      });
+    } on ApiException catch (e) {
+      _show(e.message, TopMessageType.error);
+    }
+  }
+
   Future<void> _loadTasks() async {
     if (mounted) setState(() => loadingTasks = true);
     try {
@@ -806,6 +818,175 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     if (picked == null || !mounted) return;
     setState(() => selectedDate = picked);
     await _loadAssignments();
+  }
+
+  Future<void> _addShift() async {
+    final name = TextEditingController();
+    TimeOfDay startTime = const TimeOfDay(hour: 8, minute: 0);
+    TimeOfDay endTime = const TimeOfDay(hour: 16, minute: 0);
+    bool submitting = false;
+
+    final bool? saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          Future<void> pickTime({
+            required bool isStart,
+          }) async {
+            final TimeOfDay initial = isStart ? startTime : endTime;
+            final TimeOfDay? picked = await showTimePicker(
+              context: sheetContext,
+              initialTime: initial,
+            );
+            if (picked == null || !sheetContext.mounted) return;
+            setSheetState(() {
+              if (isStart) {
+                startTime = picked;
+              } else {
+                endTime = picked;
+              }
+            });
+          }
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              4,
+              18,
+              MediaQuery.viewInsetsOf(context).bottom + 20,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Thêm ca làm',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: name,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên ca',
+                      hintText: 'Ví dụ: Ca sáng',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () => pickTime(isStart: true),
+                          icon: const Icon(Icons.login_outlined),
+                          label: Text(
+                            'Bắt đầu ${startTime.format(context)}',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () => pickTime(isStart: false),
+                          icon: const Icon(Icons.logout_outlined),
+                          label: Text(
+                            'Kết thúc ${endTime.format(context)}',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              final String shiftName = name.text.trim();
+                              if (shiftName.isEmpty) {
+                                TopMessage.show(
+                                  sheetContext,
+                                  message: 'Vui lòng nhập tên ca làm',
+                                  type: TopMessageType.warning,
+                                );
+                                return;
+                              }
+
+                              setSheetState(() => submitting = true);
+                              try {
+                                await AppServices.staffManagementService
+                                    .createShift(
+                                  name: shiftName,
+                                  startTime: _timeOfDayForApi(startTime),
+                                  endTime: _timeOfDayForApi(endTime),
+                                );
+
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext, true);
+                                }
+                              } on ApiException catch (e) {
+                                if (sheetContext.mounted) {
+                                  setSheetState(() => submitting = false);
+                                  TopMessage.show(
+                                    sheetContext,
+                                    message: e.message,
+                                    type: TopMessageType.error,
+                                  );
+                                }
+                              } catch (_) {
+                                if (sheetContext.mounted) {
+                                  setSheetState(() => submitting = false);
+                                  TopMessage.show(
+                                    sheetContext,
+                                    message: 'Không thể tạo ca làm',
+                                    type: TopMessageType.error,
+                                  );
+                                }
+                              }
+                            },
+                      icon: submitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.add_alarm_outlined),
+                      label: const Text('Lưu ca làm'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    name.dispose();
+
+    if (saved == true && mounted) {
+      await _loadShifts();
+      _show(
+        'Đã thêm ca làm. Dữ liệu dùng chung với WinForms.',
+        TopMessageType.success,
+      );
+    }
   }
 
   Future<void> _assignShift() async {
@@ -1689,10 +1870,71 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   Widget _shiftTab() {
     return RefreshIndicator(
-      onRefresh: _loadAssignments,
+      onRefresh: () async {
+        await Future.wait<void>([
+          _loadShifts(),
+          _loadAssignments(),
+        ]);
+      },
       child: ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Danh sách ca làm (${shifts.length})',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _addShift,
+                        icon: const Icon(Icons.add_alarm_outlined),
+                        label: const Text('Thêm ca'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  if (shifts.isEmpty)
+                    Text(
+                      'Chưa có ca làm. Tạo ca mới để bắt đầu phân ca.',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: shifts
+                          .map(
+                            (shift) => Chip(
+                              avatar: const Icon(
+                                Icons.schedule,
+                                size: 17,
+                              ),
+                              label: Text(
+                                '${shift.name} · ${shift.timeLabel}',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                ],
+              ),
+            ),
+          ),
           Row(
             children: [
               Expanded(
@@ -1705,7 +1947,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
               const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _assignShift,
-                icon: const Icon(Icons.add),
+                icon: const Icon(Icons.event_available_outlined),
                 label: const Text('Phân ca'),
               ),
             ],
@@ -2126,6 +2368,9 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   static String _date(DateTime v) =>
       '${v.day.toString().padLeft(2, '0')}/${v.month.toString().padLeft(2, '0')}/${v.year}';
+
+  static String _timeOfDayForApi(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:00';
 
   static String _time(DateTime v) =>
       '${v.hour.toString().padLeft(2, '0')}:${v.minute.toString().padLeft(2, '0')}';
