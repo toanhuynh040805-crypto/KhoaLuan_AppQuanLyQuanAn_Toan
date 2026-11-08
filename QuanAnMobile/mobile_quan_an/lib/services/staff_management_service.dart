@@ -86,7 +86,7 @@ class StaffManagementService {
 
     if (response is! Map) {
       throw const ApiException(
-        'Máy chủ không trả về dữ liệu ca làm vừa tạo',
+        message: 'Máy chủ không trả về dữ liệu ca làm vừa tạo',
       );
     }
 
