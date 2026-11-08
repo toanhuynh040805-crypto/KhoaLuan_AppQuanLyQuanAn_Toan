@@ -672,6 +672,19 @@ public class ShiftsController : ControllerBase
             .FirstOrDefaultAsync(a => a.ShiftAssignmentId == id);
         if (assignment is null) return NotFound();
 
+        var hasCheckedIn =
+            assignment.CheckInTime.HasValue ||
+            assignment.Status == AssignmentStatus.DaDiemDanh ||
+            assignment.Status == AssignmentStatus.DaHoanThanh;
+
+        if (hasCheckedIn)
+        {
+            return BadRequest(new
+            {
+                message = "Nhân viên đã điểm danh ca này, không thể xóa phân ca"
+            });
+        }
+
         var targetUserId = assignment.Employee?.UserId;
         var shiftName = assignment.Shift?.ShiftName ?? "";
         var workDate = assignment.WorkDate;
