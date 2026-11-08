@@ -1046,12 +1046,13 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       await Future.wait<void>([
         _loadShifts(),
         _loadAssignments(),
+        _loadHistory(),
       ]);
       if (!mounted) return;
       _show(
         isEditing
-            ? 'Đã cập nhật ca làm. WinForms sẽ dùng dữ liệu mới khi tải lại.'
-            : 'Đã thêm ca làm. Dữ liệu dùng chung với WinForms.',
+            ? 'Đã cập nhật ca làm và đồng bộ realtime với WinForms.'
+            : 'Đã thêm ca làm và đồng bộ realtime với WinForms.',
         TopMessageType.success,
       );
     }
@@ -1093,7 +1094,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       ]);
       if (!mounted) return;
       _show(
-        'Đã xóa ca làm. WinForms sẽ cập nhật khi tải lại dữ liệu.',
+        'Đã xóa ca làm và đồng bộ realtime với WinForms.',
         TopMessageType.success,
       );
     } on ApiException catch (e) {
