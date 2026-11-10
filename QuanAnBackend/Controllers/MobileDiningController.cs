@@ -18,6 +18,12 @@ internal sealed class CurrentWalkInGuestCountRow
     public int GuestCount { get; set; }
 }
 
+internal sealed class LinkedOpenOrderTableRow
+{
+    public int OrderId { get; set; }
+    public int TableId { get; set; }
+}
+
 [ApiController]
 [Route("api/mobile/dining")]
 public class MobileDiningController : ControllerBase
@@ -88,6 +94,37 @@ public class MobileDiningController : ControllerBase
                 .ToDictionaryAsync(
                     item => item.OrderId,
                     item => item.Amount);
+
+        var linkedOrderRows = new List<LinkedOpenOrderTableRow>();
+        try
+        {
+            linkedOrderRows = await _db.Database
+                .SqlQuery<LinkedOpenOrderTableRow>($"""
+                    SELECT ot.OrderId, ot.TableId
+                    FROM OrderTables ot
+                    INNER JOIN Orders o ON o.OrderId = ot.OrderId
+                    WHERE o.Status = N'DangMo';
+                    """)
+                .ToListAsync();
+        }
+        catch (DbException)
+        {
+            // DB cũ chưa có OrderTables: bàn đơn vẫn hoạt động bình thường.
+        }
+
+        var linkedOrderIdByTable = linkedOrderRows
+            .GroupBy(row => row.TableId)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderByDescending(row => row.OrderId)
+                    .First().OrderId);
+
+        var linkedTableIdsByOrder = linkedOrderRows
+            .GroupBy(row => row.OrderId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(row => row.TableId).ToHashSet());
 
         var currentWalkInGuests = new Dictionary<int, int>();
         try
@@ -161,11 +198,6 @@ public class MobileDiningController : ControllerBase
         var result = physicalGroups
             .Select(table =>
             {
-                var order = openOrders
-                    .Where(item => item.TableId == table.TableId)
-                    .OrderByDescending(item => item.OrderTime)
-                    .FirstOrDefault();
-
                 var physicalTableIds = tables
                     .Where(candidate =>
                         candidate.AreaId == table.AreaId &&
@@ -176,10 +208,40 @@ public class MobileDiningController : ControllerBase
                     .Select(candidate => candidate.TableId)
                     .ToHashSet();
 
-                var currentWalkInGuestCount = physicalTableIds
-                    .Select(physicalId =>
+                var sessionTableIds = physicalTableIds.ToHashSet();
+                int? linkedOrderId = null;
+
+                foreach (var physicalTableId in physicalTableIds)
+                {
+                    if (linkedOrderIdByTable.TryGetValue(
+                        physicalTableId,
+                        out var resolvedOrderId))
+                    {
+                        linkedOrderId = resolvedOrderId;
+                        break;
+                    }
+                }
+
+                if (linkedOrderId.HasValue &&
+                    linkedTableIdsByOrder.TryGetValue(
+                        linkedOrderId.Value,
+                        out var linkedTableIds))
+                {
+                    sessionTableIds.UnionWith(linkedTableIds);
+                }
+
+                var order = linkedOrderId.HasValue
+                    ? openOrders.FirstOrDefault(item =>
+                        item.OrderId == linkedOrderId.Value)
+                    : openOrders
+                        .Where(item => sessionTableIds.Contains(item.TableId))
+                        .OrderByDescending(item => item.OrderTime)
+                        .FirstOrDefault();
+
+                var currentWalkInGuestCount = sessionTableIds
+                    .Select(sessionTableId =>
                         currentWalkInGuests.TryGetValue(
-                            physicalId,
+                            sessionTableId,
                             out var guestCount)
                             ? (int?)guestCount
                             : null)
@@ -187,7 +249,7 @@ public class MobileDiningController : ControllerBase
 
                 var currentReservation = reservations
                     .Where(item =>
-                        physicalTableIds.Contains(item.TableId) &&
+                        sessionTableIds.Contains(item.TableId) &&
                         item.Status == ReservationStatus.DaNhanBan)
                     .OrderByDescending(item => item.ReservationTime)
                     .ThenByDescending(item => item.ReservationId)
@@ -195,7 +257,7 @@ public class MobileDiningController : ControllerBase
 
                 var nextReservation = reservations
                     .Where(item =>
-                        physicalTableIds.Contains(item.TableId) &&
+                        sessionTableIds.Contains(item.TableId) &&
                         item.Status == ReservationStatus.DaXacNhan &&
                         item.ReservationTime.AddMinutes(item.DurationMinutes) >= now)
                     .OrderBy(item => item.ReservationTime)
