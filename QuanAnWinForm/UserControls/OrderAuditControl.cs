@@ -323,8 +323,12 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
         _flowRecords.SuspendLayout();
         try
         {
-            foreach (Control old in _flowRecords.Controls)
+            foreach (var old in
+                     _flowRecords.Controls.Cast<Control>().ToList())
+            {
+                _flowRecords.Controls.Remove(old);
                 old.Dispose();
+            }
             _flowRecords.Controls.Clear();
 
             if (records.Count == 0)
