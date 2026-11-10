@@ -340,7 +340,10 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
         var lblCapacity = new Label
         {
-            Text = $"{table.Capacity} khách",
+            Text = table.Status == (int)TableStatusEnum.DangPhucVu &&
+                   table.GuestCount.HasValue
+                ? $"Số khách: {table.GuestCount.Value}/{table.Capacity}"
+                : $"Sức chứa: {table.Capacity} khách",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
             Location = new Point(12, 40),
@@ -451,7 +454,11 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         };
 
         if (table.Status == (int)TableStatusEnum.DangPhucVu)
+        {
             infoParts.Add(SessionLabel(table));
+            if (table.GuestCount.HasValue)
+                infoParts.Add($"Số khách hiện tại: {table.GuestCount.Value}");
+        }
 
         if (table.HasUpcomingReservation)
             infoParts.Add($"📅 {ReservationDateTimeLabel(table.NextReservationTime)}");
