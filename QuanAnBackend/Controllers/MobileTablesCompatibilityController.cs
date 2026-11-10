@@ -491,6 +491,60 @@ public class MobileTablesCompatibilityController : ControllerBase
                 if (targetOrderId.HasValue &&
                     targetOrderId.Value != sourceOrderId.Value)
                 {
+                    var sourceCustomerId = await ExecuteScalarNullableIntAsync(
+                        connection,
+                        transaction,
+                        "SELECT CustomerId FROM Orders WHERE OrderId = @OrderId;",
+                        ("@OrderId", sourceOrderId.Value)
+                    );
+                    var targetCustomerId = await ExecuteScalarNullableIntAsync(
+                        connection,
+                        transaction,
+                        "SELECT CustomerId FROM Orders WHERE OrderId = @OrderId;",
+                        ("@OrderId", targetOrderId.Value)
+                    );
+
+                    if (sourceCustomerId.HasValue &&
+                        targetCustomerId.HasValue &&
+                        sourceCustomerId.Value != targetCustomerId.Value)
+                    {
+                        var sourceCustomerName = await ExecuteScalarStringAsync(
+                            connection,
+                            transaction,
+                            "SELECT FullName FROM Customers WHERE CustomerId = @CustomerId;",
+                            ("@CustomerId", sourceCustomerId.Value)
+                        ) ?? $"#{sourceCustomerId.Value}";
+                        var targetCustomerName = await ExecuteScalarStringAsync(
+                            connection,
+                            transaction,
+                            "SELECT FullName FROM Customers WHERE CustomerId = @CustomerId;",
+                            ("@CustomerId", targetCustomerId.Value)
+                        ) ?? $"#{targetCustomerId.Value}";
+
+                        return Conflict(new
+                        {
+                            message =
+                                $"Không thể gộp đơn vì hai bàn đang gắn hai thành viên khác nhau: " +
+                                $"{sourceCustomerName} và {targetCustomerName}. " +
+                                "Có thể dùng Tách bàn nếu cần chia món."
+                        });
+                    }
+
+                    if (!targetCustomerId.HasValue && sourceCustomerId.HasValue)
+                    {
+                        await ExecuteAsync(
+                            connection,
+                            transaction,
+                            """
+                            UPDATE Orders
+                            SET CustomerId = @CustomerId
+                            WHERE OrderId = @TargetOrderId;
+                            """,
+                            ("@CustomerId", sourceCustomerId.Value),
+                            ("@TargetOrderId", targetOrderId.Value)
+                        );
+                    }
+
                     await ExecuteAsync(
                         connection,
                         transaction,
@@ -1127,11 +1181,12 @@ public class MobileTablesCompatibilityController : ControllerBase
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT TOP 1 OrderId
-            FROM Orders
-            WHERE TableId = @TableId
-              AND Status = N'DangMo'
-            ORDER BY OrderTime DESC;
+            SELECT TOP 1 o.OrderId
+            FROM Orders o
+            LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+            WHERE o.Status = N'DangMo'
+              AND (o.TableId = @TableId OR ot.TableId = @TableId)
+            ORDER BY o.OrderTime DESC, o.OrderId DESC;
             """;
         AddParameter(command, "@TableId", tableId);
 
