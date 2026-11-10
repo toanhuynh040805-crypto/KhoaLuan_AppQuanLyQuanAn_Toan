@@ -86,8 +86,7 @@ public class MobileOperationsController : ControllerBase
                     SELECT TOP 1 o.OrderId
                     FROM Orders o
                     LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
-                    WHERE o.Status = N'DangMo'
-                      AND (o.TableId = @TableId OR ot.TableId = @TableId)
+                    WHERE o.TableId = @TableId OR ot.TableId = @TableId
                     ORDER BY o.OrderTime DESC, o.OrderId DESC;
                     """;
                 AddParameter(orderCommand, "@TableId", tableId);
