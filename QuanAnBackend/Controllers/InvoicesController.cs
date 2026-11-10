@@ -215,6 +215,7 @@ public class InvoicesController : ControllerBase
                 .ToList(),
             invoice.SubTotal,
             invoice.DiscountAmount,
+            invoice.DepositAmount,
             PointsRedeemed = pointsRedeemed,
             PointsEarned = pointsEarned,
             LoyaltyDiscount = loyaltyDiscount,
