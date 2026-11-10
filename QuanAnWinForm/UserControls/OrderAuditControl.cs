@@ -139,6 +139,10 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
 
     private void BuildUi()
     {
+        // Màn này phải chịu được Windows display scaling 100% / 125% / 150%.
+        // Không dùng chiều cao hàng và Location tuyệt đối vì font được scale
+        // theo DPI nhưng các khung cố định có thể làm tiêu đề/bộ lọc chồng nhau.
+        AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = AppColors.Background;
 
         var root = new TableLayoutPanel
@@ -146,38 +150,56 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 3,
-            Padding = new Padding(18)
+            Padding = new Padding(18),
+            AutoSize = false
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 66F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 86F));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-        var header = new Panel { Dock = DockStyle.Fill };
+        var header = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Margin = new Padding(0),
+            Padding = new Padding(0, 2, 0, 10)
+        };
+
         var title = new Label
         {
             Text = "Nhật ký Order",
             Font = new Font("Segoe UI", 20F, FontStyle.Bold),
             ForeColor = AppColors.OnSurface,
             AutoSize = true,
-            Location = new Point(0, 4)
+            Margin = new Padding(0, 0, 0, 2)
         };
+
         var subtitle = new Label
         {
             Text = "Theo dõi hóa đơn, đợt gọi món, món đã xóa và hành trình chuyển/gộp bàn.",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
             AutoSize = true,
-            Location = new Point(2, 40)
+            MaximumSize = new Size(1200, 0),
+            Margin = new Padding(2, 0, 0, 0)
         };
+
         header.Controls.Add(title);
         header.Controls.Add(subtitle);
 
         var filters = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = true,
-            Padding = new Padding(0, 8, 0, 6)
+            Margin = new Padding(0),
+            Padding = new Padding(0, 4, 0, 12)
         };
 
         filters.Controls.Add(Field("Ngày", _cbDateMode));
@@ -189,10 +211,12 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
         _btnRefresh.BackColor = AppColors.Primary;
         _btnRefresh.ForeColor = Color.White;
         _btnRefresh.FlatAppearance.BorderSize = 0;
-        _btnRefresh.Margin = new Padding(12, 22, 0, 0);
+        _btnRefresh.AutoSize = true;
+        _btnRefresh.MinimumSize = new Size(92, 34);
+        _btnRefresh.Margin = new Padding(12, 24, 0, 0);
         filters.Controls.Add(_btnRefresh);
 
-        _lblSummary.Margin = new Padding(14, 29, 0, 0);
+        _lblSummary.Margin = new Padding(14, 31, 0, 0);
         filters.Controls.Add(_lblSummary);
 
         root.Controls.Add(header, 0, 0);
@@ -204,24 +228,33 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
 
     private static Control Field(string title, Control control)
     {
-        var panel = new Panel
+        var panel = new TableLayoutPanel
         {
-            Width = control.Width,
-            Height = 58,
-            Margin = new Padding(0, 0, 12, 0)
+            ColumnCount = 1,
+            RowCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = new Padding(0, 0, 12, 0),
+            Padding = new Padding(0)
         };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
         var label = new Label
         {
             Text = title,
             Font = AppFonts.LabelMd,
             ForeColor = AppColors.OnSurfaceVariant,
             AutoSize = true,
-            Location = new Point(0, 0)
+            Margin = new Padding(0, 0, 0, 4)
         };
-        control.Location = new Point(0, 22);
-        control.Height = 32;
-        panel.Controls.Add(label);
-        panel.Controls.Add(control);
+
+        control.Margin = new Padding(0);
+        control.MinimumSize = new Size(control.Width, 32);
+
+        panel.Controls.Add(label, 0, 0);
+        panel.Controls.Add(control, 0, 1);
         return panel;
     }
 
