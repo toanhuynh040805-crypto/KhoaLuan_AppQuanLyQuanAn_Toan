@@ -47,13 +47,17 @@ public sealed class OrderAuditController : ControllerBase
                 order.Invoices.Any(invoice =>
                     invoice.InvoiceDate >= day &&
                     invoice.InvoiceDate < nextDay))
+            .ToListAsync();
+
+        orders = orders
             .OrderByDescending(order =>
                 order.Invoices
                     .OrderByDescending(invoice => invoice.InvoiceDate)
                     .Select(invoice => (DateTime?)invoice.InvoiceDate)
                     .FirstOrDefault() ?? order.OrderTime)
-            .ToListAsync();
+            .ToList();
 
+        var allOrdersForDate = orders.ToList();
         var orderIds = orders.Select(order => order.OrderId).ToArray();
         var linkedTables = await LoadLinkedTablesAsync(orderIds);
         var operations = await LoadTableOperationsAsync(orderIds);
@@ -111,27 +115,41 @@ public sealed class OrderAuditController : ControllerBase
             })
             .ToListAsync();
 
-        var requesterOptions = await _db.Orders
-            .AsNoTracking()
-            .Where(order =>
-                order.PaymentRequestedByUserId.HasValue &&
-                (
-                    (order.OrderTime >= day &&
-                     order.OrderTime < nextDay) ||
-                    order.Invoices.Any(invoice =>
-                        invoice.InvoiceDate >= day &&
-                        invoice.InvoiceDate < nextDay)
-                ))
-            .Select(order => new
+        var requesterOptions = allOrdersForDate
+            .SelectMany(order =>
             {
-                userId = order.PaymentRequestedByUserId!.Value,
-                fullName = order.PaymentRequestedByUser != null
-                    ? order.PaymentRequestedByUser.FullName
-                    : ""
+                var options = new List<(int UserId, string FullName)>();
+
+                if (order.PaymentRequestedByUserId.HasValue)
+                {
+                    options.Add((
+                        order.PaymentRequestedByUserId.Value,
+                        order.PaymentRequestedByUser?.FullName ?? ""));
+                }
+
+                foreach (var invoice in order.Invoices)
+                {
+                    if (!invoice.RequestedByUserId.HasValue)
+                        continue;
+
+                    options.Add((
+                        invoice.RequestedByUserId.Value,
+                        invoice.RequestedByUser?.FullName ?? ""));
+                }
+
+                return options;
             })
-            .Distinct()
+            .GroupBy(item => item.UserId)
+            .Select(group => new
+            {
+                userId = group.Key,
+                fullName = group
+                    .Select(item => item.FullName)
+                    .FirstOrDefault(name =>
+                        !string.IsNullOrWhiteSpace(name)) ?? $"User #{group.Key}"
+            })
             .OrderBy(item => item.fullName)
-            .ToListAsync();
+            .ToList();
 
         var records = orders.Select(order =>
         {
