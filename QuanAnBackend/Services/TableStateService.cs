@@ -12,7 +12,7 @@ namespace QuanAnBackend.Services;
 /// </summary>
 public sealed class TableStateService
 {
-    private static readonly TimeSpan UpcomingReservationWindow = TimeSpan.FromHours(3);
+    private static readonly TimeSpan UpcomingReservationWindow = TimeSpan.FromHours(1);
 
     private readonly AppDbContext _db;
 
