@@ -334,6 +334,7 @@ public class ReservationsController : ControllerBase
                 Status = r.Status,
                 r.DepositAmount,
                 r.DepositPaid,
+                r.BookingGroupId,
                 r.Note,
                 CancelledByUserName = r.CancelledByUser != null ? r.CancelledByUser.Username : null,
                 r.CancelledAt
