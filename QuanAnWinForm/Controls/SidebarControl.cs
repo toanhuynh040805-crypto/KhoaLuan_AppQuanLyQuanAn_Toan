@@ -23,6 +23,7 @@ public partial class SidebarControl : UserControl
         new NavItem { Key = "sales",     Label = "Thanh toán",   AllowedRoles = new[] { "QuanLy", "ThuNgan", "PhucVu" } },
         new NavItem { Key = "tables",    Label = "Sơ đồ bàn",  AllowedRoles = new[] { "QuanLy", "ThuNgan", "PhucVu" } },
         new NavItem { Key = "orders",    Label = "Đơn hàng",   AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
+        new NavItem { Key = "order-audit", Label = "Nhật ký Order", AllowedRoles = new[] { "QuanLy", "Admin" } },
         new NavItem { Key = "menu",      Label = "Thực đơn",   AllowedRoles = new[] { "QuanLy" } },
         new NavItem { Key = "customers", Label = "Khách hàng", AllowedRoles = new[] { "QuanLy", "ThuNgan" } },
         new NavItem { Key = "staff",     Label = "Nhân viên",  AllowedRoles = new[] { "QuanLy" } },
