@@ -667,6 +667,31 @@ public class ApiService
         return res ?? new List<OrderSummaryDto>();
     }
 
+    public async Task<OrderAuditResponseDto> GetOrderAuditAsync(
+        DateTime date,
+        int? tableId = null,
+        int? paymentRequestedByUserId = null)
+    {
+        var qs = new List<string>
+        {
+            $"date={date:yyyy-MM-dd}"
+        };
+        if (tableId.HasValue && tableId.Value > 0)
+            qs.Add($"tableId={tableId.Value}");
+        if (paymentRequestedByUserId.HasValue &&
+            paymentRequestedByUserId.Value > 0)
+        {
+            qs.Add(
+                $"paymentRequestedByUserId={paymentRequestedByUserId.Value}");
+        }
+
+        var url = "/api/order-audit?" + string.Join("&", qs);
+        var response = await _http.GetFromJsonAsync<OrderAuditResponseDto>(
+            url,
+            JsonOpts);
+        return response ?? new OrderAuditResponseDto { Date = date.Date };
+    }
+
     public async Task<OrderDto?> GetOrderByIdAsync(int orderId)
     {
         return await _http.GetFromJsonAsync<OrderDto>($"/api/orders/{orderId}", JsonOpts);
