@@ -305,8 +305,11 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             // Giữ trạng thái chính là Có khách; reservation kế tiếp chỉ là badge phụ.
             bg = Color.FromArgb(255, 247, 237);
         }
-        else if (table.HasUpcomingReservation)
+        else if (IsReservationSoon(table))
         {
+            // Chỉ tô nổi bật bàn đặt trong vòng 1 giờ. Lịch đặt xa hơn vẫn
+            // hiện badge ngày/giờ nhưng nền giữ như bàn thường để không tạo
+            // cảm giác bị khóa.
             bg = Color.FromArgb(239, 246, 255);
         }
 
