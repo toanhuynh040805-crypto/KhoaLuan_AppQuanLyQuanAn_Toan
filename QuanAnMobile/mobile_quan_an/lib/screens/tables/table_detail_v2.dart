@@ -493,6 +493,14 @@ class _TableDetailV2State extends State<TableDetailV2> {
       return;
     }
 
+    // Một bàn có thể được dùng lại ngay sau khi hóa đơn trước đã thanh toán.
+    // Nếu phiên hiện tại chưa có món/order thì PaymentCompleted tới trễ của
+    // phiên cũ không được phép khóa/đóng màn bàn mới.
+    if (orderItems.isEmpty && currentAmount <= 0) {
+      _scheduleRealtimeReload();
+      return;
+    }
+
     unawaited(_finishPaymentAndClose());
   }
 
