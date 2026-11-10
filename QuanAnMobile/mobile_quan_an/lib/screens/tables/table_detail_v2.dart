@@ -1988,7 +1988,7 @@ class _TableDetailV2State extends State<TableDetailV2> {
                     child: ListTile(
                       dense: true,
                       leading: Icon(Icons.history_outlined),
-                      title: Text('Nhật ký Order'),
+                      title: Text('Nhật ký bàn'),
                     ),
                   ),
                 if (_canManageTables &&
