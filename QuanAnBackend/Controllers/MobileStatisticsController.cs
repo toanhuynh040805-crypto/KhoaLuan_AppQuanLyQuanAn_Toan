@@ -76,6 +76,7 @@ public class MobileStatisticsController : ControllerBase
         var avgInvoiceValue = invoiceCount > 0
             ? revenue / invoiceCount
             : 0m;
+        var guestCount = await GetGuestCountAsync(fromDate, toExclusive);
 
         var previousRevenue = await _db.Invoices
             .AsNoTracking()
@@ -195,11 +196,43 @@ public class MobileStatisticsController : ControllerBase
             invoiceCount,
             avgInvoiceValue,
             totalDiscount,
+            guestCount,
             trendPercent,
             revenuePoints,
             topItems,
             employees,
             campaigns
         });
+    }
+
+    private async Task<int> GetGuestCountAsync(
+        DateTime fromDate,
+        DateTime toExclusive)
+    {
+        var reservationGuests = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                (reservation.Status == ReservationStatus.DaNhanBan ||
+                 reservation.Status == ReservationStatus.HoanTat) &&
+                reservation.ReservationTime >= fromDate &&
+                reservation.ReservationTime < toExclusive)
+            .SumAsync(reservation => (int?)reservation.NumberOfGuests) ?? 0;
+
+        var walkInGuests = await _db.Database.SqlQuery<int>($"""
+            SELECT COALESCE(
+                SUM(CASE
+                    WHEN NumberOfGuests > 0 THEN NumberOfGuests
+                    ELSE 0
+                END),
+                0
+            ) AS [Value]
+            FROM WaitingQueue
+            WHERE COALESCE(SeatedTime, CheckInTime) >= {fromDate}
+              AND COALESCE(SeatedTime, CheckInTime) < {toExclusive}
+              AND CONVERT(NVARCHAR(50), Status) IN
+                  (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban');
+            """).SingleAsync();
+
+        return reservationGuests + walkInGuests;
     }
 }
