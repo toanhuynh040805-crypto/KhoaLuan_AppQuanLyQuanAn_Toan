@@ -11,6 +11,7 @@ class PaymentPreview {
   final int taxAmount;
   final int vipRoomFee;
   final int vipMinimumGap;
+  final int depositAmount;
   final int totalAmount;
 
   final int? customerId;
@@ -45,6 +46,7 @@ class PaymentPreview {
     required this.taxAmount,
     required this.vipRoomFee,
     required this.vipMinimumGap,
+    this.depositAmount = 0,
     required this.totalAmount,
     this.customerId,
     this.customerName,
@@ -93,6 +95,7 @@ class PaymentPreview {
       vipRoomFee: _parseInt(json['vipRoomFee']),
       vipMinimumGap:
           _parseInt(json['vipMinimumGap']),
+      depositAmount: _parseInt(json['depositAmount']),
       totalAmount: _parseInt(json['totalAmount']),
       customerId: json['customerId'] == null
           ? null
