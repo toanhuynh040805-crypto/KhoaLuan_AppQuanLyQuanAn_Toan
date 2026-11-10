@@ -1290,6 +1290,24 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
 
                 var reservations = await _api.GetReservationsAsync(date: dateFilter, status: statusFilter);
 
+                // Một lượt đặt nhiều bàn chỉ lưu cọc ở một Reservation để tránh
+                // khấu trừ lặp. Khi hiển thị, nhân bản giá trị tổng của BookingGroup
+                // sang từng dòng để mọi bàn đều cho người dùng thấy cùng thông tin cọc.
+                foreach (var group in reservations
+                    .Where(item => item.BookingGroupId.HasValue)
+                    .GroupBy(item => item.BookingGroupId!.Value))
+                {
+                    var groupDeposit = group.Sum(item => item.DepositAmount);
+                    var groupPaid = group.Any(item =>
+                        item.DepositPaid && item.DepositAmount > 0);
+
+                    foreach (var item in group)
+                    {
+                        item.DepositAmount = groupDeposit;
+                        item.DepositPaid = groupPaid;
+                    }
+                }
+
                 flowReservations.Controls.Clear();
                 if (reservations.Count == 0)
                 {
