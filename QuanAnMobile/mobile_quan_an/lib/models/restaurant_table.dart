@@ -19,6 +19,14 @@ class RestaurantTable {
   final String? tableType;
   final int? guestCount;
   final String? currentSessionType;
+  final int? reservationId;
+  final DateTime? reservationTime;
+  final String? reservationStatus;
+  final bool reservationReceived;
+  final int? reservationDurationMinutes;
+  final int? reservationDepositAmount;
+  final bool reservationDepositPaid;
+  final String? reservationNote;
   final int? nextReservationId;
   final DateTime? nextReservationTime;
   final String? nextReservationCustomerName;
@@ -40,6 +48,14 @@ class RestaurantTable {
     this.tableType,
     this.guestCount,
     this.currentSessionType,
+    this.reservationId,
+    this.reservationTime,
+    this.reservationStatus,
+    this.reservationReceived = false,
+    this.reservationDurationMinutes,
+    this.reservationDepositAmount,
+    this.reservationDepositPaid = false,
+    this.reservationNote,
     this.nextReservationId,
     this.nextReservationTime,
     this.nextReservationCustomerName,
@@ -89,6 +105,20 @@ class RestaurantTable {
     bool clearGuestCount = false,
     String? currentSessionType,
     bool clearCurrentSessionType = false,
+    int? reservationId,
+    bool clearReservationId = false,
+    DateTime? reservationTime,
+    bool clearReservationTime = false,
+    String? reservationStatus,
+    bool clearReservationStatus = false,
+    bool? reservationReceived,
+    int? reservationDurationMinutes,
+    bool clearReservationDurationMinutes = false,
+    int? reservationDepositAmount,
+    bool clearReservationDepositAmount = false,
+    bool? reservationDepositPaid,
+    String? reservationNote,
+    bool clearReservationNote = false,
     int? nextReservationId,
     bool clearNextReservationId = false,
     DateTime? nextReservationTime,
@@ -120,6 +150,28 @@ class RestaurantTable {
       currentSessionType: clearCurrentSessionType
           ? null
           : currentSessionType ?? this.currentSessionType,
+      reservationId: clearReservationId
+          ? null
+          : reservationId ?? this.reservationId,
+      reservationTime: clearReservationTime
+          ? null
+          : reservationTime ?? this.reservationTime,
+      reservationStatus: clearReservationStatus
+          ? null
+          : reservationStatus ?? this.reservationStatus,
+      reservationReceived:
+          reservationReceived ?? this.reservationReceived,
+      reservationDurationMinutes: clearReservationDurationMinutes
+          ? null
+          : reservationDurationMinutes ?? this.reservationDurationMinutes,
+      reservationDepositAmount: clearReservationDepositAmount
+          ? null
+          : reservationDepositAmount ?? this.reservationDepositAmount,
+      reservationDepositPaid:
+          reservationDepositPaid ?? this.reservationDepositPaid,
+      reservationNote: clearReservationNote
+          ? null
+          : reservationNote ?? this.reservationNote,
       nextReservationId: clearNextReservationId
           ? null
           : nextReservationId ?? this.nextReservationId,
@@ -176,6 +228,20 @@ class RestaurantTable {
               ? parsedGuestCount
               : null,
       currentSessionType: json['currentSessionType']?.toString(),
+      reservationId: json['reservationId'] == null
+          ? null
+          : _parseNullableInt(json['reservationId']),
+      reservationTime: _parseNullableDateTime(json['reservationTime']),
+      reservationStatus: json['reservationStatus']?.toString(),
+      reservationReceived: json['reservationReceived'] == true,
+      reservationDurationMinutes: json['reservationDurationMinutes'] == null
+          ? null
+          : _parseNullableInt(json['reservationDurationMinutes']),
+      reservationDepositAmount: json['reservationDepositAmount'] == null
+          ? null
+          : _parseInt(json['reservationDepositAmount']),
+      reservationDepositPaid: json['reservationDepositPaid'] == true,
+      reservationNote: json['reservationNote']?.toString(),
       nextReservationId: json['nextReservationId'] == null
           ? null
           : _parseNullableInt(json['nextReservationId']),
@@ -209,6 +275,14 @@ class RestaurantTable {
       'tableType': tableType,
       'guestCount': guestCount,
       'currentSessionType': currentSessionType,
+      'reservationId': reservationId,
+      'reservationTime': reservationTime?.toIso8601String(),
+      'reservationStatus': reservationStatus,
+      'reservationReceived': reservationReceived,
+      'reservationDurationMinutes': reservationDurationMinutes,
+      'reservationDepositAmount': reservationDepositAmount,
+      'reservationDepositPaid': reservationDepositPaid,
+      'reservationNote': reservationNote,
       'nextReservationId': nextReservationId,
       'nextReservationTime': nextReservationTime?.toIso8601String(),
       'nextReservationCustomerName': nextReservationCustomerName,
