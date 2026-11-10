@@ -1053,7 +1053,18 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                     return ListTile(
                       leading: const Icon(Icons.table_restaurant_outlined),
                       title: Text(table.name),
-                      subtitle: Text(table.areaName ?? ''),
+                      subtitle: Text(
+                        table.hasUpcomingReservation
+                            ? '${table.areaName ?? ''} • Đặt '
+                                '${_reservationDateTimeLabel(table.nextReservationTime)}'
+                            : (table.areaName ?? ''),
+                      ),
+                      trailing: table.isReservationSoon
+                          ? const Icon(
+                              Icons.warning_amber_rounded,
+                              color: Colors.orange,
+                            )
+                          : null,
                       onTap: () => Navigator.pop(dialogContext, table),
                     );
                   },
@@ -1073,12 +1084,20 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     required RestaurantTable sourceTable,
     required bool paymentRequested,
   }) async {
+    final DateTime now = DateTime.now();
     final List<RestaurantTable> options = tables
         .where(
           (table) =>
               !table.isTakeaway &&
               table.id != sourceTable.id &&
-              table.status == TableStatus.empty,
+              (
+                table.status == TableStatus.empty ||
+                (
+                  table.status == TableStatus.reserved &&
+                  table.nextReservationTime != null &&
+                  table.nextReservationTime!.isAfter(now)
+                )
+              ),
         )
         .toList();
 
@@ -1088,6 +1107,34 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     );
 
     if (!mounted || target == null) return false;
+
+    if (target.isReservationSoon) {
+      final bool continueTransfer =
+          await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Bàn đặt sắp tới'),
+              content: Text(
+                '${target.name} có khách đặt lúc '
+                '${_reservationDateTimeLabel(target.nextReservationTime)}.\n\n'
+                'Bạn vẫn có thể chuyển khách hiện tại sang bàn này như bàn thường. '
+                'Hãy chủ động trả hoặc chuyển bàn trước giờ khách đặt.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Hủy'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Vẫn chuyển bàn'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!continueTransfer) return false;
+    }
 
     try {
       await _tableService.transferTable(
