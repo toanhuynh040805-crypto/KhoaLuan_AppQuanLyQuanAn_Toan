@@ -334,6 +334,12 @@ public class MobileDiningController : ControllerBase
                     reservationStatus = currentReservation?.Status.ToString() ??
                         nextReservation?.Status.ToString(),
                     reservationReceived = currentReservation is not null,
+                    reservationCustomerName = currentReservation?.CustomerName ??
+                        nextReservation?.CustomerName,
+                    reservationCustomerPhone = currentReservation?.CustomerPhone ??
+                        nextReservation?.CustomerPhone,
+                    reservationGuestCount = currentReservation?.NumberOfGuests ??
+                        nextReservation?.NumberOfGuests,
                     reservationDurationMinutes =
                         currentReservation?.DurationMinutes ??
                         nextReservation?.DurationMinutes,
