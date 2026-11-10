@@ -13,6 +13,7 @@ import 'attendance_location_settings_screen.dart';
 import '../login/login_screen.dart';
 import '../invoices/invoice_history_screen.dart';
 import '../statistics/statistics_screen.dart';
+import '../order_audit/order_audit_screen.dart';
 import '../staff/staff_management_screen.dart';
 import '../../models/employee_profile.dart';
 import '../../services/app_services.dart';
@@ -636,6 +637,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   await Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const StatisticsScreen()),
+                  );
+                },
+              ),
+            ],
+
+            if (MobileAccessPolicy.canViewStatistics()) ...[
+              const SizedBox(height: 10),
+              _buildMenuItem(
+                context: context,
+                icon: Icons.manage_search_rounded,
+                iconBackground: const Color(0xFFEDE9FE),
+                iconColor: Colors.deepPurple,
+                title: 'Nhật ký Order',
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OrderAuditScreen(),
+                    ),
                   );
                 },
               ),
