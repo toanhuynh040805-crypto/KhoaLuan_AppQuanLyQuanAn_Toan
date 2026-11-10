@@ -40,6 +40,7 @@ internal sealed record TableListItem(
     string tableType,
     decimal? amount,
     string? customerName,
+    int? guestCount,
     int? linkedOrderId,
     bool isLinkPrimary,
     string? linkedWith,
@@ -219,6 +220,9 @@ public class TablesController : ControllerBase
                         reader.GetString(6),
                         canViewOrderDetails && status == "DangPhucVu" ? amount : (decimal?)null,
                         canViewOrderDetails ? customerName : null,
+                        canViewOrderDetails && numberOfGuests.HasValue && numberOfGuests.Value >= 0
+                            ? numberOfGuests
+                            : null,
                         canViewOrderDetails ? linkedOrderId : null,
                         canViewOrderDetails && isLinkPrimary,
                         canViewOrderDetails ? linkedWith : null,
@@ -288,6 +292,7 @@ public class TablesController : ControllerBase
                     table.AreaId,
                     table.Area?.AreaName ?? "",
                     table.TableType.ToString(),
+                    null,
                     null,
                     null,
                     null,
@@ -408,6 +413,10 @@ public class TablesController : ControllerBase
                 customerName = string.IsNullOrWhiteSpace(displayCustomerName)
                     ? table.customerName
                     : displayCustomerName,
+                guestCount = table.status == (int)TableStatus.DangPhucVu &&
+                             includeCustomerDetails
+                    ? currentReservation?.NumberOfGuests ?? table.guestCount
+                    : null,
                 currentSessionType = currentSessionType,
                 nextReservationId = nextReservation?.ReservationId,
                 nextReservationTime = nextReservation?.ReservationTime,
