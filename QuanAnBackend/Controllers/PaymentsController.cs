@@ -46,6 +46,7 @@ public record PaymentPreviewDto(
     decimal TaxAmount,
     decimal VIPRoomFee,
     decimal VIPMinimumGap,
+    decimal DepositAmount,
     decimal TotalAmount,
     string QrImageUrl,
     string QrPayload,
@@ -144,12 +145,16 @@ public class PaymentsController : ControllerBase
                 return BadRequest(new { message = "Khách hàng thành viên không tồn tại" });
         }
 
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(paidDeposit, Math.Max(0, subTotal));
+        var amountAfterDeposit = Math.Max(0, subTotal - appliedDeposit);
+
         var maxRedeemablePoints = customer is null
             ? 0
             : Math.Min(
                 customer.LoyaltyPoint,
                 (int)Math.Floor(
-                    subTotal / CustomerLoyaltyHelper.PointValueVnd));
+                    amountAfterDeposit / CustomerLoyaltyHelper.PointValueVnd));
 
         var requestedRedeemPoints = Math.Max(0, redeemPoints ?? 0);
         if (requestedRedeemPoints > 0 && customer is null)
@@ -171,7 +176,9 @@ public class PaymentsController : ControllerBase
 
         var loyaltyDiscount =
             requestedRedeemPoints * CustomerLoyaltyHelper.PointValueVnd;
-        var totalAmount = Math.Max(0, subTotal - loyaltyDiscount);
+        var totalAmount = Math.Max(
+            0,
+            subTotal - appliedDeposit - loyaltyDiscount);
         // Điểm tích thêm dựa trên giá trị món trước mọi giảm giá/đổi điểm.
         var estimatedEarnedPoints =
             CustomerLoyaltyHelper.CalculateEarnedPoints(subTotal);
@@ -202,6 +209,7 @@ public class PaymentsController : ControllerBase
             0,
             0,
             0,
+            appliedDeposit,
             totalAmount,
             qrImageUrl,
             qrPayload,
@@ -442,12 +450,20 @@ public class PaymentsController : ControllerBase
                 return BadRequest(new { message = "Khách hàng thành viên không tồn tại" });
         }
 
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(
+            paidDeposit,
+            Math.Max(0, afterCampaignTotal));
+        var amountAfterDeposit = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit);
+
         var maxRedeemablePoints = customer is null
             ? 0
             : Math.Min(
                 customer.LoyaltyPoint,
                 (int)Math.Floor(
-                    afterCampaignTotal /
+                    amountAfterDeposit /
                     CustomerLoyaltyHelper.PointValueVnd));
 
         var requestedRedeemPoints = Math.Max(0, redeemPoints ?? 0);
@@ -473,7 +489,7 @@ public class PaymentsController : ControllerBase
         var discountAmount = campaignDiscount + loyaltyDiscount;
         var totalAmount = Math.Max(
             0,
-            afterCampaignTotal - loyaltyDiscount);
+            afterCampaignTotal - appliedDeposit - loyaltyDiscount);
         // Điểm tích thêm dựa trên Tạm tính, không giảm theo khuyến mãi
         // hoặc số điểm khách vừa dùng cho hóa đơn này.
         var estimatedEarnedPoints =
@@ -487,6 +503,7 @@ public class PaymentsController : ControllerBase
             subTotal,
             discountAmount,
             campaignDiscount,
+            depositAmount = appliedDeposit,
             totalAmount,
             customerId = customer?.CustomerId,
             customerName = customer?.FullName,
@@ -782,6 +799,13 @@ public class PaymentsController : ControllerBase
         }
 
         var afterCampaignTotal = total - discountAmount;
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(
+            paidDeposit,
+            Math.Max(0, afterCampaignTotal));
+        var amountAfterDeposit = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit);
 
         // Đổi điểm tích lũy lấy giảm giá (nếu khách yêu cầu) - validate số điểm đổi
         // không vượt quá điểm hiện có VÀ không vượt quá giá trị hóa đơn còn lại
@@ -793,7 +817,11 @@ public class PaymentsController : ControllerBase
             if (customer is null)
                 return BadRequest(new { message = "Cần xác định khách hàng thành viên để đổi điểm" });
 
-            var maxRedeemable = Math.Min(customer.LoyaltyPoint, (int)Math.Floor(afterCampaignTotal / CustomerLoyaltyHelper.PointValueVnd));
+            var maxRedeemable = Math.Min(
+                customer.LoyaltyPoint,
+                (int)Math.Floor(
+                    amountAfterDeposit /
+                    CustomerLoyaltyHelper.PointValueVnd));
             if (request.RedeemPoints.Value > maxRedeemable)
                 return BadRequest(new { message = $"Khách chỉ có thể đổi tối đa {maxRedeemable} điểm cho hóa đơn này" });
 
@@ -801,7 +829,9 @@ public class PaymentsController : ControllerBase
             loyaltyDiscount = redeemedPoints * CustomerLoyaltyHelper.PointValueVnd;
         }
 
-        var netTotal = afterCampaignTotal - loyaltyDiscount;
+        var netTotal = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit - loyaltyDiscount);
 
         var invoice = new Invoice
         {
@@ -811,6 +841,7 @@ public class PaymentsController : ControllerBase
             DiscountAmount = discountAmount + loyaltyDiscount,
             AppliedCampaignId = campaign?.CampaignId,
             TaxAmount = 0,
+            DepositAmount = appliedDeposit,
             TotalAmount = netTotal,
             Status = InvoiceStatus.DaThanhToan,
             CreatedBy = cashierUserId, // legacy compatibility
@@ -1079,6 +1110,7 @@ public class PaymentsController : ControllerBase
             InvoiceId = invoice.InvoiceId, // de WinForm goi GET /api/invoices/{id} lay hoa don chi tiet, in bien lai
             SubTotal = total,
             DiscountAmount = discountAmount + loyaltyDiscount,
+            DepositAmount = appliedDeposit,
             TotalAmount = netTotal,
             Method = request.Method,
             QRCodeImageUrl = qrImageUrl,
@@ -1134,6 +1166,56 @@ public class PaymentsController : ControllerBase
         {
             if (shouldClose) await connection.CloseAsync();
         }
+    }
+
+    private async Task<decimal> GetPaidReservationDepositAsync(Order order)
+    {
+        if (IsTakeawayOrder(order))
+            return 0m;
+
+        var tableIds = await GetLinkedTableIdsAsync(
+            order.OrderId,
+            order.TableId);
+
+        if (tableIds.Count == 0)
+            return 0m;
+
+        var activeReservations = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                tableIds.Contains(reservation.TableId) &&
+                reservation.Status == ReservationStatus.DaNhanBan)
+            .Select(reservation => new
+            {
+                reservation.ReservationId,
+                reservation.BookingGroupId
+            })
+            .ToListAsync();
+
+        if (activeReservations.Count == 0)
+            return 0m;
+
+        var activeReservationIds = activeReservations
+            .Select(reservation => reservation.ReservationId)
+            .ToList();
+        var bookingGroupIds = activeReservations
+            .Where(reservation => reservation.BookingGroupId.HasValue)
+            .Select(reservation => reservation.BookingGroupId!.Value)
+            .Distinct()
+            .ToList();
+
+        return await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                reservation.DepositPaid &&
+                reservation.DepositAmount > 0 &&
+                (
+                    activeReservationIds.Contains(reservation.ReservationId) ||
+                    (reservation.BookingGroupId.HasValue &&
+                     bookingGroupIds.Contains(reservation.BookingGroupId.Value))
+                ))
+            .SumAsync(reservation => (decimal?)reservation.DepositAmount)
+            ?? 0m;
     }
 
     private async Task<List<int>> GetLinkedTableIdsAsync(int orderId, int? primaryTableId)
