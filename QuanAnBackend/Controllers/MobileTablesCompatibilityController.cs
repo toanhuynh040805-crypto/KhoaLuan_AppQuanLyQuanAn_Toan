@@ -1687,6 +1687,59 @@ public class MobileTablesCompatibilityController : ControllerBase
             ? $"{operationLabel}: {routeDescription}"
             : $"{operationLabel}: {routeDescription}. {details}";
 
+        string? sourceMemberName = null;
+        string? targetMemberName = null;
+
+        if (sourceOrderId.HasValue)
+        {
+            sourceMemberName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                """
+                SELECT c.FullName
+                FROM Orders o
+                LEFT JOIN Customers c ON c.CustomerId = o.CustomerId
+                WHERE o.OrderId = @OrderId;
+                """,
+                ("@OrderId", sourceOrderId.Value)
+            );
+        }
+
+        if (targetOrderId.HasValue)
+        {
+            targetMemberName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                """
+                SELECT c.FullName
+                FROM Orders o
+                LEFT JOIN Customers c ON c.CustomerId = o.CustomerId
+                WHERE o.OrderId = @OrderId;
+                """,
+                ("@OrderId", targetOrderId.Value)
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceMemberName) ||
+            !string.IsNullOrWhiteSpace(targetMemberName))
+        {
+            if (string.Equals(
+                sourceMemberName,
+                targetMemberName,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                fullDetails +=
+                    $". Thành viên: {sourceMemberName ?? targetMemberName}";
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(sourceMemberName))
+                    fullDetails += $". Thành viên nguồn: {sourceMemberName}";
+                if (!string.IsNullOrWhiteSpace(targetMemberName))
+                    fullDetails += $". Thành viên đích: {targetMemberName}";
+            }
+        }
+
         int? actorUserId = null;
         if (int.TryParse(
             User.FindFirstValue(ClaimTypes.NameIdentifier),
