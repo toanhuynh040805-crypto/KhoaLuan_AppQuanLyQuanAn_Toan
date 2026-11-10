@@ -1382,7 +1382,17 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             Location = new Point(10, 6),
             AutoSize = true
         };
-        var lblTable = new Label { Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, Location = new Point(10, 30), AutoSize = true };
+        var depositText = r.DepositAmount > 0
+            ? $" · Cọc {r.DepositAmount:N0}đ{(r.DepositPaid ? " ✓" : " (chưa thu)")}"
+            : "";
+        var lblTable = new Label
+        {
+            Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách{depositText}",
+            Font = AppFonts.BodyMd,
+            ForeColor = AppColors.OnSurfaceVariant,
+            Location = new Point(10, 30),
+            AutoSize = true
+        };
         var customerText = string.IsNullOrWhiteSpace(r.CustomerName) && string.IsNullOrWhiteSpace(r.CustomerPhone)
             ? "(Chưa có thông tin khách)"
             : $"{r.CustomerName}  {r.CustomerPhone}".Trim();
@@ -1934,7 +1944,16 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         var lblEndTime = new Label { Text = "Hết hạn giữ chỗ lúc: --:--", Font = AppFonts.BodyMd, ForeColor = AppColors.OnSurfaceVariant, AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
 
         var numGuests = new NumericUpDown { Font = AppFonts.BodyMd, Minimum = 1, Maximum = 100, Value = 4 };
-        
+        var numDeposit = new NumericUpDown
+        {
+            Font = AppFonts.BodyMd,
+            Minimum = 0,
+            Maximum = 100_000_000,
+            Value = 0,
+            Increment = 50_000,
+            ThousandsSeparator = true,
+            DecimalPlaces = 0
+        };
 
         // ---------- Gợi ý khách cũ ----------
         var lblHint = new Label { Font = AppFonts.BodyMd, ForeColor = AppColors.Tertiary, AutoSize = true, MaximumSize = new Size(fullWidth - 130, 0), Anchor = AnchorStyles.Left | AnchorStyles.Top, Margin = Padding.Empty };
@@ -2003,7 +2022,9 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         root.Controls.Add(pnlMember);
         root.Controls.Add(Row(Field("Giờ đến *", dtpTime, colWidth, colGap), new Panel { Width = 0, Height = 0, Margin = Padding.Empty }));
         root.Controls.Add(lblEndTime);
-        root.Controls.Add(Row(Field("Số khách (cả nhóm) *", numGuests, colWidth, colGap), new Panel { Width = 0, Height = 0, Margin = Padding.Empty }));
+        root.Controls.Add(Row(
+            Field("Số khách (cả nhóm) *", numGuests, colWidth, colGap),
+            Field("Tiền cọc đã thu (đ)", numDeposit, colWidth)));
         root.Controls.Add(pnlTablesHeader);
         root.Controls.Add(clbTables);
         root.Controls.Add(lblStatus);
@@ -2415,7 +2436,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             txtPhone.Text.Trim(),
             dtpTime.Value,
             (int)numDuration.Value,
-            0m, // không còn đặt cọc
+            numDeposit.Value,
             onCreated);
     }
 
@@ -2423,7 +2444,15 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     {
         try
         {
-            await _api.CreateReservationBatchAsync(tables, customerName, customerPhone, reservationTime, durationMinutes, depositAmount, null);
+            await _api.CreateReservationBatchAsync(
+                tables,
+                customerName,
+                customerPhone,
+                reservationTime,
+                durationMinutes,
+                depositAmount,
+                null,
+                depositPaid: depositAmount > 0);
             await onCreated();
         }
         catch (Exception ex)
