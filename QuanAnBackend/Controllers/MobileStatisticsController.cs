@@ -64,7 +64,7 @@ public class MobileStatisticsController : ControllerBase
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                Revenue = g.Sum(i => i.TotalAmount),
+                Revenue = g.Sum(i => i.TotalAmount + i.DepositAmount),
                 InvoiceCount = g.Count(),
                 TotalDiscount = g.Sum(i => i.DiscountAmount)
             })
@@ -84,7 +84,7 @@ public class MobileStatisticsController : ControllerBase
                 i.Status == InvoiceStatus.DaThanhToan &&
                 i.InvoiceDate >= previousFrom &&
                 i.InvoiceDate < previousTo)
-            .SumAsync(i => (decimal?)i.TotalAmount) ?? 0m;
+            .SumAsync(i => (decimal?)(i.TotalAmount + i.DepositAmount)) ?? 0m;
 
         double? trendPercent = previousRevenue > 0
             ? (double)((revenue - previousRevenue) / previousRevenue * 100m)
@@ -95,7 +95,7 @@ public class MobileStatisticsController : ControllerBase
             {
                 i.OrderId,
                 i.InvoiceDate,
-                i.TotalAmount
+                TotalAmount = i.TotalAmount + i.DepositAmount
             })
             .ToListAsync();
 
@@ -167,7 +167,7 @@ public class MobileStatisticsController : ControllerBase
             {
                 name = g.Key.Name,
                 invoiceCount = g.Count(),
-                revenue = g.Sum(i => i.TotalAmount)
+                revenue = g.Sum(i => i.TotalAmount + i.DepositAmount)
             })
             .OrderByDescending(x => x.revenue)
             .ToListAsync();
