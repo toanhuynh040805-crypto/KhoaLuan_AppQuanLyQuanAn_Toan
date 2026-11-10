@@ -299,6 +299,7 @@ public partial class MainForm : Form
     private string DefaultTabFor(string role, string stationName) => role switch
     {
         "QuanLy" => "dashboard",
+        "Admin" => "dashboard",
         "ThuNgan" => "sales",
         "PhucVu" => "sales",
         "Bep" when IsBarStation(stationName) => "bar",
@@ -328,6 +329,7 @@ public partial class MainForm : Form
         "dashboard" or
         "tables" or
         "orders" or
+        "order-audit" or
         "menu" or
         "customers" or
         "staff" or
@@ -344,6 +346,7 @@ public partial class MainForm : Form
         "sales" => BuildSalesControl(preselectedTableId, takeawayOrderId),
         "tables" => BuildDiningTabsControl(),
         "orders" => new OrderManagementControl(_userId),
+        "order-audit" => new OrderAuditControl(),
         "menu" => new MenuManagementControl(),
         "customers" => new CustomerManagementControl(),
         "staff" => new StaffControl(),
