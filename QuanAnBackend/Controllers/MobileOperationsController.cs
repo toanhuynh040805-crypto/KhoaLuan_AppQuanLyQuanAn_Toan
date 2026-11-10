@@ -83,10 +83,12 @@ public class MobileOperationsController : ControllerBase
             await using (var orderCommand = connection.CreateCommand())
             {
                 orderCommand.CommandText = """
-                    SELECT TOP 1 OrderId
-                    FROM Orders
-                    WHERE TableId = @TableId
-                    ORDER BY OrderTime DESC, OrderId DESC;
+                    SELECT TOP 1 o.OrderId
+                    FROM Orders o
+                    LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+                    WHERE o.Status = N'DangMo'
+                      AND (o.TableId = @TableId OR ot.TableId = @TableId)
+                    ORDER BY o.OrderTime DESC, o.OrderId DESC;
                     """;
                 AddParameter(orderCommand, "@TableId", tableId);
                 var value = await orderCommand.ExecuteScalarAsync();
