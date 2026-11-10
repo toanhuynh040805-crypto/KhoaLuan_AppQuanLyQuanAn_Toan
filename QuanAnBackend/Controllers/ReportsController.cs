@@ -100,7 +100,7 @@ public class ReportsController : ControllerBase
             WHERE COALESCE(SeatedTime, CheckInTime) >= {fromDate}
               AND COALESCE(SeatedTime, CheckInTime) < {toExclusive}
               AND CONVERT(NVARCHAR(50), Status) IN
-                  (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban');
+                  (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban')
             """).SingleAsync();
 
         return reservationGuests + walkInGuests;
