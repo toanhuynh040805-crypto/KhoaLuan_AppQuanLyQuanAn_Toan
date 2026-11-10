@@ -564,6 +564,34 @@ public class MobileTablesCompatibilityController : ControllerBase
                         ("@SourceOrderId", sourceOrderId.Value)
                     );
                 }
+                else if (targetOrderId.HasValue &&
+                         targetOrderId.Value == sourceOrderId.Value)
+                {
+                    // Hai bàn vốn đã ghép và đang dùng cùng một order.
+                    // Gộp đơn lúc này có nghĩa là bỏ bàn nguồn khỏi nhóm,
+                    // giữ toàn bộ order/thành viên/món ở bàn đích.
+                    await ExecuteAsync(
+                        connection,
+                        transaction,
+                        """
+                        UPDATE Orders
+                        SET TableId = @TargetTableId
+                        WHERE OrderId = @OrderId;
+
+                        DELETE FROM OrderTables
+                        WHERE OrderId = @OrderId
+                          AND TableId = @SourceTableId;
+
+                        UPDATE OrderTables
+                        SET IsPrimaryTable =
+                            CASE WHEN TableId = @TargetTableId THEN 1 ELSE 0 END
+                        WHERE OrderId = @OrderId;
+                        """,
+                        ("@OrderId", sourceOrderId.Value),
+                        ("@SourceTableId", request.SourceTableId),
+                        ("@TargetTableId", request.TargetTableId)
+                    );
+                }
                 else if (!targetOrderId.HasValue)
                 {
                     await ExecuteAsync(
