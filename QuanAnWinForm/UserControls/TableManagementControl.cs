@@ -275,9 +275,14 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
     private static string SessionLabel(TableDto table)
         => table.IsReservationSession ? "📅 ĐẶT" : "👤 THƯỜNG";
 
+    private static bool IsReservationSoon(TableDto table)
+        => table.NextReservationTime.HasValue &&
+           table.NextReservationTime.Value <= DateTime.Now.AddHours(1);
+
     private static bool IsIdleWithReservation(TableDto table)
         => table.Status != (int)TableStatusEnum.DangPhucVu &&
-           table.HasUpcomingReservation;
+           table.HasUpcomingReservation &&
+           IsReservationSoon(table);
 
     private Panel BuildTableTile(TableDto table)
     {
@@ -586,9 +591,19 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             return;
         }
 
+        var reservationSoon = IsReservationSoon(table);
+        var warningText = reservationSoon
+            ? "⚠ Bàn đặt sắp tới trong khoảng 1 giờ. " +
+              "Vẫn có thể nhận bàn thường, nhưng cần chủ động trả/chuyển bàn " +
+              "trước giờ khách đặt." +
+              Environment.NewLine + Environment.NewLine
+            : "";
+
         using var dialog = new Form
         {
-            Text = "Bàn có lịch đặt",
+            Text = reservationSoon
+                ? "Bàn đặt sắp tới"
+                : "Thông tin đặt bàn",
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -612,6 +627,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             TextAlign = ContentAlignment.MiddleLeft,
             Font = AppFonts.BodyMd,
             Text =
+                warningText +
                 $"{table.TableName} có lịch đặt tiếp theo:" +
                 Environment.NewLine +
                 $"{ReservationDateTimeLabel(table.NextReservationTime)}" +
