@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using QuanAnWinForm.Controls;
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
