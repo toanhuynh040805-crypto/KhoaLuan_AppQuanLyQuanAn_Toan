@@ -72,6 +72,12 @@ class RestaurantTable {
   bool get hasUpcomingReservation =>
       nextReservationId != null && nextReservationTime != null;
 
+  bool get isReservationSoon {
+    final DateTime? value = nextReservationTime;
+    if (value == null) return false;
+    return value.difference(DateTime.now()).inMinutes <= 60;
+  }
+
   bool get isReservationSession =>
       (currentSessionType ?? '').trim().toLowerCase() == 'reservation';
 
