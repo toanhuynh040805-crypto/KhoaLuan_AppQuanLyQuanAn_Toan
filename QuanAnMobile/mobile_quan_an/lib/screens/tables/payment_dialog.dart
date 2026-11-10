@@ -436,6 +436,11 @@ class _PaymentDialogState
                   'Đổi ${preview.redeemedPoints} điểm',
                   '-${_money(preview.loyaltyDiscount)}',
                 ),
+              if (preview.depositAmount > 0)
+                _row(
+                  'Tiền cọc đã thu',
+                  '-${_money(preview.depositAmount)}',
+                ),
               if (preview
                       .vipRoomFee >
                   0)
@@ -459,7 +464,9 @@ class _PaymentDialogState
                 height: 24,
               ),
               _row(
-                'Tổng thanh toán',
+                preview.depositAmount > 0
+                    ? 'Còn thanh toán'
+                    : 'Tổng thanh toán',
                 _money(
                   preview.totalAmount,
                 ),
