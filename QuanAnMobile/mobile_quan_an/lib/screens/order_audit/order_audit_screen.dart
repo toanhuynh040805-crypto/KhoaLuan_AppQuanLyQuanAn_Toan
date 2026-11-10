@@ -28,6 +28,7 @@ class _OrderAuditScreenState extends State<OrderAuditScreen> {
 
   StreamSubscription<void>? _orderSubscription;
   StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
+  StreamSubscription<TableStatusRealtimeEvent>? _tableSubscription;
   Timer? _realtimeDebounce;
 
   @override
@@ -39,6 +40,10 @@ class _OrderAuditScreenState extends State<OrderAuditScreen> {
     });
     _paymentSubscription =
         AppServices.realtimeService.paymentCompletions.listen((_) {
+      _scheduleRealtimeReload();
+    });
+    _tableSubscription =
+        AppServices.realtimeService.tableStatusChanges.listen((_) {
       _scheduleRealtimeReload();
     });
     _load();
@@ -59,6 +64,7 @@ class _OrderAuditScreenState extends State<OrderAuditScreen> {
     _realtimeDebounce?.cancel();
     _orderSubscription?.cancel();
     _paymentSubscription?.cancel();
+    _tableSubscription?.cancel();
     super.dispose();
   }
 
