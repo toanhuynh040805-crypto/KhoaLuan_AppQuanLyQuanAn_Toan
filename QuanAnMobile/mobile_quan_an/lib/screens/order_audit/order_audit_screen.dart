@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
@@ -23,10 +25,40 @@ class _OrderAuditScreenState extends State<OrderAuditScreen> {
   List<Map<String, dynamic>> _requesters = <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _records = <Map<String, dynamic>>[];
 
+  StreamSubscription<void>? _orderSubscription;
+  StreamSubscription<PaymentCompletedRealtimeEvent>? _paymentSubscription;
+  Timer? _realtimeDebounce;
+
   @override
   void initState() {
     super.initState();
+    _orderSubscription =
+        AppServices.realtimeService.orderChanges.listen((_) {
+      _scheduleRealtimeReload();
+    });
+    _paymentSubscription =
+        AppServices.realtimeService.paymentCompletions.listen((_) {
+      _scheduleRealtimeReload();
+    });
     _load();
+  }
+
+  void _scheduleRealtimeReload() {
+    _realtimeDebounce?.cancel();
+    _realtimeDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () {
+        if (mounted) _load();
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _realtimeDebounce?.cancel();
+    _orderSubscription?.cancel();
+    _paymentSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
