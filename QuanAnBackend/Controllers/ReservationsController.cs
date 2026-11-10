@@ -518,6 +518,9 @@ public class ReservationsController : ControllerBase
         if (request.NumberOfGuests < 1)
             return BadRequest(new { message = "Số lượng khách phải từ 1 trở lên" });
 
+        if (request.DepositAmount < 0)
+            return BadRequest(new { message = "Tiền cọc không được âm" });
+
         if (request.ReservationTime < DateTime.Now.AddMinutes(-5))
             return BadRequest(new { message = "Giờ đến phải ở hiện tại hoặc trong tương lai" });
 
@@ -648,6 +651,9 @@ public class ReservationsController : ControllerBase
     {
         if (request.Tables is null || request.Tables.Count == 0)
             return BadRequest(new { message = "Vui lòng chọn ít nhất 1 bàn" });
+
+        if (request.DepositAmount < 0)
+            return BadRequest(new { message = "Tiền cọc không được âm" });
 
         var ids = request.Tables.Select(t => t.TableId).ToList();
         if (ids.Distinct().Count() != ids.Count)
