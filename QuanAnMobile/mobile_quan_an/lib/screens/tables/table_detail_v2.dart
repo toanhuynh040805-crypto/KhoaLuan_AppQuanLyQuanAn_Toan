@@ -501,32 +501,52 @@ class _TableDetailV2State extends State<TableDetailV2> {
       return;
     }
 
-    // Không rebuild/hiện thông báo trên route đang bị đóng.
-    _closingAfterPayment = true;
+    // Khóa thao tác tạm thời trong lúc chờ dialog/overlay phía trên đóng.
+    // Không xóa món/cancel subscription trước khi chắc chắn route có thể pop,
+    // nếu không màn bàn sẽ bị kẹt ở trạng thái 0 món + nút bị disable.
+    setState(() {
+      _closingAfterPayment = true;
+    });
+
+    bool routeReady = false;
+    for (int attempt = 0; attempt < 30; attempt++) {
+      if (!mounted) return;
+      if (ModalRoute.of(context)?.isCurrent == true) {
+        routeReady = true;
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    if (!mounted) return;
+
+    if (!routeReady) {
+      // Có thể đang còn một dialog khác mở quá lâu. Không để cờ khóa bị kẹt;
+      // mở lại thao tác rồi tải trạng thái thật từ Backend ở nhịp realtime kế tiếp.
+      setState(() {
+        _closingAfterPayment = false;
+      });
+      _scheduleRealtimeReload();
+      return;
+    }
+
     paymentCompleted = true;
     isPaymentRequested = false;
     _paymentRequestLocked = false;
     _paymentRequestRemainingSeconds = 0;
     _paymentRequestLockTimer?.cancel();
+
+    // Chỉ dọn dữ liệu ngay trước khi đóng route.
     orderItems.clear();
     currentAmount = 0;
 
-    // Chặn heartbeat/realtime chạm vào State trong lúc route bị tháo.
     _tableLockHeartbeatTimer?.cancel();
     await _dishStatusSubscription?.cancel();
     _dishStatusSubscription = null;
     await _paymentSubscription?.cancel();
     _paymentSubscription = null;
 
-    // Realtime thanh toán có thể đến trong lúc PaymentDialog vẫn đang đóng.
-    // Chờ route chi tiết trở lại current trước khi pop để không pop nhầm dialog.
-    for (int attempt = 0; attempt < 8; attempt++) {
-      if (!mounted) return;
-      if (ModalRoute.of(context)?.isCurrent == true) break;
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-    }
-
-    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    if (!mounted) return;
     Navigator.of(context).pop(_result());
   }
 
