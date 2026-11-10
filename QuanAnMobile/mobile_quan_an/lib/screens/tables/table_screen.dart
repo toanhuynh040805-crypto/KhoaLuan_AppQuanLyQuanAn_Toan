@@ -521,7 +521,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     }
 
     if (table.status != TableStatus.occupied &&
-        table.hasUpcomingReservation) {
+        table.isReservationSoon) {
       return 'Đã đặt';
     }
 
@@ -541,7 +541,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
     }
 
     if (table.status != TableStatus.occupied &&
-        table.hasUpcomingReservation) {
+        table.isReservationSoon) {
       return const Color(0xFF2F80ED);
     }
 
@@ -599,11 +599,26 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         if (note.isNotEmpty) 'Ghi chú: $note',
       ];
 
+      final int minutesUntilReservation =
+          (table.nextReservationTime ?? table.reservationTime ?? DateTime.now())
+              .difference(DateTime.now())
+              .inMinutes;
+      final bool reservationSoon = minutesUntilReservation <= 60;
+      final String reservationWarning = reservationSoon
+          ? '⚠ Bàn đặt sắp tới trong khoảng 1 giờ. Bạn vẫn có thể nhận bàn thường, '
+              'nhưng cần chủ động trả/chuyển bàn trước giờ khách đặt.\n\n'
+          : '';
+
       final String? receiveMode = await showDialog<String>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('Thông tin đặt bàn • ${table.name}'),
+          title: Text(
+            reservationSoon
+                ? 'Bàn đặt sắp tới • ${table.name}'
+                : 'Thông tin đặt bàn • ${table.name}',
+          ),
           content: Text(
+            '$reservationWarning'
             '${reservationLines.join('\n')}\n\n'
             'Chọn cách nhận bàn:',
           ),
