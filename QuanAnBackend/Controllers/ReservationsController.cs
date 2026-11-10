@@ -17,10 +17,10 @@ namespace QuanAnBackend.Controllers;
 
 // DurationMinutes de null (khach cu/WinForm cu chua gui len) -> Controller se tu
 // dung Reservation.DefaultDurationMinutes (30 phut) thay vi bat buoc sua Client ngay.
-public record CreateReservationRequest(int TableId, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note);
-public record UpdateReservationRequest(string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note);
+public record CreateReservationRequest(int TableId, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note, bool DepositPaid = false);
+public record UpdateReservationRequest(string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note, bool DepositPaid = false);
 public record ReservationTableSlot(int TableId, int NumberOfGuests);
-public record CreateReservationBatchRequest(List<ReservationTableSlot> Tables, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, decimal DepositAmount, string? Note);
+public record CreateReservationBatchRequest(List<ReservationTableSlot> Tables, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, decimal DepositAmount, string? Note, bool DepositPaid = false);
 
 [ApiController]
 [Route("api/[controller]")]
@@ -585,6 +585,10 @@ public class ReservationsController : ControllerBase
             DurationMinutes = durationMinutes,
             NumberOfGuests = request.NumberOfGuests,
             DepositAmount = request.DepositAmount,
+            DepositPaid = request.DepositPaid && request.DepositAmount > 0,
+            DepositPaidAt = request.DepositPaid && request.DepositAmount > 0
+                ? DateTime.Now
+                : null,
             Note = request.Note,
             Source = CurrentReservationSource(),
             Status = ReservationStatus.ChoXacNhan
@@ -774,6 +778,14 @@ public class ReservationsController : ControllerBase
                 DurationMinutes = durationMinutes,
                 NumberOfGuests = slot.NumberOfGuests,
                 DepositAmount = first ? request.DepositAmount : 0,
+                DepositPaid = first &&
+                    request.DepositPaid &&
+                    request.DepositAmount > 0,
+                DepositPaidAt = first &&
+                    request.DepositPaid &&
+                    request.DepositAmount > 0
+                        ? DateTime.Now
+                        : null,
                 Note = string.IsNullOrWhiteSpace(note) ? null : note,
                 Source = source,
                 Status = ReservationStatus.ChoXacNhan
@@ -1084,6 +1096,8 @@ public class ReservationsController : ControllerBase
             reservation.DurationMinutes != durationMinutes ||
             reservation.NumberOfGuests != request.NumberOfGuests ||
             reservation.DepositAmount != request.DepositAmount ||
+            reservation.DepositPaid !=
+                (request.DepositPaid && request.DepositAmount > 0) ||
             reservation.Note != request.Note;
         if (!string.Equals(reservation.CustomerPhone, request.CustomerPhone, StringComparison.Ordinal))
             reservation.CustomerId = null;
@@ -1093,6 +1107,13 @@ public class ReservationsController : ControllerBase
         reservation.DurationMinutes = durationMinutes;
         reservation.NumberOfGuests = request.NumberOfGuests;
         reservation.DepositAmount = request.DepositAmount;
+        var newDepositPaid =
+            request.DepositPaid && request.DepositAmount > 0;
+        if (newDepositPaid && !reservation.DepositPaid)
+            reservation.DepositPaidAt = DateTime.Now;
+        else if (!newDepositPaid)
+            reservation.DepositPaidAt = null;
+        reservation.DepositPaid = newDepositPaid;
         reservation.Note = request.Note;
         await _db.SaveChangesAsync();
 
