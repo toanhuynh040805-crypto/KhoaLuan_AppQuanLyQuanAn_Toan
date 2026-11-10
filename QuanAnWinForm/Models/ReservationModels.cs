@@ -34,6 +34,7 @@ public class ReservationDto
     public int Status { get; set; } // khop ReservationStatusEnum o tren
     public decimal DepositAmount { get; set; }
     public bool DepositPaid { get; set; }
+    public int? BookingGroupId { get; set; }
     public string? Note { get; set; }
 
     // BO SUNG: xem lai "ai da huy dat ban nay" cho man Lich su dat ban.
