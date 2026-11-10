@@ -39,6 +39,7 @@ public partial class RevenueControl : UserControl, IRefreshableContent
 
     private readonly Label[] _insightCaptions = new Label[4];
     private readonly Label[] _insightValues = new Label[4];
+    private readonly StatCard _cardGuests = new();
 
     private static readonly string[] InvoiceStatusLabels = { "Chưa thanh toán", "Đã thanh toán", "Đã hủy" };
     private static readonly string[] Roman = { "I", "II", "III", "IV" };
@@ -46,6 +47,7 @@ public partial class RevenueControl : UserControl, IRefreshableContent
     public RevenueControl()
     {
         InitializeComponent();
+        ConfigureGuestCountCard();
         ArrangeFilterBar();
         BuildInsightRows();
         SetupGridColumns();
@@ -643,6 +645,29 @@ public partial class RevenueControl : UserControl, IRefreshableContent
         }
     }
 
+    private void ConfigureGuestCountCard()
+    {
+        tlCards.SuspendLayout();
+
+        tlCards.ColumnCount = 5;
+        tlCards.ColumnStyles.Clear();
+        for (var i = 0; i < 5; i++)
+            tlCards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20F));
+
+        cardRevenue.Margin = new Padding(0, 0, 12, 0);
+        cardProfit.Margin = new Padding(0, 0, 12, 0);
+        cardCost.Margin = new Padding(0, 0, 12, 0);
+        cardOrders.Margin = new Padding(0, 0, 12, 0);
+
+        _cardGuests.BackColor = Color.White;
+        _cardGuests.Dock = DockStyle.Fill;
+        _cardGuests.Margin = new Padding(0);
+        _cardGuests.Name = "cardGuests";
+        tlCards.Controls.Add(_cardGuests, 4, 0);
+
+        tlCards.ResumeLayout();
+    }
+
     private void ApplySummary(RevenueSummaryDto summary)
     {
         var trendText = summary.TrendPercent.HasValue ? $"{Math.Abs(summary.TrendPercent.Value):0.#}% so với kỳ trước" : null;
@@ -652,6 +677,7 @@ public partial class RevenueControl : UserControl, IRefreshableContent
         cardProfit.Configure("🏷️", AppColors.Warning, Color.FromArgb(255, 243, 224), "TỔNG TIỀN ĐÃ GIẢM", $"{summary.TotalDiscount:N0}đ");
         cardCost.Configure("📊", AppColors.Secondary, AppColors.SecondaryContainer, "GIÁ TRỊ TB/HÓA ĐƠN", $"{summary.AvgOrderValue:N0}đ");
         cardOrders.Configure("🧾", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "SỐ HÓA ĐƠN", summary.OrderCount.ToString("N0"));
+        _cardGuests.Configure("👥", AppColors.Primary, Color.FromArgb(239, 246, 255), "TỔNG SỐ KHÁCH", summary.GuestCount.ToString("N0"));
     }
 
     private void ApplyChart(List<RevenuePointDto> points, string unit)
