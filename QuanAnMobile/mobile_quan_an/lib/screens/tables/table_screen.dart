@@ -511,6 +511,10 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         '${two(value.hour)}:${two(value.minute)}';
   }
 
+  String _reservationReceiveLabel(RestaurantTable table) {
+    return table.reservationReceived ? 'Đã nhận bàn' : 'Chưa nhận bàn';
+  }
+
   String _statusText(RestaurantTable table) {
     if (paymentRequestedTableIds.contains(table.id)) {
       return 'Chờ thanh toán';
@@ -570,21 +574,38 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
       }
 
       final String reservationWhen =
-          _reservationDateTimeLabel(table.nextReservationTime);
+          _reservationDateTimeLabel(
+            table.reservationTime ?? table.nextReservationTime,
+          );
       final String customer =
           (table.nextReservationCustomerName ?? table.customerName ?? 'Khách')
               .trim();
-      final String guestText = table.nextReservationGuestCount == null
-          ? ''
-          : '\nSố khách: ${table.nextReservationGuestCount}';
+      final String phone = (table.customerPhone ?? '').trim();
+      final int? reservationGuests =
+          table.nextReservationGuestCount ?? table.guestCount;
+      final int deposit = table.reservationDepositAmount ?? 0;
+      final String note = (table.reservationNote ?? '').trim();
+      final List<String> reservationLines = <String>[
+        'Trạng thái: ${_reservationReceiveLabel(table)}',
+        if (table.reservationId != null) 'Mã đặt bàn: #${table.reservationId}',
+        'Thời gian: $reservationWhen',
+        'Khách: $customer',
+        if (phone.isNotEmpty) 'SĐT: $phone',
+        if (reservationGuests != null) 'Số khách: $reservationGuests',
+        if (table.reservationDurationMinutes != null)
+          'Giữ bàn: ${table.reservationDurationMinutes} phút',
+        if (deposit > 0)
+          'Tiền cọc: ${_formatMoney(deposit)}'
+              '${table.reservationDepositPaid ? ' • Đã cọc' : ' • Chưa cọc'}',
+        if (note.isNotEmpty) 'Ghi chú: $note',
+      ];
 
       final String? receiveMode = await showDialog<String>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('${table.name} có lịch đặt'),
+          title: Text('Thông tin đặt bàn • ${table.name}'),
           content: Text(
-            'Lịch đặt tiếp theo: $reservationWhen\n'
-            'Khách: $customer$guestText\n\n'
+            '${reservationLines.join('\n')}\n\n'
             'Chọn cách nhận bàn:',
           ),
           actions: [
@@ -642,6 +663,12 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         clearNextReservationTime: receivedReservation,
         clearNextReservationCustomerName: receivedReservation,
         clearNextReservationGuestCount: receivedReservation,
+        reservationReceived: receivedReservation
+            ? true
+            : table.reservationReceived,
+        reservationStatus: receivedReservation
+            ? 'DaNhanBan'
+            : table.reservationStatus,
       );
       _replaceTable(current);
     } else if (table.status == TableStatus.empty) {
@@ -708,6 +735,8 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         amount: 0,
         currentSessionType: 'Reservation',
         clearTime: true,
+        reservationReceived: true,
+        reservationStatus: 'DaNhanBan',
       );
       _replaceTable(current);
     }
@@ -2444,7 +2473,7 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                         ),
                         const SizedBox(width: 3),
                         Text(
-                          table.isReservationSession ? 'ĐẶT' : 'THƯỜNG',
+                          table.isReservationSession ? 'ĐÃ NHẬN' : 'THƯỜNG',
                           style: TextStyle(
                             color: table.isReservationSession
                                 ? const Color(0xFF2563EB)
@@ -2530,6 +2559,14 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              ),
+              Text(
+                _reservationReceiveLabel(table),
+                style: const TextStyle(
+                  color: Color(0xFF2563EB),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               if (table.nextReservationGuestCount != null)
                 Text(
