@@ -2258,8 +2258,9 @@ class _TableDetailV2State extends State<TableDetailV2> {
               const Divider(height: 28),
               _buildReservationInfoCard(),
             ],
-            if ((currentTable.customerName ?? '').trim().isNotEmpty ||
-                (currentTable.customerPhone ?? '').trim().isNotEmpty) ...[
+            if (currentTable.reservationId == null &&
+                ((currentTable.customerName ?? '').trim().isNotEmpty ||
+                    (currentTable.customerPhone ?? '').trim().isNotEmpty)) ...[
               const Divider(height: 28),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
