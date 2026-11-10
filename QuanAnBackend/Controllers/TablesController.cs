@@ -119,9 +119,17 @@ public class TablesController : ControllerBase
                                 ON mi.MenuItemId = oi.MenuItemId
                             LEFT JOIN Combos cb
                                 ON cb.ComboId = oi.ComboId
-                            WHERE o.TableId = t.TableId
-                              AND o.Status = N'DangMo'
+                            WHERE o.Status = N'DangMo'
                               AND oi.Status <> N'DaHuy'
+                              AND
+                              (
+                                  o.TableId = t.TableId
+                                  OR
+                                  (
+                                      lk.OrderId IS NOT NULL
+                                      AND o.OrderId = lk.OrderId
+                                  )
+                              )
                         ),
                         0
                     ) AS Amount,
@@ -133,14 +141,42 @@ public class TablesController : ControllerBase
                                 ELSE NULL
                             END
                         FROM Reservations r
-                        WHERE r.TableId = t.TableId
+                        WHERE
+                          (
+                              r.TableId = t.TableId
+                              OR
+                              (
+                                  lk.OrderId IS NOT NULL
+                                  AND EXISTS
+                                  (
+                                      SELECT 1
+                                      FROM OrderTables linkedReservationTable
+                                      WHERE linkedReservationTable.OrderId = lk.OrderId
+                                        AND linkedReservationTable.TableId = r.TableId
+                                  )
+                              )
+                          )
                           AND r.Status IN (N'DaXacNhan', N'DaNhanBan')
                         ORDER BY r.ReservationTime DESC, r.ReservationId DESC
                     ) AS ReservedCustomerName,
                     (
                         SELECT TOP 1 w.NumberOfGuests
                         FROM WaitingQueue w
-                        WHERE w.AssignedTableId = t.TableId
+                        WHERE
+                          (
+                              w.AssignedTableId = t.TableId
+                              OR
+                              (
+                                  lk.OrderId IS NOT NULL
+                                  AND EXISTS
+                                  (
+                                      SELECT 1
+                                      FROM OrderTables linkedGuestTable
+                                      WHERE linkedGuestTable.OrderId = lk.OrderId
+                                        AND linkedGuestTable.TableId = w.AssignedTableId
+                                  )
+                              )
+                          )
                           AND w.Status = N'DaNhanBan'
                                                 ORDER BY COALESCE(w.SeatedTime, w.CheckInTime) DESC, w.QueueId DESC
                     ) AS NumberOfGuests,
