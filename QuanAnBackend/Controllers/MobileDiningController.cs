@@ -12,6 +12,12 @@ namespace QuanAnBackend.Controllers;
 
 public record UpdateMobileGuestCountRequest(int GuestCount);
 
+internal sealed class CurrentWalkInGuestCountRow
+{
+    public int TableId { get; set; }
+    public int GuestCount { get; set; }
+}
+
 [ApiController]
 [Route("api/mobile/dining")]
 public class MobileDiningController : ControllerBase
@@ -83,6 +89,45 @@ public class MobileDiningController : ControllerBase
                     item => item.OrderId,
                     item => item.Amount);
 
+        var currentWalkInGuests = new Dictionary<int, int>();
+        try
+        {
+            var walkInRows = await _db.Database
+                .SqlQuery<CurrentWalkInGuestCountRow>($"""
+                    WITH RankedWalkIns AS
+                    (
+                        SELECT
+                            w.AssignedTableId AS TableId,
+                            w.NumberOfGuests AS GuestCount,
+                            ROW_NUMBER() OVER
+                            (
+                                PARTITION BY w.AssignedTableId
+                                ORDER BY COALESCE(w.SeatedTime, w.CheckInTime) DESC,
+                                         w.QueueId DESC
+                            ) AS RowNumber
+                        FROM WaitingQueue w
+                        WHERE w.AssignedTableId IS NOT NULL
+                          AND CONVERT(NVARCHAR(50), w.Status) IN
+                              (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban')
+                    )
+                    SELECT TableId, GuestCount
+                    FROM RankedWalkIns
+                    WHERE RowNumber = 1;
+                    """)
+                .ToListAsync();
+
+            currentWalkInGuests = walkInRows
+                .GroupBy(row => row.TableId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First().GuestCount);
+        }
+        catch (DbException)
+        {
+            // DB cũ có thể chưa có WaitingQueue. Giữ màn hình bàn hoạt động,
+            // chỉ bỏ qua số khách walk-in thay vì làm hỏng toàn bộ dashboard.
+        }
+
         var now = DateTime.Now;
         var reservations = await _db.Reservations
             .AsNoTracking()
@@ -130,6 +175,15 @@ public class MobileDiningController : ControllerBase
                             StringComparison.OrdinalIgnoreCase))
                     .Select(candidate => candidate.TableId)
                     .ToHashSet();
+
+                var currentWalkInGuestCount = physicalTableIds
+                    .Select(physicalId =>
+                        currentWalkInGuests.TryGetValue(
+                            physicalId,
+                            out var guestCount)
+                            ? (int?)guestCount
+                            : null)
+                    .FirstOrDefault(value => value.HasValue);
 
                 var currentReservation = reservations
                     .Where(item =>
@@ -207,7 +261,7 @@ public class MobileDiningController : ControllerBase
                             : nextReservation?.CustomerPhone),
                     guestCount = currentReservation?.NumberOfGuests ??
                         (table.Status == TableStatus.DangPhucVu
-                            ? (int?)null
+                            ? currentWalkInGuestCount
                             : nextReservation?.NumberOfGuests),
                     time = startedAt?.ToString("HH:mm"),
                     currentSessionType,
