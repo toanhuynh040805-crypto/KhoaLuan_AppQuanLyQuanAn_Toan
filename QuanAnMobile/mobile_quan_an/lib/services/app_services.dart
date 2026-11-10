@@ -16,6 +16,7 @@ import 'reference_ops_service.dart';
 import 'table_lock_service.dart';
 import 'customer_service.dart';
 import 'statistics_service.dart';
+import 'order_audit_service.dart';
 import 'staff_management_service.dart';
 
 class AppServices {
@@ -58,6 +59,11 @@ class AppServices {
 
   static final StatisticsService statisticsService =
       StatisticsService(
+    apiClient: apiClient,
+  );
+
+  static final OrderAuditService orderAuditService =
+      OrderAuditService(
     apiClient: apiClient,
   );
 
