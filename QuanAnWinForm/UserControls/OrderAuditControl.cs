@@ -51,11 +51,19 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
 
     private bool _suppress;
     private int _loadVersion;
+    private readonly System.Windows.Forms.Timer _realtimeTimer =
+        new() { Interval = 500 };
 
     public OrderAuditControl()
     {
         BuildUi();
         WireEvents();
+
+        _realtimeTimer.Tick += async (_, _) =>
+        {
+            _realtimeTimer.Stop();
+            await LoadDataAsync(silent: true);
+        };
 
         _cbDateMode.Items.AddRange(new object[]
         {
@@ -67,11 +75,64 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
         _dtpDate.Value = DateTime.Today;
         _dtpDate.Enabled = false;
 
-        Load += async (_, _) => await LoadDataAsync();
+        Load += async (_, _) =>
+        {
+            SubscribeRealtime();
+            await LoadDataAsync();
+        };
+        Disposed += (_, _) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeTimer.Stop();
+            _realtimeTimer.Dispose();
+        };
         _flowRecords.Resize += (_, _) => ResizeCards();
     }
 
     public Task RefreshDataAsync() => LoadDataAsync(silent: true);
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.PaymentRequested += OnPaymentRequested;
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled += OnOrderItemCancelled;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.PaymentRequested -= OnPaymentRequested;
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
+        NotificationHubClient.OrderItemCancelled -= OnOrderItemCancelled;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnPaymentRequested(PaymentRequestedPayload _) => QueueRealtimeRefresh();
+    private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
+    private void OnItemStatusUpdated(ItemStatusUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnOrderItemCancelled(OrderItemCancelledPayload _) => QueueRealtimeRefresh();
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed) return;
+                _realtimeTimer.Stop();
+                _realtimeTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
+    }
 
     private void BuildUi()
     {
