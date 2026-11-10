@@ -95,6 +95,7 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
     {
         UnsubscribeRealtime();
         NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
         NotificationHubClient.PaymentRequested += OnPaymentRequested;
         NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
         NotificationHubClient.ItemStatusUpdated += OnItemStatusUpdated;
@@ -105,6 +106,7 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
     private void UnsubscribeRealtime()
     {
         NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
         NotificationHubClient.PaymentRequested -= OnPaymentRequested;
         NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
         NotificationHubClient.ItemStatusUpdated -= OnItemStatusUpdated;
@@ -113,6 +115,7 @@ public sealed class OrderAuditControl : UserControl, IRefreshableContent
     }
 
     private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload _) => QueueRealtimeRefresh();
     private void OnPaymentRequested(PaymentRequestedPayload _) => QueueRealtimeRefresh();
     private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
     private void OnItemStatusUpdated(ItemStatusUpdatedPayload _) => QueueRealtimeRefresh();
