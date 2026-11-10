@@ -578,11 +578,15 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
             table.reservationTime ?? table.nextReservationTime,
           );
       final String customer =
-          (table.nextReservationCustomerName ?? table.customerName ?? 'Khách')
+          (table.reservationCustomerName ??
+                  table.nextReservationCustomerName ??
+                  table.customerName ??
+                  'Khách')
               .trim();
-      final String phone = (table.customerPhone ?? '').trim();
+      final String phone =
+          (table.reservationCustomerPhone ?? table.customerPhone ?? '').trim();
       final int? reservationGuests =
-          table.nextReservationGuestCount ?? table.guestCount;
+          table.reservationGuestCount ?? table.nextReservationGuestCount;
       final int deposit = table.reservationDepositAmount ?? 0;
       final String note = (table.reservationNote ?? '').trim();
       final List<String> reservationLines = <String>[
