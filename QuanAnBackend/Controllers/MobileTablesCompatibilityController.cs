@@ -549,19 +549,82 @@ public class MobileTablesCompatibilityController : ControllerBase
                         connection,
                         transaction,
                         """
+                        UPDATE targetOrder
+                        SET
+                            CustomerId = COALESCE(targetOrder.CustomerId, sourceOrder.CustomerId),
+                            Note =
+                                CASE
+                                    WHEN NULLIF(LTRIM(RTRIM(targetOrder.Note)), N'') IS NULL
+                                        THEN sourceOrder.Note
+                                    WHEN NULLIF(LTRIM(RTRIM(sourceOrder.Note)), N'') IS NULL
+                                        THEN targetOrder.Note
+                                    WHEN LTRIM(RTRIM(targetOrder.Note)) = LTRIM(RTRIM(sourceOrder.Note))
+                                        THEN targetOrder.Note
+                                    ELSE CONCAT(targetOrder.Note, N' | ', sourceOrder.Note)
+                                END,
+                            PaymentRequestedByUserId =
+                                CASE
+                                    WHEN sourceOrder.PaymentRequestedAt IS NOT NULL
+                                         AND
+                                         (
+                                             targetOrder.PaymentRequestedAt IS NULL
+                                             OR sourceOrder.PaymentRequestedAt > targetOrder.PaymentRequestedAt
+                                         )
+                                        THEN sourceOrder.PaymentRequestedByUserId
+                                    ELSE targetOrder.PaymentRequestedByUserId
+                                END,
+                            PaymentRequestedAt =
+                                CASE
+                                    WHEN sourceOrder.PaymentRequestedAt IS NOT NULL
+                                         AND
+                                         (
+                                             targetOrder.PaymentRequestedAt IS NULL
+                                             OR sourceOrder.PaymentRequestedAt > targetOrder.PaymentRequestedAt
+                                         )
+                                        THEN sourceOrder.PaymentRequestedAt
+                                    ELSE targetOrder.PaymentRequestedAt
+                                END
+                        FROM Orders targetOrder
+                        INNER JOIN Orders sourceOrder
+                            ON sourceOrder.OrderId = @SourceOrderId
+                        WHERE targetOrder.OrderId = @TargetOrderId;
+
                         UPDATE OrderItems
                         SET OrderId = @TargetOrderId
                         WHERE OrderId = @SourceOrderId;
 
+                        INSERT INTO OrderTables (OrderId, TableId, IsPrimaryTable)
+                        SELECT
+                            @TargetOrderId,
+                            sourceLink.TableId,
+                            0
+                        FROM OrderTables sourceLink
+                        WHERE sourceLink.OrderId = @SourceOrderId
+                          AND sourceLink.TableId <> @SourceTableId
+                          AND NOT EXISTS
+                          (
+                              SELECT 1
+                              FROM OrderTables targetLink
+                              WHERE targetLink.OrderId = @TargetOrderId
+                                AND targetLink.TableId = sourceLink.TableId
+                          );
+
                         DELETE FROM OrderTables
                         WHERE OrderId = @SourceOrderId;
+
+                        UPDATE OrderTables
+                        SET IsPrimaryTable =
+                            CASE WHEN TableId = @TargetTableId THEN 1 ELSE 0 END
+                        WHERE OrderId = @TargetOrderId;
 
                         UPDATE Orders
                         SET Status = N'DaHuy'
                         WHERE OrderId = @SourceOrderId;
                         """,
                         ("@TargetOrderId", targetOrderId.Value),
-                        ("@SourceOrderId", sourceOrderId.Value)
+                        ("@SourceOrderId", sourceOrderId.Value),
+                        ("@SourceTableId", request.SourceTableId),
+                        ("@TargetTableId", request.TargetTableId)
                     );
                 }
                 else if (targetOrderId.HasValue &&
