@@ -327,9 +327,28 @@ public class MobileDiningController : ControllerBase
                             : nextReservation?.NumberOfGuests),
                     time = startedAt?.ToString("HH:mm"),
                     currentSessionType,
+                    reservationId = currentReservation?.ReservationId ??
+                        nextReservation?.ReservationId,
+                    reservationTime = currentReservation?.ReservationTime ??
+                        nextReservation?.ReservationTime,
+                    reservationStatus = currentReservation?.Status.ToString() ??
+                        nextReservation?.Status.ToString(),
+                    reservationReceived = currentReservation is not null,
+                    reservationDurationMinutes =
+                        currentReservation?.DurationMinutes ??
+                        nextReservation?.DurationMinutes,
+                    reservationDepositAmount =
+                        currentReservation?.DepositAmount ??
+                        nextReservation?.DepositAmount,
+                    reservationDepositPaid =
+                        currentReservation?.DepositPaid ??
+                        nextReservation?.DepositPaid,
+                    reservationNote = currentReservation?.Note ??
+                        nextReservation?.Note,
                     nextReservationId = nextReservation?.ReservationId,
                     nextReservationTime = nextReservation?.ReservationTime,
                     nextReservationCustomerName = nextReservation?.CustomerName,
+                    nextReservationCustomerPhone = nextReservation?.CustomerPhone,
                     nextReservationGuestCount = nextReservation?.NumberOfGuests
                 };
             })
