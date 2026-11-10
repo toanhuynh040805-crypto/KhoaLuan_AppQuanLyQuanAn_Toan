@@ -1203,6 +1203,35 @@ public class OrdersController : ControllerBase
             .FirstOrDefaultAsync();
     }
 
+    private async Task<int?> FindOpenOrderIdForTableAsync(int tableId)
+    {
+        var connection = _db.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose) await connection.OpenAsync();
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT TOP 1 o.OrderId
+                FROM Orders o
+                LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+                WHERE o.Status = N'DangMo'
+                  AND (o.TableId = @TableId OR ot.TableId = @TableId)
+                ORDER BY o.OrderTime DESC, o.OrderId DESC;
+                """;
+            AddDbParameter(command, "@TableId", tableId);
+            var value = await command.ExecuteScalarAsync();
+            return value is null || value == DBNull.Value
+                ? null
+                : Convert.ToInt32(value);
+        }
+        finally
+        {
+            if (shouldClose) await connection.CloseAsync();
+        }
+    }
+
     // GET api/orders/table/{tableId} -> đơn đang mở của bàn, dùng bởi
     // WinForms khi mở màn thanh toán sau khi món được gọi từ Mobile.
     // Có trả thêm "Customer" (khách thành viên gắn với đơn / lượt đặt bàn) để
@@ -1210,12 +1239,13 @@ public class OrdersController : ControllerBase
     [HttpGet("table/{tableId:int}")]
     public async Task<IActionResult> GetOpenByTable(int tableId)
     {
-        var order = await _db.Orders
-            .Include(o => o.Table)
-            .AsNoTracking()
-            .Where(o => o.TableId == tableId && o.Status == OrderStatus.DangMo)
-            .OrderByDescending(o => o.OrderTime)
-            .FirstOrDefaultAsync();
+        var orderId = await FindOpenOrderIdForTableAsync(tableId);
+        var order = orderId.HasValue
+            ? await _db.Orders
+                .Include(o => o.Table)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(o => o.OrderId == orderId.Value)
+            : null;
 
         if (order is null)
             return NotFound(new { message = "Bàn này chưa có đơn đang mở" });
