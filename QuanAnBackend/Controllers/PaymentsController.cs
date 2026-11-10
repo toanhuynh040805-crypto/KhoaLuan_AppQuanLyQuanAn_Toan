@@ -1038,10 +1038,15 @@ public class PaymentsController : ControllerBase
 
         if (customer is not null)
         {
+            var paymentMessage = appliedDeposit > 0
+                ? $"Hóa đơn #{invoice.InvoiceId} đã trừ {appliedDeposit:N0}đ tiền cọc. " +
+                  $"Số tiền còn thanh toán là {netTotal:N0}đ."
+                : $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.";
+
             await _notifications.CreateForCustomerAsync(
                 customer.CustomerId,
                 "Thanh toán thành công",
-                $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.",
+                paymentMessage,
                 NotificationType.DonHang,
                 $"payment-success:{payment.PaymentId}",
                 "Invoice",
