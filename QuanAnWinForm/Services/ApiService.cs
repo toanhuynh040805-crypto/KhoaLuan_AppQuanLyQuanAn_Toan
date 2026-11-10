@@ -837,24 +837,24 @@ public class ApiService
         return res ?? new List<ReservationDto>();
     }
 
-    public async Task CreateReservationAsync(int tableId, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note)
+    public async Task CreateReservationAsync(int tableId, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note, bool depositPaid = false)
     {
-        var res = await _http.PostAsJsonAsync("/api/reservations", new { tableId, customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note });
+        var res = await _http.PostAsJsonAsync("/api/reservations", new { tableId, customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
     // Đặt NHIỀU bàn cùng lúc cho nhóm khách đông (POST /api/reservations/batch).
     // tables: danh sách (TableId, số khách ngồi ở bàn đó). Backend kiểm tra hết rồi mới lưu.
-    public async Task CreateReservationBatchAsync(IEnumerable<(int TableId, int NumberOfGuests)> tables, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, decimal depositAmount, string? note)
+    public async Task CreateReservationBatchAsync(IEnumerable<(int TableId, int NumberOfGuests)> tables, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, decimal depositAmount, string? note, bool depositPaid = false)
     {
         var slots = tables.Select(t => new { tableId = t.TableId, numberOfGuests = t.NumberOfGuests }).ToList();
-        var res = await _http.PostAsJsonAsync("/api/reservations/batch", new { tables = slots, customerName, customerPhone, reservationTime, durationMinutes, depositAmount, note });
+        var res = await _http.PostAsJsonAsync("/api/reservations/batch", new { tables = slots, customerName, customerPhone, reservationTime, durationMinutes, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
-    public async Task UpdateReservationAsync(int id, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note)
+    public async Task UpdateReservationAsync(int id, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note, bool? depositPaid = null)
     {
-        var res = await _http.PutAsJsonAsync($"/api/reservations/{id}", new { customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note });
+        var res = await _http.PutAsJsonAsync($"/api/reservations/{id}", new { customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
