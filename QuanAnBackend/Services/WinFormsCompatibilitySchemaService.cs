@@ -77,6 +77,10 @@ public class WinFormsCompatibilitySchemaService
                     ADD DepositAmount DECIMAL(18,2) NOT NULL
                         CONSTRAINT DF_Invoices_DepositAmount DEFAULT(0) WITH VALUES;
 
+            IF OBJECT_ID(N'dbo.Payments', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Payments', N'TransactionCode') IS NULL
+                ALTER TABLE dbo.Payments ADD TransactionCode NVARCHAR(100) NULL;
+
             IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
                AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NULL
                 ALTER TABLE dbo.Orders ADD PaymentRequestedByUserId INT NULL;
@@ -199,6 +203,21 @@ public class WinFormsCompatibilitySchemaService
                 UPDATE dbo.Orders
                 SET OrderType = N'TaiBan'
                 WHERE OrderType IS NULL OR LTRIM(RTRIM(OrderType)) = N'';
+            END;
+
+            -- Tương thích DB cũ từng dùng tên cột TransactionRef.
+            -- TransactionCode là tên chính thức theo QuanAnManagementDB_Final.sql
+            -- và là cột EF Payment.TransactionRef đang map tới.
+            IF OBJECT_ID(N'dbo.Payments', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Payments', N'TransactionCode') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Payments', N'TransactionRef') IS NOT NULL
+            BEGIN
+                EXEC(N'
+                    UPDATE dbo.Payments
+                    SET TransactionCode = TransactionRef
+                    WHERE TransactionCode IS NULL
+                      AND TransactionRef IS NOT NULL;
+                ');
             END;
 
             -- Backfill actor audit cho dữ liệu đã có trước bản nâng cấp.
