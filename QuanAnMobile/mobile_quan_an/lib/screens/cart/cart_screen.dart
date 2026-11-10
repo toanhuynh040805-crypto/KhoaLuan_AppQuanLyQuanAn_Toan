@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../app/theme.dart';
 import '../../models/cart_item.dart';
 import '../../widgets/top_message.dart';
@@ -101,6 +102,135 @@ class _CartScreenState extends State<CartScreen> {
   void increaseQuantity(CartItem item) {
     setState(() {
       item.quantity++;
+    });
+  }
+
+  Future<void> editQuantity(CartItem item) async {
+    final TextEditingController controller = TextEditingController(
+      text: item.quantity.toString(),
+    );
+
+    final int? quantity = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Nhập số lượng • ${item.menuItem.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(3),
+          ],
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w700,
+          ),
+          decoration: const InputDecoration(
+            labelText: 'Số lượng',
+            helperText: 'Từ 1 đến 999',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (_) {
+            final int? value = int.tryParse(controller.text);
+            if (value != null && value >= 1 && value <= 999) {
+              Navigator.pop(dialogContext, value);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final int? value = int.tryParse(controller.text);
+              if (value == null || value < 1 || value > 999) {
+                return;
+              }
+              Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Cập nhật'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+
+    if (!mounted || quantity == null) return;
+
+    setState(() {
+      item.quantity = quantity;
+      item.clampTakeaway();
+    });
+  }
+
+  Future<void> editTakeawayQuantity(CartItem item) async {
+    final TextEditingController controller = TextEditingController(
+      text: item.takeawayQuantity.toString(),
+    );
+
+    final int? quantity = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Số phần mang về • ${item.menuItem.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(3),
+          ],
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.w700,
+          ),
+          decoration: InputDecoration(
+            labelText: 'Số phần mang về',
+            helperText: 'Từ 0 đến ${item.quantity}',
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (_) {
+            final int? value = int.tryParse(controller.text);
+            if (value != null &&
+                value >= 0 &&
+                value <= item.quantity) {
+              Navigator.pop(dialogContext, value);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final int? value = int.tryParse(controller.text);
+              if (value == null ||
+                  value < 0 ||
+                  value > item.quantity) {
+                return;
+              }
+              Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Cập nhật'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+
+    if (!mounted || quantity == null) return;
+
+    setState(() {
+      item.takeawayQuantity = quantity;
     });
   }
 
@@ -279,15 +409,37 @@ class _CartScreenState extends State<CartScreen> {
                                       ),
                                     ),
 
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                      ),
-                                      child: Text(
-                                        '${item.quantity}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(8),
+                                      onTap: () => editQuantity(item),
+                                      child: Container(
+                                        constraints: const BoxConstraints(
+                                          minWidth: 42,
+                                          minHeight: 34,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 5,
+                                        ),
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFFF7F2),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: const Color(0xFFFFCCB3),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${item.quantity}',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppTheme.orangeColor,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -333,15 +485,35 @@ class _CartScreenState extends State<CartScreen> {
                                               : Colors.grey.shade300,
                                         ),
                                       ),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                        ),
-                                        child: Text(
-                                          '${item.takeawayQuantity}/${item.quantity}',
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
+                                      InkWell(
+                                        borderRadius:
+                                            BorderRadius.circular(7),
+                                        onTap: () =>
+                                            editTakeawayQuantity(item),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFFF7F2),
+                                            borderRadius:
+                                                BorderRadius.circular(7),
+                                            border: Border.all(
+                                              color: const Color(0xFFFFCCB3),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '${item.takeawayQuantity}/${item.quantity}',
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color:
+                                                  AppTheme.orangeColor,
+                                            ),
                                           ),
                                         ),
                                       ),
