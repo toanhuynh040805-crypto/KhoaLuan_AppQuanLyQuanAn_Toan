@@ -551,6 +551,14 @@ class _TableDetailV2State extends State<TableDetailV2> {
     return '${buffer.toString()}đ';
   }
 
+  String _formatReservationDateTime(DateTime? value) {
+    if (value == null) return '--';
+
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} • '
+        '${two(value.hour)}:${two(value.minute)}';
+  }
+
   Future<bool> _activateTable({bool showSuccess = true}) async {
     if (_isTableActive) return true;
 
@@ -2069,6 +2077,113 @@ class _TableDetailV2State extends State<TableDetailV2> {
     );
   }
 
+  Widget _buildReservationInfoCard() {
+    final bool received = currentTable.reservationReceived;
+    final String customerName =
+        (currentTable.reservationCustomerName ?? '').trim();
+    final String customerPhone =
+        (currentTable.reservationCustomerPhone ?? '').trim();
+    final String note = (currentTable.reservationNote ?? '').trim();
+    final int deposit = currentTable.reservationDepositAmount ?? 0;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: received
+            ? const Color(0xFFF0FDF4)
+            : const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: received
+              ? const Color(0xFF86EFAC)
+              : const Color(0xFF93C5FD),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                received
+                    ? Icons.event_available_outlined
+                    : Icons.event_outlined,
+                color: received
+                    ? const Color(0xFF15803D)
+                    : const Color(0xFF2563EB),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Thông tin khách đặt bàn',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: received
+                      ? const Color(0xFFDCFCE7)
+                      : const Color(0xFFDBEAFE),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  received ? 'Đã nhận bàn' : 'Chưa nhận bàn',
+                  style: TextStyle(
+                    color: received
+                        ? const Color(0xFF15803D)
+                        : const Color(0xFF1D4ED8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (currentTable.reservationId != null)
+            Text(
+              'Mã đặt bàn: #${currentTable.reservationId}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          Text(
+            'Thời gian: ${_formatReservationDateTime(currentTable.reservationTime)}',
+          ),
+          if (customerName.isNotEmpty)
+            Text('Khách: $customerName'),
+          if (customerPhone.isNotEmpty)
+            Text('SĐT: $customerPhone'),
+          if (currentTable.reservationGuestCount != null)
+            Text('Số khách: ${currentTable.reservationGuestCount}'),
+          if (currentTable.reservationDurationMinutes != null)
+            Text(
+              'Giữ bàn: ${currentTable.reservationDurationMinutes} phút',
+            ),
+          if (deposit > 0)
+            Text(
+              'Tiền cọc: ${_formatMoney(deposit)} • '
+              '${currentTable.reservationDepositPaid ? 'Đã cọc' : 'Chưa cọc'}',
+            ),
+          if (note.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Ghi chú: $note',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildTableInfo() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -2139,6 +2254,10 @@ class _TableDetailV2State extends State<TableDetailV2> {
             ],
           ),
           if (!currentTable.isTakeaway) ...[
+            if (currentTable.reservationId != null) ...[
+              const Divider(height: 28),
+              _buildReservationInfoCard(),
+            ],
             if ((currentTable.customerName ?? '').trim().isNotEmpty ||
                 (currentTable.customerPhone ?? '').trim().isNotEmpty) ...[
               const Divider(height: 28),
