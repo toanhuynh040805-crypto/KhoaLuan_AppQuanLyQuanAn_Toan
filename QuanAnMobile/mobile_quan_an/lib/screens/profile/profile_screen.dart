@@ -642,7 +642,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ],
 
-            if (MobileAccessPolicy.canViewStatistics()) ...[
+            if (MobileAccessPolicy.canViewStatistics() &&
+                (appEmployee.role.trim().toLowerCase() == 'quanly' ||
+                    appEmployee.role.trim().toLowerCase() == 'admin')) ...[
               const SizedBox(height: 10),
               _buildMenuItem(
                 context: context,
