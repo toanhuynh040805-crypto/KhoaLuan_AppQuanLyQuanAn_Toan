@@ -2165,18 +2165,10 @@ public partial class SalesControl : UserControl
 
             var subtotal = lines.Sum(x => x.LineTotal);
             var discount = GetEstimatedDiscount(subtotal);
-            var total = Math.Max(0m, subtotal - discount);
             var orderId = _existingOrder?.OrderId ?? 0;
 
-            // Profile/QR lấy từ Backend dùng chung, không hard-code lại tài khoản.
-            var profile = await _api.GetReceiptPreviewAsync(total, orderId);
-            if (profile is null)
-            {
-                MessageBox.Show("Không tải được thông tin bill/QR.");
-                return;
-            }
-
-            // Nếu đã có order thì lấy đúng người phục vụ và giờ vào từ Backend.
+            // Nếu đã có Order thì lấy metadata thật từ Backend, trong đó có
+            // tiền cọc đã thu của lượt đặt bàn hiện tại.
             PaymentPreviewOrderDto? orderMeta = null;
             if (orderId > 0)
             {
@@ -2186,8 +2178,19 @@ public partial class SalesControl : UserControl
                 }
                 catch
                 {
-                    // Bill vẫn xem được; chỉ thiếu metadata phục vụ/giờ vào.
+                    // Bill vẫn xem được; chỉ thiếu metadata phục vụ/giờ vào/cọc.
                 }
+            }
+
+            var deposit = orderMeta?.DepositAmount ?? 0m;
+            var total = Math.Max(0m, subtotal - discount - deposit);
+
+            // Profile/QR lấy từ Backend dùng chung, không hard-code lại tài khoản.
+            var profile = await _api.GetReceiptPreviewAsync(total, orderId);
+            if (profile is null)
+            {
+                MessageBox.Show("Không tải được thông tin bill/QR.");
+                return;
             }
 
             var tempInvoice = new InvoiceDetailDto
@@ -2207,6 +2210,7 @@ public partial class SalesControl : UserControl
                 Items = lines,
                 SubTotal = subtotal,
                 DiscountAmount = discount,
+                DepositAmount = deposit,
                 TaxAmount = 0,
                 TotalAmount = total,
                 Status = 0,
@@ -2288,6 +2292,7 @@ public partial class SalesControl : UserControl
             Items = lines,
             SubTotal = preview.SubTotal,
             DiscountAmount = preview.DiscountAmount,
+            DepositAmount = preview.DepositAmount,
             PointsRedeemed = preview.RedeemedPoints,
             PointsEarned = preview.EstimatedEarnedPoints,
             LoyaltyDiscount = preview.LoyaltyDiscount,
@@ -2476,7 +2481,12 @@ public partial class SalesControl : UserControl
             }
 
             MessageBox.Show(
-                $"Thanh toán thành công.\nHóa đơn #{payment.InvoiceId}\nTổng tiền: {payment.TotalAmount:N0}đ",
+                payment.DepositAmount > 0
+                    ? $"Thanh toán thành công.\nHóa đơn #{payment.InvoiceId}\n" +
+                      $"Tiền cọc đã trừ: {payment.DepositAmount:N0}đ\n" +
+                      $"Còn thanh toán: {payment.TotalAmount:N0}đ"
+                    : $"Thanh toán thành công.\nHóa đơn #{payment.InvoiceId}\n" +
+                      $"Tổng tiền: {payment.TotalAmount:N0}đ",
                 "Hoàn tất thanh toán",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -3018,7 +3028,13 @@ public partial class SalesControl : UserControl
                 $"-{invoice.LoyaltyDiscount:N0}đ");
         }
 
-        totalLines.Add($"TỔNG TIỀN: {invoice.TotalAmount:N0}đ");
+        if (invoice.DepositAmount > 0)
+            totalLines.Add($"Tiền cọc đã thu: -{invoice.DepositAmount:N0}đ");
+
+        totalLines.Add(
+            invoice.DepositAmount > 0
+                ? $"CÒN THANH TOÁN: {invoice.TotalAmount:N0}đ"
+                : $"TỔNG TIỀN: {invoice.TotalAmount:N0}đ");
 
         if (invoice.PointsEarned > 0)
             totalLines.Add($"Điểm tích thêm: +{invoice.PointsEarned:N0}");
