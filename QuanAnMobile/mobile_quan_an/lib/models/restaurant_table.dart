@@ -23,6 +23,9 @@ class RestaurantTable {
   final DateTime? reservationTime;
   final String? reservationStatus;
   final bool reservationReceived;
+  final String? reservationCustomerName;
+  final String? reservationCustomerPhone;
+  final int? reservationGuestCount;
   final int? reservationDurationMinutes;
   final int? reservationDepositAmount;
   final bool reservationDepositPaid;
@@ -52,6 +55,9 @@ class RestaurantTable {
     this.reservationTime,
     this.reservationStatus,
     this.reservationReceived = false,
+    this.reservationCustomerName,
+    this.reservationCustomerPhone,
+    this.reservationGuestCount,
     this.reservationDurationMinutes,
     this.reservationDepositAmount,
     this.reservationDepositPaid = false,
@@ -112,6 +118,12 @@ class RestaurantTable {
     String? reservationStatus,
     bool clearReservationStatus = false,
     bool? reservationReceived,
+    String? reservationCustomerName,
+    bool clearReservationCustomerName = false,
+    String? reservationCustomerPhone,
+    bool clearReservationCustomerPhone = false,
+    int? reservationGuestCount,
+    bool clearReservationGuestCount = false,
     int? reservationDurationMinutes,
     bool clearReservationDurationMinutes = false,
     int? reservationDepositAmount,
@@ -161,6 +173,15 @@ class RestaurantTable {
           : reservationStatus ?? this.reservationStatus,
       reservationReceived:
           reservationReceived ?? this.reservationReceived,
+      reservationCustomerName: clearReservationCustomerName
+          ? null
+          : reservationCustomerName ?? this.reservationCustomerName,
+      reservationCustomerPhone: clearReservationCustomerPhone
+          ? null
+          : reservationCustomerPhone ?? this.reservationCustomerPhone,
+      reservationGuestCount: clearReservationGuestCount
+          ? null
+          : reservationGuestCount ?? this.reservationGuestCount,
       reservationDurationMinutes: clearReservationDurationMinutes
           ? null
           : reservationDurationMinutes ?? this.reservationDurationMinutes,
@@ -234,6 +255,11 @@ class RestaurantTable {
       reservationTime: _parseNullableDateTime(json['reservationTime']),
       reservationStatus: json['reservationStatus']?.toString(),
       reservationReceived: json['reservationReceived'] == true,
+      reservationCustomerName: json['reservationCustomerName']?.toString(),
+      reservationCustomerPhone: json['reservationCustomerPhone']?.toString(),
+      reservationGuestCount: json['reservationGuestCount'] == null
+          ? null
+          : _parseNullableInt(json['reservationGuestCount']),
       reservationDurationMinutes: json['reservationDurationMinutes'] == null
           ? null
           : _parseNullableInt(json['reservationDurationMinutes']),
@@ -279,6 +305,9 @@ class RestaurantTable {
       'reservationTime': reservationTime?.toIso8601String(),
       'reservationStatus': reservationStatus,
       'reservationReceived': reservationReceived,
+      'reservationCustomerName': reservationCustomerName,
+      'reservationCustomerPhone': reservationCustomerPhone,
+      'reservationGuestCount': reservationGuestCount,
       'reservationDurationMinutes': reservationDurationMinutes,
       'reservationDepositAmount': reservationDepositAmount,
       'reservationDepositPaid': reservationDepositPaid,
