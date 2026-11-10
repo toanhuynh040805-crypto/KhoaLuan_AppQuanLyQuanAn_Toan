@@ -568,11 +568,6 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
         table.status != TableStatus.occupied;
 
     if (canReceiveNewSession && hasWaitingReservation) {
-      if (!_canManageTables) {
-        _showRoleDenied('nhận bàn');
-        return;
-      }
-
       final String reservationWhen =
           _reservationDateTimeLabel(
             table.reservationTime ?? table.nextReservationTime,
@@ -617,21 +612,28 @@ class _TableScreenState extends State<TableScreen> with WidgetsBindingObserver {
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Đóng'),
             ),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, 'walkin'),
-              icon: const Icon(Icons.person_outline),
-              label: const Text('Nhận bàn thường'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, 'reservation'),
-              icon: const Icon(Icons.event_available_outlined),
-              label: const Text('Nhận bàn đặt'),
-            ),
+            if (_canManageTables) ...[
+              OutlinedButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'walkin'),
+                icon: const Icon(Icons.person_outline),
+                label: const Text('Nhận bàn thường'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, 'reservation'),
+                icon: const Icon(Icons.event_available_outlined),
+                label: const Text('Nhận bàn đặt'),
+              ),
+            ],
           ],
         ),
       );
 
       if (!mounted || receiveMode == null) return;
+
+      if (!_canManageTables) {
+        _showRoleDenied('nhận bàn');
+        return;
+      }
 
       acquiredLock = await _tryAcquireTableLock(table);
       if (acquiredLock == null) return;
