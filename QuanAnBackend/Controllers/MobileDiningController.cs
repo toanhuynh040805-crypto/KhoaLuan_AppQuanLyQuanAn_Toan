@@ -312,18 +312,24 @@ public class MobileDiningController : ControllerBase
                                 currentReservation?.ReservationTime;
 
                 var displayStatus = table.Status;
+                var reservationIsSoon =
+                    nextReservation is not null &&
+                    nextReservation.ReservationTime <= now.AddHours(1);
 
                 if (displayStatus == TableStatus.DaDat &&
-                    nextReservation is null &&
-                    currentReservation is null)
+                    currentReservation is null &&
+                    !reservationIsSoon)
                 {
-                    // Không để trạng thái cũ từ lượt Chờ xác nhận xuất hiện trên Mobile.
+                    // Reservation còn hơn 1 giờ: vẫn giữ thông tin lịch đặt,
+                    // nhưng bàn được dùng như bàn thường cho đến khi gần giờ.
                     displayStatus = TableStatus.Trong;
                 }
 
                 if (displayStatus == TableStatus.Trong &&
-                    nextReservation is not null)
+                    reservationIsSoon)
                 {
+                    // Chỉ đánh dấu/cảnh báo Đã đặt trong vòng 1 giờ.
+                    // Đây là cảnh báo mềm, các API nhận/chuyển bàn thường vẫn cho phép.
                     displayStatus = TableStatus.DaDat;
                 }
 
