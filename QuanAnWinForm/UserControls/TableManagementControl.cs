@@ -1383,10 +1383,28 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         // BO SUNG: hien "Huy boi: <nhan vien> luc <gio>" cho cac luot Da huy/Khong
         // den de xem lai lich su - chi co du lieu neu huy qua nut Huy (backend ghi
         // nhan tu JWT cua nguoi goi API, xem ReservationsController.UpdateStatus).
-        var hasCancelInfo = (statusIndex == 2 || statusIndex == 3) && !string.IsNullOrWhiteSpace(r.CancelledByUserName);
-        var rowHeight = hasCancelInfo ? 96 : 76;
+        var hasCancelInfo = (statusIndex == 2 || statusIndex == 3) &&
+            !string.IsNullOrWhiteSpace(r.CancelledByUserName);
 
-        var row = new Panel { Size = new Size(548, rowHeight), BackColor = Color.White, Margin = new Padding(0, 0, 0, 8) };
+        // Tách hẳn vùng thông tin bên trái khỏi vùng nút bên phải.
+        // Trước đây lblTable/Customer AutoSize nên chuỗi "Cọc ..." chạy xuyên
+        // vào khu vực nút Xác nhận/Hủy và bị che.
+        const int infoLeft = 10;
+        const int infoWidth = 292;
+        const int actionLeft = 320;
+        var hasDeposit = r.DepositAmount > 0;
+        var rowHeight = hasCancelInfo
+            ? 122
+            : hasDeposit
+                ? 100
+                : 82;
+
+        var row = new Panel
+        {
+            Size = new Size(548, rowHeight),
+            BackColor = Color.White,
+            Margin = new Padding(0, 0, 0, 8)
+        };
         row.Paint += (s, e) => e.Graphics.DrawRectangle(new Pen(AppColors.OutlineVariant), 0, 0, row.Width - 1, row.Height - 1);
 
         // Hien ca gio den VA gio tra ban du kien (truoc day chi co gio den, khong
@@ -1397,31 +1415,73 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
         {
             Text = $"{r.ReservationTime:HH:mm dd/MM} · Giữ đến {holdUntil:HH:mm}",
             Font = AppFonts.LabelLg,
-            Location = new Point(10, 6),
-            AutoSize = true
+            Location = new Point(infoLeft, 6),
+            Size = new Size(infoWidth, 20),
+            AutoSize = false,
+            AutoEllipsis = true
         };
-        var depositText = r.DepositAmount > 0
-            ? $" · Cọc {r.DepositAmount:N0}đ{(r.DepositPaid ? " ✓" : " (chưa thu)")}"
-            : "";
+
         var lblTable = new Label
         {
-            Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách{depositText}",
+            Text = $"{r.TableName} · {r.AreaName} · {r.NumberOfGuests} khách",
             Font = AppFonts.BodyMd,
             ForeColor = AppColors.OnSurfaceVariant,
-            Location = new Point(10, 30),
-            AutoSize = true
+            Location = new Point(infoLeft, 30),
+            Size = new Size(infoWidth, 20),
+            AutoSize = false,
+            AutoEllipsis = true
         };
-        var customerText = string.IsNullOrWhiteSpace(r.CustomerName) && string.IsNullOrWhiteSpace(r.CustomerPhone)
-            ? "(Chưa có thông tin khách)"
-            : $"{r.CustomerName}  {r.CustomerPhone}".Trim();
-        var lblCustomer = new Label { Text = customerText, Font = AppFonts.BodyMd, Location = new Point(10, 52), AutoSize = true };
 
-        var lblStatus = new Label { Text = ReservationStatusLabels[statusIndex], Font = AppFonts.LabelMd, ForeColor = ReservationStatusColor(statusIndex), Location = new Point(300, 8), AutoSize = true };
+        var customerText =
+            string.IsNullOrWhiteSpace(r.CustomerName) &&
+            string.IsNullOrWhiteSpace(r.CustomerPhone)
+                ? "(Chưa có thông tin khách)"
+                : $"{r.CustomerName}  {r.CustomerPhone}".Trim();
+        var lblCustomer = new Label
+        {
+            Text = customerText,
+            Font = AppFonts.BodyMd,
+            Location = new Point(infoLeft, 52),
+            Size = new Size(infoWidth, 20),
+            AutoSize = false,
+            AutoEllipsis = true
+        };
+
+        var lblStatus = new Label
+        {
+            Text = ReservationStatusLabels[statusIndex],
+            Font = AppFonts.LabelMd,
+            ForeColor = ReservationStatusColor(statusIndex),
+            Location = new Point(actionLeft, 8),
+            Size = new Size(138, 20),
+            AutoSize = false,
+            AutoEllipsis = true
+        };
 
         row.Controls.Add(lblTime);
         row.Controls.Add(lblTable);
         row.Controls.Add(lblCustomer);
         row.Controls.Add(lblStatus);
+
+        if (hasDeposit)
+        {
+            var lblDeposit = new Label
+            {
+                Text = r.DepositPaid
+                    ? $"Cọc: {r.DepositAmount:N0}đ  ✓ Đã thu"
+                    : $"Cọc: {r.DepositAmount:N0}đ  · Chưa thu",
+                Font = AppFonts.LabelMd,
+                ForeColor = r.DepositPaid
+                    ? AppColors.Success
+                    : AppColors.Warning,
+                Location = new Point(infoLeft, 74),
+                Size = new Size(infoWidth, 20),
+                AutoSize = false,
+                AutoEllipsis = true
+            };
+            row.Controls.Add(lblDeposit);
+        }
+
         // Nhãn nguồn đặt bàn: chỉ hiện "Web" cho lượt khách tự đặt trên website
         if (r.IsFromWeb)
         {
@@ -1434,7 +1494,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 AutoSize = false,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Size = new Size(60, 20),
-                Location = new Point(468, 8)
+                Location = new Point(468, 6)
             };
             row.Controls.Add(lblSource);
         }
@@ -1445,8 +1505,10 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 Text = $"Huỷ bởi: {r.CancelledByUserName} lúc {r.CancelledAt:HH:mm dd/MM/yyyy}",
                 Font = AppFonts.BodyMd,
                 ForeColor = AppColors.OnSurfaceVariant,
-                Location = new Point(10, 74),
-                AutoSize = true
+                Location = new Point(infoLeft, hasDeposit ? 96 : 74),
+                Size = new Size(infoWidth, 20),
+                AutoSize = false,
+                AutoEllipsis = true
             };
             row.Controls.Add(lblCancelInfo);
         }
@@ -1458,7 +1520,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
                 var btnConfirm = new Button
                 {
                     Text = "Xác nhận",
-                    Location = new Point(320, 32),
+                    Location = new Point(actionLeft, 40),
                     Size = new Size(100, 32),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = AppColors.Success,
@@ -1500,7 +1562,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             var btnReject = new Button
             {
                 Text = "Hủy",
-                Location = new Point(430, 32),
+                Location = new Point(430, 40),
                 Size = new Size(100, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Error,
@@ -1538,7 +1600,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             var btnCheckIn = new Button
             {
                 Text = "Nhận bàn",
-                Location = new Point(320, 32),
+                Location = new Point(actionLeft, 40),
                 Size = new Size(100, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Tertiary,
@@ -1565,7 +1627,7 @@ public partial class TableManagementControl : UserControl, IRefreshableContent
             var btnCancel = new Button
             {
                 Text = holdExpired ? "Không đến" : "Hủy",
-                Location = new Point(430, 32),
+                Location = new Point(430, 40),
                 Size = new Size(100, 32),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = AppColors.Error,
