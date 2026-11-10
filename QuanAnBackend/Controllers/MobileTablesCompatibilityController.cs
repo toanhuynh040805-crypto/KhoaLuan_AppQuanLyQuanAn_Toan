@@ -1240,7 +1240,7 @@ public class MobileTablesCompatibilityController : ControllerBase
         if (!string.Equals(rawStatus, "DaDat", StringComparison.OrdinalIgnoreCase))
             return rawStatus;
 
-        var hasActiveReservation = await ExecuteScalarIntAsync(
+        var reservationState = await ExecuteScalarIntAsync(
             connection,
             transaction,
             """
@@ -1258,29 +1258,55 @@ public class MobileTablesCompatibilityController : ControllerBase
                     ON s.AreaId = t.AreaId
                    AND UPPER(LTRIM(RTRIM(t.TableName))) = s.NormalizedName
             )
-            SELECT COUNT(*)
-            FROM Reservations r
-            INNER JOIN PhysicalTables p ON p.TableId = r.TableId
-            WHERE r.ReservationTime >= DATEADD(DAY, -1, GETDATE())
-              AND
-              (
-                  r.Status = N'DaNhanBan'
-                  OR
-                  (
-                      r.Status = N'DaXacNhan'
-                      AND DATEADD(
-                          MINUTE,
-                          ISNULL(r.DurationMinutes, 120),
-                          r.ReservationTime
-                      ) >= GETDATE()
-                  )
-              );
+            SELECT
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaNhanBan'
+                    )
+                        THEN 2
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaXacNhan'
+                          AND DATEADD(
+                                MINUTE,
+                                ISNULL(r.DurationMinutes, 30),
+                                r.ReservationTime
+                              ) >= GETDATE()
+                          AND r.ReservationTime <= GETDATE()
+                    )
+                        THEN 2
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaXacNhan'
+                          AND r.ReservationTime > GETDATE()
+                    )
+                        THEN 1
+                    ELSE 0
+                END;
             """,
             ("@TableId", tableId)
-        ) > 0;
+        );
 
-        if (hasActiveReservation)
+        // 2 = reservation đã tới giờ/đã nhận: đây không còn là bàn đích trống.
+        if (reservationState == 2)
             return rawStatus;
+
+        // 1 = chỉ có reservation TƯƠNG LAI: nghiệp vụ vẫn được phép dùng bàn
+        // như bàn thường (chuyển/ghép/tách). Không đổi DiningTables về Trong để
+        // sơ đồ vẫn giữ badge lịch đặt; thao tác thành công sẽ tự chuyển sang
+        // DangPhucVu và reservation tương lai vẫn còn nguyên.
+        if (reservationState == 1)
+            return "Trong";
 
         // Không còn reservation thật sự: dọn cờ DaDat cũ trên mọi TableId
         // legacy đại diện cùng một bàn vật lý để lần tải sau cũng nhất quán.
