@@ -71,6 +71,12 @@ public class WinFormsCompatibilitySchemaService
                AND COL_LENGTH(N'dbo.Invoices', N'ConfirmedByUserId') IS NULL
                 ALTER TABLE dbo.Invoices ADD ConfirmedByUserId INT NULL;
 
+            IF OBJECT_ID(N'dbo.Invoices', N'U') IS NOT NULL
+               AND COL_LENGTH(N'dbo.Invoices', N'DepositAmount') IS NULL
+                ALTER TABLE dbo.Invoices
+                    ADD DepositAmount DECIMAL(18,2) NOT NULL
+                        CONSTRAINT DF_Invoices_DepositAmount DEFAULT(0) WITH VALUES;
+
             IF OBJECT_ID(N'dbo.Orders', N'U') IS NOT NULL
                AND COL_LENGTH(N'dbo.Orders', N'PaymentRequestedByUserId') IS NULL
                 ALTER TABLE dbo.Orders ADD PaymentRequestedByUserId INT NULL;
