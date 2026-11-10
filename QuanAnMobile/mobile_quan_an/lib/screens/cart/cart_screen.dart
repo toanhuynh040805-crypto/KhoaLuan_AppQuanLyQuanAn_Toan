@@ -106,16 +106,14 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> editQuantity(CartItem item) async {
-    final TextEditingController controller = TextEditingController(
-      text: item.quantity.toString(),
-    );
+    String input = item.quantity.toString();
 
     final int? quantity = await showDialog<int>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text('Nhập số lượng • ${item.menuItem.name}'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: input,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
@@ -132,10 +130,11 @@ class _CartScreenState extends State<CartScreen> {
             helperText: 'Từ 1 đến 999',
             border: OutlineInputBorder(),
           ),
-          onSubmitted: (_) {
-            final int? value = int.tryParse(controller.text);
-            if (value != null && value >= 1 && value <= 999) {
-              Navigator.pop(dialogContext, value);
+          onChanged: (value) => input = value,
+          onFieldSubmitted: (value) {
+            final int? parsed = int.tryParse(value);
+            if (parsed != null && parsed >= 1 && parsed <= 999) {
+              Navigator.pop(dialogContext, parsed);
             }
           },
         ),
@@ -146,19 +145,17 @@ class _CartScreenState extends State<CartScreen> {
           ),
           FilledButton(
             onPressed: () {
-              final int? value = int.tryParse(controller.text);
-              if (value == null || value < 1 || value > 999) {
+              final int? parsed = int.tryParse(input);
+              if (parsed == null || parsed < 1 || parsed > 999) {
                 return;
               }
-              Navigator.pop(dialogContext, value);
+              Navigator.pop(dialogContext, parsed);
             },
             child: const Text('Cập nhật'),
           ),
         ],
       ),
     );
-
-    controller.dispose();
 
     if (!mounted || quantity == null) return;
 
@@ -169,16 +166,14 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Future<void> editTakeawayQuantity(CartItem item) async {
-    final TextEditingController controller = TextEditingController(
-      text: item.takeawayQuantity.toString(),
-    );
+    String input = item.takeawayQuantity.toString();
 
     final int? quantity = await showDialog<int>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text('Số phần mang về • ${item.menuItem.name}'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: input,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
@@ -195,12 +190,13 @@ class _CartScreenState extends State<CartScreen> {
             helperText: 'Từ 0 đến ${item.quantity}',
             border: const OutlineInputBorder(),
           ),
-          onSubmitted: (_) {
-            final int? value = int.tryParse(controller.text);
-            if (value != null &&
-                value >= 0 &&
-                value <= item.quantity) {
-              Navigator.pop(dialogContext, value);
+          onChanged: (value) => input = value,
+          onFieldSubmitted: (value) {
+            final int? parsed = int.tryParse(value);
+            if (parsed != null &&
+                parsed >= 0 &&
+                parsed <= item.quantity) {
+              Navigator.pop(dialogContext, parsed);
             }
           },
         ),
@@ -211,21 +207,19 @@ class _CartScreenState extends State<CartScreen> {
           ),
           FilledButton(
             onPressed: () {
-              final int? value = int.tryParse(controller.text);
-              if (value == null ||
-                  value < 0 ||
-                  value > item.quantity) {
+              final int? parsed = int.tryParse(input);
+              if (parsed == null ||
+                  parsed < 0 ||
+                  parsed > item.quantity) {
                 return;
               }
-              Navigator.pop(dialogContext, value);
+              Navigator.pop(dialogContext, parsed);
             },
             child: const Text('Cập nhật'),
           ),
         ],
       ),
     );
-
-    controller.dispose();
 
     if (!mounted || quantity == null) return;
 
