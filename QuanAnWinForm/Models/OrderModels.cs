@@ -216,6 +216,7 @@ public class PaymentDto
     public int InvoiceId { get; set; }
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal DepositAmount { get; set; }
     public decimal TotalAmount { get; set; }
     public int Method { get; set; }
     public string? QRCodeContent { get; set; }
@@ -297,6 +298,7 @@ public class PaymentPreviewOrderDto
     public string WaiterName { get; set; } = "";
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal DepositAmount { get; set; }
     public decimal TotalAmount { get; set; }
     public decimal CampaignDiscount { get; set; }
     public int? CustomerId { get; set; }
