@@ -379,7 +379,7 @@ public class ReservationsController : ControllerBase
         });
     }
 
-    private static readonly TimeSpan UpcomingThreshold = TimeSpan.FromHours(3);
+    private static readonly TimeSpan UpcomingThreshold = TimeSpan.FromHours(1);
 
     private static bool IsOverlapping(DateTime aStart, int aDurationMinutes, DateTime bStart, int bDurationMinutes)
     {
