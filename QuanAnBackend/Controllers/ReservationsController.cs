@@ -18,7 +18,7 @@ namespace QuanAnBackend.Controllers;
 // DurationMinutes de null (khach cu/WinForm cu chua gui len) -> Controller se tu
 // dung Reservation.DefaultDurationMinutes (30 phut) thay vi bat buoc sua Client ngay.
 public record CreateReservationRequest(int TableId, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note, bool DepositPaid = false);
-public record UpdateReservationRequest(string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note, bool DepositPaid = false);
+public record UpdateReservationRequest(string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, int NumberOfGuests, decimal DepositAmount, string? Note, bool? DepositPaid = null);
 public record ReservationTableSlot(int TableId, int NumberOfGuests);
 public record CreateReservationBatchRequest(List<ReservationTableSlot> Tables, string? CustomerName, string? CustomerPhone, DateTime ReservationTime, int? DurationMinutes, decimal DepositAmount, string? Note, bool DepositPaid = false);
 
@@ -1096,8 +1096,9 @@ public class ReservationsController : ControllerBase
             reservation.DurationMinutes != durationMinutes ||
             reservation.NumberOfGuests != request.NumberOfGuests ||
             reservation.DepositAmount != request.DepositAmount ||
-            reservation.DepositPaid !=
-                (request.DepositPaid && request.DepositAmount > 0) ||
+            (request.DepositPaid.HasValue &&
+             reservation.DepositPaid !=
+                (request.DepositPaid.Value && request.DepositAmount > 0)) ||
             reservation.Note != request.Note;
         if (!string.Equals(reservation.CustomerPhone, request.CustomerPhone, StringComparison.Ordinal))
             reservation.CustomerId = null;
@@ -1107,13 +1108,21 @@ public class ReservationsController : ControllerBase
         reservation.DurationMinutes = durationMinutes;
         reservation.NumberOfGuests = request.NumberOfGuests;
         reservation.DepositAmount = request.DepositAmount;
-        var newDepositPaid =
-            request.DepositPaid && request.DepositAmount > 0;
-        if (newDepositPaid && !reservation.DepositPaid)
-            reservation.DepositPaidAt = DateTime.Now;
-        else if (!newDepositPaid)
+        if (request.DepositPaid.HasValue)
+        {
+            var newDepositPaid =
+                request.DepositPaid.Value && request.DepositAmount > 0;
+            if (newDepositPaid && !reservation.DepositPaid)
+                reservation.DepositPaidAt = DateTime.Now;
+            else if (!newDepositPaid)
+                reservation.DepositPaidAt = null;
+            reservation.DepositPaid = newDepositPaid;
+        }
+        else if (request.DepositAmount <= 0)
+        {
+            reservation.DepositPaid = false;
             reservation.DepositPaidAt = null;
-        reservation.DepositPaid = newDepositPaid;
+        }
         reservation.Note = request.Note;
         await _db.SaveChangesAsync();
 
