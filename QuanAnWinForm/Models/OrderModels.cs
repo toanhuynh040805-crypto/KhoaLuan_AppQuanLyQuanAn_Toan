@@ -91,6 +91,7 @@ public class TableDto
     public int Status { get; set; } // khớp enum TableStatusEnum ở trên
     public int AreaId { get; set; }
     public string AreaName { get; set; } = "";
+    public int? GuestCount { get; set; }
 
     // Phiên hiện tại và lịch đặt tiếp theo được Backend tách riêng.
     // Nhờ vậy một bàn có thể vừa "Có khách" vừa vẫn hiện lịch đặt tương lai.
