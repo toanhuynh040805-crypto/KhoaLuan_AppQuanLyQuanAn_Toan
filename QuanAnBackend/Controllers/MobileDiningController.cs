@@ -271,6 +271,43 @@ public class MobileDiningController : ControllerBase
                     ? orderAmount
                     : 0m;
 
+                decimal ReservationDepositAmount(Reservation? reservation)
+                {
+                    if (reservation is null)
+                        return 0m;
+
+                    if (!reservation.BookingGroupId.HasValue)
+                        return reservation.DepositAmount;
+
+                    return reservations
+                        .Where(item =>
+                            item.BookingGroupId ==
+                            reservation.BookingGroupId)
+                        .Sum(item => item.DepositAmount);
+                }
+
+                bool ReservationDepositPaid(Reservation? reservation)
+                {
+                    if (reservation is null)
+                        return false;
+
+                    if (!reservation.BookingGroupId.HasValue)
+                        return reservation.DepositPaid;
+
+                    return reservations.Any(item =>
+                        item.BookingGroupId ==
+                            reservation.BookingGroupId &&
+                        item.DepositPaid &&
+                        item.DepositAmount > 0);
+                }
+
+                var displayReservation =
+                    currentReservation ?? nextReservation;
+                var displayReservationDeposit =
+                    ReservationDepositAmount(displayReservation);
+                var displayReservationDepositPaid =
+                    ReservationDepositPaid(displayReservation);
+
                 var startedAt = order?.OrderTime ??
                                 currentReservation?.ReservationTime;
 
@@ -344,11 +381,9 @@ public class MobileDiningController : ControllerBase
                         currentReservation?.DurationMinutes ??
                         nextReservation?.DurationMinutes,
                     reservationDepositAmount =
-                        currentReservation?.DepositAmount ??
-                        nextReservation?.DepositAmount,
+                        displayReservationDeposit,
                     reservationDepositPaid =
-                        currentReservation?.DepositPaid ??
-                        nextReservation?.DepositPaid,
+                        displayReservationDepositPaid,
                     reservationNote = currentReservation?.Note ??
                         nextReservation?.Note,
                     nextReservationId = nextReservation?.ReservationId,
