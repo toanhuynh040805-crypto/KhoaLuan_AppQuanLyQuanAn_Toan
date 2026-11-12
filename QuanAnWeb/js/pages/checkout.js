@@ -15,6 +15,7 @@ const cartElement = document.querySelector('[data-checkout-cart]');
 const customerElement = document.querySelector('[data-checkout-customer]');
 const tableSelect = document.querySelector('[data-checkout-table]');
 const tableGridContainer = document.getElementById('checkout-table-selector');
+const tablePaginationContainer = document.getElementById('checkout-table-pagination');
 const tableCountBadge = document.getElementById('checkout-available-tables-count');
 const tableAlertContainer = document.getElementById('checkout-table-alert');
 const statusElement = document.querySelector('[data-checkout-status]');
@@ -38,9 +39,13 @@ async function initializeCheckout() {
     let sessionExpired = false;
     let uncertainSubmission = false;
     let savedRequest = null;
-    let selectedTableId = '';
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlTableId = urlParams.get('tableId') || urlParams.get('table');
+    let selectedTableId = urlTableId ? String(urlTableId) : '';
     let activeAreaFilter = 'all';
     let cachedAvailableTables = [];
+    let currentTablePage = 1;
+    let tablePageSize = 10;
     const catalogErrors = new Map();
     const AVAILABLE_TABLE_STATUS = [0];
 
@@ -108,6 +113,9 @@ async function initializeCheckout() {
     }
 
     function canSubmit() {
+        const hasValidTable = Boolean(selectedTableId && String(selectedTableId).trim() && tableSelect.value);
+        const selectedObj = cachedAvailableTables.find(t => String(t.id) === String(selectedTableId));
+        const isTableOpened = !selectedObj || selectedObj.status === 'DangPhucVu';
         return (
             !sessionExpired &&
             !uncertainSubmission &&
@@ -116,16 +124,33 @@ async function initializeCheckout() {
             !isTokenExpired() &&
             customerLoaded &&
             tablesLoaded &&
-            Boolean(tableSelect.value) &&
+            hasValidTable &&
+            isTableOpened &&
             cart.length > 0 &&
             !pending
         );
     }
 
     function updateSubmit() {
+        const hasValidTable = Boolean(selectedTableId && String(selectedTableId).trim());
+        const selectedObj = cachedAvailableTables.find(t => String(t.id) === String(selectedTableId));
+        const isTableOpened = !selectedObj || selectedObj.status === 'DangPhucVu';
         const disabled = !canSubmit();
         submitButton.disabled = disabled;
-        if (customSubmitButton) customSubmitButton.disabled = disabled;
+        if (customSubmitButton) {
+            customSubmitButton.disabled = disabled;
+            customSubmitButton.classList.toggle('opacity-50', disabled);
+            customSubmitButton.classList.toggle('cursor-not-allowed', disabled);
+            if (!hasValidTable) {
+                customSubmitButton.setAttribute('title', 'Vui lòng chọn bàn dùng món trước khi xác nhận đặt món');
+            } else if (!isTableOpened) {
+                customSubmitButton.setAttribute('title', 'Bàn chưa được mở, vui lòng liên hệ nhân viên để mở bàn trước khi gọi món');
+            } else if (cart.length === 0) {
+                customSubmitButton.setAttribute('title', 'Giỏ hàng đang trống');
+            } else {
+                customSubmitButton.removeAttribute('title');
+            }
+        }
     }
 
     function setSubmitButton(text, icon = 'send') {
@@ -271,35 +296,57 @@ async function initializeCheckout() {
         updateSubmit();
     }
 
+    function renderTablesView() {
+        renderCheckoutTables(tableSelect, cachedAvailableTables, {
+            gridContainer: tableGridContainer,
+            paginationContainer: tablePaginationContainer,
+            countBadge: tableCountBadge,
+            selectedTableId, // Biến này luôn được giữ nguyên khi chuyển trang
+            activeAreaFilter,
+            currentPage: currentTablePage,
+            pageSize: tablePageSize,
+            onSelectTable: handleTableSelection,
+            onSelectArea: handleAreaFilter,
+            onPageChange: handleTablePageChange,
+            onPageSizeChange: handleTablePageSizeChange
+        });
+    }
+
+    function handleTablePageChange(newPage) {
+        currentTablePage = newPage;
+        // RẤT QUAN TRỌNG: Giữ nguyên bàn đã chọn (selectedTableId), không bị mất trạng thái khi sang trang khác
+        renderTablesView();
+        updateSubmit();
+    }
+
+    function handleTablePageSizeChange(newSize) {
+        tablePageSize = newSize;
+        currentTablePage = 1;
+        renderTablesView();
+        updateSubmit();
+    }
+
     function handleTableSelection(id) {
         if (!id) return;
         selectedTableId = String(id);
         tableSelect.value = String(id);
-        renderCheckoutTableAlert(tableAlertContainer, null);
-        setStatus('');
+        const selectedObj = cachedAvailableTables.find(t => String(t.id) === String(id));
+        if (selectedObj && selectedObj.status === 'Trong') {
+            renderCheckoutTableAlert(tableAlertContainer, `Bàn ${selectedObj.name || id} hiện chưa được mở. Vui lòng liên hệ nhân viên để mở bàn trước khi gọi món.`, 'warning');
+            setStatus(`Bàn ${selectedObj.name || id} hiện chưa được mở. Vui lòng liên hệ nhân viên phục vụ mở bàn.`, true);
+        } else {
+            renderCheckoutTableAlert(tableAlertContainer, null);
+            setStatus('');
+        }
         tableSelect.dispatchEvent(new Event('change', { bubbles: true }));
         updateSubmit();
-
-        renderCheckoutTables(tableSelect, cachedAvailableTables, {
-            gridContainer: tableGridContainer,
-            countBadge: tableCountBadge,
-            selectedTableId,
-            activeAreaFilter,
-            onSelectTable: handleTableSelection,
-            onSelectArea: handleAreaFilter
-        });
+        renderTablesView();
     }
 
     function handleAreaFilter(area) {
         activeAreaFilter = area;
-        renderCheckoutTables(tableSelect, cachedAvailableTables, {
-            gridContainer: tableGridContainer,
-            countBadge: tableCountBadge,
-            selectedTableId,
-            activeAreaFilter,
-            onSelectTable: handleTableSelection,
-            onSelectArea: handleAreaFilter
-        });
+        currentTablePage = 1;
+        renderTablesView();
     }
 
     async function loadTables(realtimeData = null) {
@@ -315,23 +362,30 @@ async function initializeCheckout() {
             if (realtimeData && (realtimeData.tableId !== undefined || realtimeData.TableId !== undefined)) {
                 const rtId = String(realtimeData.tableId ?? realtimeData.TableId);
                 const rtStatus = String(realtimeData.status ?? realtimeData.Status ?? '').toLowerCase();
-                const isRtFree = rtStatus === 'trong' || rtStatus === '0' || realtimeData.status === 0 || realtimeData.Status === 0;
+                const isRtAvailable =
+                    rtStatus === 'dangphucvu' || rtStatus === '1' || realtimeData.status === 1 || realtimeData.Status === 1 ||
+                    rtStatus === 'trong' || rtStatus === '0' || realtimeData.status === 0 || realtimeData.Status === 0;
 
-                if (!isRtFree) {
-                    // Bàn chuyển sang bận -> lập tức loại khỏi danh sách bàn trống
+                if (!isRtAvailable) {
+                    // Bàn chuyển sang Đã đặt hoặc Đang dọn dẹp -> loại khỏi danh sách
                     effectiveTables = effectiveTables.filter(t => String(t.id) !== rtId);
-                } else if (!effectiveTables.some(t => String(t.id) === rtId)) {
-                    // Bàn chuyển sang trống -> bổ sung vào danh sách nếu chưa có
-                    effectiveTables = [
-                        ...effectiveTables,
-                        {
-                            id: Number(rtId),
-                            name: realtimeData.tableName ?? realtimeData.TableName ?? `Bàn ${rtId}`,
-                            capacity: 4,
-                            status: 'Trong',
-                            areaName: realtimeData.areaName ?? realtimeData.AreaName ?? 'Tầng 1 - Khu A'
-                        }
-                    ];
+                } else {
+                    const isOccupied = rtStatus === 'dangphucvu' || rtStatus === '1' || realtimeData.status === 1 || realtimeData.Status === 1;
+                    const existing = effectiveTables.find(t => String(t.id) === rtId);
+                    if (existing) {
+                        existing.status = isOccupied ? 'DangPhucVu' : 'Trong';
+                    } else {
+                        effectiveTables = [
+                            ...effectiveTables,
+                            {
+                                id: Number(rtId),
+                                name: realtimeData.tableName ?? realtimeData.TableName ?? `Bàn ${rtId}`,
+                                capacity: 4,
+                                status: isOccupied ? 'DangPhucVu' : 'Trong',
+                                areaName: realtimeData.areaName ?? realtimeData.AreaName ?? 'Khu vực chung'
+                            }
+                        ];
+                    }
                 }
             }
 
@@ -364,14 +418,7 @@ async function initializeCheckout() {
                 tableSelect.value = '';
             }
 
-            renderCheckoutTables(tableSelect, effectiveTables, {
-                gridContainer: tableGridContainer,
-                countBadge: tableCountBadge,
-                selectedTableId,
-                activeAreaFilter,
-                onSelectTable: handleTableSelection,
-                onSelectArea: handleAreaFilter
-            });
+            renderTablesView();
 
             if (effectiveTables.length === 0) {
                 renderCheckoutMessage(authState, 'Hiện chưa có bàn trống khả dụng. Vui lòng thử lại sau.', { type: 'warning' });
@@ -709,6 +756,21 @@ async function initializeCheckout() {
     await Promise.allSettled([loadCustomer(), loadTables(), refreshCatalogPrices()]);
 
     customSubmitButton?.addEventListener('click', () => {
+        if (!selectedTableId || !tableSelect.value) {
+            setStatus('Vui lòng chọn bàn dùng món trước khi xác nhận đặt món.', true);
+            const selectorEl = document.getElementById('checkout-table-selector') || tableSelect;
+            selectorEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            tableSelect?.focus();
+            return;
+        }
+        const selectedObj = cachedAvailableTables.find(t => String(t.id) === String(selectedTableId));
+        if (selectedObj && selectedObj.status === 'Trong') {
+            setStatus('Bàn chưa được mở, vui lòng liên hệ nhân viên để mở bàn trước khi gọi món.', true);
+            renderCheckoutTableAlert(tableAlertContainer, `Bàn ${selectedObj.name || selectedTableId} hiện chưa được mở. Vui lòng liên hệ nhân viên phục vụ mở bàn trước khi đặt món.`, 'warning');
+            const selectorEl = document.getElementById('checkout-table-selector') || tableSelect;
+            selectorEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
         if (!canSubmit()) return;
         submitButton.click();
     });

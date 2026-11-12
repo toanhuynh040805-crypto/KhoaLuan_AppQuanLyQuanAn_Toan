@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
@@ -318,6 +319,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                 request.TargetTableId
             );
 
+            targetStatus = await NormalizeStaleReservedTargetAsync(
+                connection,
+                transaction,
+                request.TargetTableId,
+                targetStatus
+            );
+
             if (sourceStatus is null || targetStatus is null)
                 return NotFound(new { message = "Không tìm thấy bàn" });
 
@@ -334,6 +342,12 @@ public class MobileTablesCompatibilityController : ControllerBase
                     new { message = "Bàn đích không còn trống" }
                 );
             }
+
+            var sourceOrderId = await GetOpenOrderIdAsync(
+                connection,
+                transaction,
+                request.SourceTableId
+            );
 
             await ExecuteAsync(
                 connection,
@@ -390,6 +404,18 @@ public class MobileTablesCompatibilityController : ControllerBase
                 """,
                 ("@SourceTableId", request.SourceTableId),
                 ("@TargetTableId", request.TargetTableId)
+            );
+
+            await LogTableOperationAsync(
+                connection,
+                transaction,
+                operationType: "ChuyenBan",
+                sourceTableId: request.SourceTableId,
+                targetTableId: request.TargetTableId,
+                relatedTableIds: null,
+                sourceOrderId: sourceOrderId,
+                targetOrderId: sourceOrderId,
+                details: null
             );
 
             await transaction.CommitAsync();
@@ -484,23 +510,168 @@ public class MobileTablesCompatibilityController : ControllerBase
                 if (targetOrderId.HasValue &&
                     targetOrderId.Value != sourceOrderId.Value)
                 {
+                    var sourceCustomerId = await ExecuteScalarNullableIntAsync(
+                        connection,
+                        transaction,
+                        "SELECT CustomerId FROM Orders WHERE OrderId = @OrderId;",
+                        ("@OrderId", sourceOrderId.Value)
+                    );
+                    var targetCustomerId = await ExecuteScalarNullableIntAsync(
+                        connection,
+                        transaction,
+                        "SELECT CustomerId FROM Orders WHERE OrderId = @OrderId;",
+                        ("@OrderId", targetOrderId.Value)
+                    );
+
+                    if (sourceCustomerId.HasValue &&
+                        targetCustomerId.HasValue &&
+                        sourceCustomerId.Value != targetCustomerId.Value)
+                    {
+                        var sourceCustomerName = await ExecuteScalarStringAsync(
+                            connection,
+                            transaction,
+                            "SELECT FullName FROM Customers WHERE CustomerId = @CustomerId;",
+                            ("@CustomerId", sourceCustomerId.Value)
+                        ) ?? $"#{sourceCustomerId.Value}";
+                        var targetCustomerName = await ExecuteScalarStringAsync(
+                            connection,
+                            transaction,
+                            "SELECT FullName FROM Customers WHERE CustomerId = @CustomerId;",
+                            ("@CustomerId", targetCustomerId.Value)
+                        ) ?? $"#{targetCustomerId.Value}";
+
+                        return Conflict(new
+                        {
+                            message =
+                                $"Không thể gộp đơn vì hai bàn đang gắn hai thành viên khác nhau: " +
+                                $"{sourceCustomerName} và {targetCustomerName}. " +
+                                "Có thể dùng Tách bàn nếu cần chia món."
+                        });
+                    }
+
+                    if (!targetCustomerId.HasValue && sourceCustomerId.HasValue)
+                    {
+                        await ExecuteAsync(
+                            connection,
+                            transaction,
+                            """
+                            UPDATE Orders
+                            SET CustomerId = @CustomerId
+                            WHERE OrderId = @TargetOrderId;
+                            """,
+                            ("@CustomerId", sourceCustomerId.Value),
+                            ("@TargetOrderId", targetOrderId.Value)
+                        );
+                    }
+
                     await ExecuteAsync(
                         connection,
                         transaction,
                         """
+                        UPDATE targetOrder
+                        SET
+                            CustomerId = COALESCE(targetOrder.CustomerId, sourceOrder.CustomerId),
+                            Note =
+                                CASE
+                                    WHEN NULLIF(LTRIM(RTRIM(targetOrder.Note)), N'') IS NULL
+                                        THEN sourceOrder.Note
+                                    WHEN NULLIF(LTRIM(RTRIM(sourceOrder.Note)), N'') IS NULL
+                                        THEN targetOrder.Note
+                                    WHEN LTRIM(RTRIM(targetOrder.Note)) = LTRIM(RTRIM(sourceOrder.Note))
+                                        THEN targetOrder.Note
+                                    ELSE CONCAT(targetOrder.Note, N' | ', sourceOrder.Note)
+                                END,
+                            PaymentRequestedByUserId =
+                                CASE
+                                    WHEN sourceOrder.PaymentRequestedAt IS NOT NULL
+                                         AND
+                                         (
+                                             targetOrder.PaymentRequestedAt IS NULL
+                                             OR sourceOrder.PaymentRequestedAt > targetOrder.PaymentRequestedAt
+                                         )
+                                        THEN sourceOrder.PaymentRequestedByUserId
+                                    ELSE targetOrder.PaymentRequestedByUserId
+                                END,
+                            PaymentRequestedAt =
+                                CASE
+                                    WHEN sourceOrder.PaymentRequestedAt IS NOT NULL
+                                         AND
+                                         (
+                                             targetOrder.PaymentRequestedAt IS NULL
+                                             OR sourceOrder.PaymentRequestedAt > targetOrder.PaymentRequestedAt
+                                         )
+                                        THEN sourceOrder.PaymentRequestedAt
+                                    ELSE targetOrder.PaymentRequestedAt
+                                END
+                        FROM Orders targetOrder
+                        INNER JOIN Orders sourceOrder
+                            ON sourceOrder.OrderId = @SourceOrderId
+                        WHERE targetOrder.OrderId = @TargetOrderId;
+
                         UPDATE OrderItems
                         SET OrderId = @TargetOrderId
                         WHERE OrderId = @SourceOrderId;
 
+                        INSERT INTO OrderTables (OrderId, TableId, IsPrimaryTable)
+                        SELECT
+                            @TargetOrderId,
+                            sourceLink.TableId,
+                            0
+                        FROM OrderTables sourceLink
+                        WHERE sourceLink.OrderId = @SourceOrderId
+                          AND sourceLink.TableId <> @SourceTableId
+                          AND NOT EXISTS
+                          (
+                              SELECT 1
+                              FROM OrderTables targetLink
+                              WHERE targetLink.OrderId = @TargetOrderId
+                                AND targetLink.TableId = sourceLink.TableId
+                          );
+
                         DELETE FROM OrderTables
                         WHERE OrderId = @SourceOrderId;
+
+                        UPDATE OrderTables
+                        SET IsPrimaryTable =
+                            CASE WHEN TableId = @TargetTableId THEN 1 ELSE 0 END
+                        WHERE OrderId = @TargetOrderId;
 
                         UPDATE Orders
                         SET Status = N'DaHuy'
                         WHERE OrderId = @SourceOrderId;
                         """,
                         ("@TargetOrderId", targetOrderId.Value),
-                        ("@SourceOrderId", sourceOrderId.Value)
+                        ("@SourceOrderId", sourceOrderId.Value),
+                        ("@SourceTableId", request.SourceTableId),
+                        ("@TargetTableId", request.TargetTableId)
+                    );
+                }
+                else if (targetOrderId.HasValue &&
+                         targetOrderId.Value == sourceOrderId.Value)
+                {
+                    // Hai bàn vốn đã ghép và đang dùng cùng một order.
+                    // Gộp đơn lúc này có nghĩa là bỏ bàn nguồn khỏi nhóm,
+                    // giữ toàn bộ order/thành viên/món ở bàn đích.
+                    await ExecuteAsync(
+                        connection,
+                        transaction,
+                        """
+                        UPDATE Orders
+                        SET TableId = @TargetTableId
+                        WHERE OrderId = @OrderId;
+
+                        DELETE FROM OrderTables
+                        WHERE OrderId = @OrderId
+                          AND TableId = @SourceTableId;
+
+                        UPDATE OrderTables
+                        SET IsPrimaryTable =
+                            CASE WHEN TableId = @TargetTableId THEN 1 ELSE 0 END
+                        WHERE OrderId = @OrderId;
+                        """,
+                        ("@OrderId", sourceOrderId.Value),
+                        ("@SourceTableId", request.SourceTableId),
+                        ("@TargetTableId", request.TargetTableId)
                     );
                 }
                 else if (!targetOrderId.HasValue)
@@ -555,6 +726,18 @@ public class MobileTablesCompatibilityController : ControllerBase
                 """,
                 ("@SourceTableId", request.SourceTableId),
                 ("@TargetTableId", request.TargetTableId)
+            );
+
+            await LogTableOperationAsync(
+                connection,
+                transaction,
+                operationType: "GopDon",
+                sourceTableId: request.SourceTableId,
+                targetTableId: request.TargetTableId,
+                relatedTableIds: null,
+                sourceOrderId: sourceOrderId,
+                targetOrderId: targetOrderId ?? sourceOrderId,
+                details: null
             );
 
             await transaction.CommitAsync();
@@ -667,6 +850,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                     ("@TableId", tableId)
                 );
 
+                status = await NormalizeStaleReservedTargetAsync(
+                    connection,
+                    transaction,
+                    tableId,
+                    status
+                );
+
                 if (status is null)
                     return NotFound(new { message = $"Không tìm thấy bàn #{tableId}" });
                 if (status != "Trong")
@@ -691,6 +881,18 @@ public class MobileTablesCompatibilityController : ControllerBase
                     ("@TableId", tableId)
                 );
             }
+
+            await LogTableOperationAsync(
+                connection,
+                transaction,
+                operationType: "GhepBan",
+                sourceTableId: request.PrimaryTableId,
+                targetTableId: null,
+                relatedTableIds: targetIds,
+                sourceOrderId: orderId,
+                targetOrderId: orderId,
+                details: null
+            );
 
             await transaction.CommitAsync();
             await NotifyTableChangeAsync("Ghép bàn", " + ", new[] { request.PrimaryTableId }.Concat(targetIds).ToArray());
@@ -752,6 +954,13 @@ public class MobileTablesCompatibilityController : ControllerBase
                 request.TargetTableId
             );
 
+            targetStatus = await NormalizeStaleReservedTargetAsync(
+                connection,
+                transaction,
+                request.TargetTableId,
+                targetStatus
+            );
+
             if (sourceStatus is null || targetStatus is null)
                 return NotFound(new { message = "Không tìm thấy bàn" });
 
@@ -777,6 +986,7 @@ public class MobileTablesCompatibilityController : ControllerBase
 
             int? targetOrderId = null;
             var persistedItems = 0;
+            var splitItemDescriptions = new List<string>();
 
             var validRequests = request.Items
                 .Where(x =>
@@ -816,6 +1026,10 @@ public class MobileTablesCompatibilityController : ControllerBase
 
                     if (item is null)
                         continue;
+
+                    splitItemDescriptions.Add(
+                        $"{item.Name} x{itemRequest.Quantity}"
+                    );
 
                     if (itemRequest.Quantity > item.Quantity)
                     {
@@ -931,6 +1145,20 @@ public class MobileTablesCompatibilityController : ControllerBase
                 ("@TargetTableId", request.TargetTableId)
             );
 
+            await LogTableOperationAsync(
+                connection,
+                transaction,
+                operationType: "TachBan",
+                sourceTableId: request.SourceTableId,
+                targetTableId: request.TargetTableId,
+                relatedTableIds: null,
+                sourceOrderId: sourceOrderId,
+                targetOrderId: targetOrderId,
+                details: splitItemDescriptions.Count == 0
+                    ? null
+                    : "Món tách: " + string.Join(", ", splitItemDescriptions)
+            );
+
             await transaction.CommitAsync();
             await NotifyTableChangeAsync("Tách bàn", " → ", request.SourceTableId, request.TargetTableId);
             return Ok(
@@ -1000,6 +1228,112 @@ public class MobileTablesCompatibilityController : ControllerBase
         }
     }
 
+    private static async Task<string?> NormalizeStaleReservedTargetAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        int tableId,
+        string? rawStatus)
+    {
+        // Sơ đồ bàn đã coi một trạng thái DaDat cũ là Trống nếu không còn
+        // reservation hợp lệ. Các thao tác Chuyển/Ghép/Tách phải dùng cùng
+        // logic đó; nếu không UI chọn được bàn nhưng API lại báo "không trống".
+        if (!string.Equals(rawStatus, "DaDat", StringComparison.OrdinalIgnoreCase))
+            return rawStatus;
+
+        var reservationState = await ExecuteScalarIntAsync(
+            connection,
+            transaction,
+            """
+            ;WITH SelectedTable AS
+            (
+                SELECT AreaId, UPPER(LTRIM(RTRIM(TableName))) AS NormalizedName
+                FROM DiningTables
+                WHERE TableId = @TableId
+            ),
+            PhysicalTables AS
+            (
+                SELECT t.TableId
+                FROM DiningTables t
+                INNER JOIN SelectedTable s
+                    ON s.AreaId = t.AreaId
+                   AND UPPER(LTRIM(RTRIM(t.TableName))) = s.NormalizedName
+            )
+            SELECT
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaNhanBan'
+                    )
+                        THEN 2
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaXacNhan'
+                          AND DATEADD(
+                                MINUTE,
+                                ISNULL(r.DurationMinutes, 30),
+                                r.ReservationTime
+                              ) >= GETDATE()
+                          AND r.ReservationTime <= GETDATE()
+                    )
+                        THEN 2
+                    WHEN EXISTS
+                    (
+                        SELECT 1
+                        FROM Reservations r
+                        INNER JOIN PhysicalTables p ON p.TableId = r.TableId
+                        WHERE r.Status = N'DaXacNhan'
+                          AND r.ReservationTime > GETDATE()
+                    )
+                        THEN 1
+                    ELSE 0
+                END;
+            """,
+            ("@TableId", tableId)
+        );
+
+        // 2 = reservation đã tới giờ/đã nhận: đây không còn là bàn đích trống.
+        if (reservationState == 2)
+            return rawStatus;
+
+        // 1 = chỉ có reservation TƯƠNG LAI: nghiệp vụ vẫn được phép dùng bàn
+        // như bàn thường (chuyển/ghép/tách). Không đổi DiningTables về Trong để
+        // sơ đồ vẫn giữ badge lịch đặt; thao tác thành công sẽ tự chuyển sang
+        // DangPhucVu và reservation tương lai vẫn còn nguyên.
+        if (reservationState == 1)
+            return "Trong";
+
+        // Không còn reservation thật sự: dọn cờ DaDat cũ trên mọi TableId
+        // legacy đại diện cùng một bàn vật lý để lần tải sau cũng nhất quán.
+        await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            ;WITH SelectedTable AS
+            (
+                SELECT AreaId, UPPER(LTRIM(RTRIM(TableName))) AS NormalizedName
+                FROM DiningTables
+                WHERE TableId = @TableId
+            )
+            UPDATE t
+            SET Status = N'Trong'
+            FROM DiningTables t
+            INNER JOIN SelectedTable s
+                ON s.AreaId = t.AreaId
+               AND UPPER(LTRIM(RTRIM(t.TableName))) = s.NormalizedName
+            WHERE t.Status = N'DaDat';
+            """,
+            ("@TableId", tableId)
+        );
+
+        return "Trong";
+    }
+
     private static async Task<string?> GetTableStatusAsync(
         DbConnection connection,
         DbTransaction transaction,
@@ -1026,11 +1360,12 @@ public class MobileTablesCompatibilityController : ControllerBase
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT TOP 1 OrderId
-            FROM Orders
-            WHERE TableId = @TableId
-              AND Status = N'DangMo'
-            ORDER BY OrderTime DESC;
+            SELECT TOP 1 o.OrderId
+            FROM Orders o
+            LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+            WHERE o.Status = N'DangMo'
+              AND (o.TableId = @TableId OR ot.TableId = @TableId)
+            ORDER BY o.OrderTime DESC, o.OrderId DESC;
             """;
         AddParameter(command, "@TableId", tableId);
 
@@ -1290,6 +1625,243 @@ public class MobileTablesCompatibilityController : ControllerBase
                 ("@ComboId", item.ComboId.Value)
             );
         }
+    }
+
+    private async Task LogTableOperationAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string operationType,
+        int? sourceTableId,
+        int? targetTableId,
+        IEnumerable<int>? relatedTableIds,
+        int? sourceOrderId,
+        int? targetOrderId,
+        string? details)
+    {
+        await EnsureTableOperationLogTableAsync(connection, transaction);
+
+        var relatedIds = (relatedTableIds ?? Array.Empty<int>())
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        string? sourceTableName = null;
+        string? targetTableName = null;
+
+        if (sourceTableId.HasValue)
+        {
+            sourceTableName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                "SELECT TableName FROM DiningTables WHERE TableId = @TableId;",
+                ("@TableId", sourceTableId.Value)
+            );
+        }
+
+        if (targetTableId.HasValue)
+        {
+            targetTableName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                "SELECT TableName FROM DiningTables WHERE TableId = @TableId;",
+                ("@TableId", targetTableId.Value)
+            );
+        }
+
+        var relatedNames = new List<string>();
+        foreach (var tableId in relatedIds)
+        {
+            var tableName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                "SELECT TableName FROM DiningTables WHERE TableId = @TableId;",
+                ("@TableId", tableId)
+            );
+            relatedNames.Add(
+                string.IsNullOrWhiteSpace(tableName)
+                    ? $"Bàn #{tableId}"
+                    : tableName
+            );
+        }
+
+        sourceTableName = string.IsNullOrWhiteSpace(sourceTableName)
+            ? (sourceTableId.HasValue ? $"Bàn #{sourceTableId.Value}" : null)
+            : sourceTableName;
+        targetTableName = string.IsNullOrWhiteSpace(targetTableName)
+            ? (targetTableId.HasValue ? $"Bàn #{targetTableId.Value}" : null)
+            : targetTableName;
+
+        var operationLabel = operationType switch
+        {
+            "ChuyenBan" => "Chuyển bàn",
+            "GopDon" => "Gộp đơn",
+            "GhepBan" => "Ghép bàn",
+            "TachBan" => "Tách bàn",
+            _ => operationType
+        };
+
+        var routeDescription = operationType switch
+        {
+            "GhepBan" =>
+                $"{sourceTableName ?? "Bàn"} + {string.Join(", ", relatedNames)}",
+            _ when sourceTableName is not null && targetTableName is not null =>
+                $"{sourceTableName} → {targetTableName}",
+            _ => sourceTableName ?? targetTableName ?? ""
+        };
+
+        var fullDetails = string.IsNullOrWhiteSpace(details)
+            ? $"{operationLabel}: {routeDescription}"
+            : $"{operationLabel}: {routeDescription}. {details}";
+
+        string? sourceMemberName = null;
+        string? targetMemberName = null;
+
+        if (sourceOrderId.HasValue)
+        {
+            sourceMemberName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                """
+                SELECT c.FullName
+                FROM Orders o
+                LEFT JOIN Customers c ON c.CustomerId = o.CustomerId
+                WHERE o.OrderId = @OrderId;
+                """,
+                ("@OrderId", sourceOrderId.Value)
+            );
+        }
+
+        if (targetOrderId.HasValue)
+        {
+            targetMemberName = await ExecuteScalarStringAsync(
+                connection,
+                transaction,
+                """
+                SELECT c.FullName
+                FROM Orders o
+                LEFT JOIN Customers c ON c.CustomerId = o.CustomerId
+                WHERE o.OrderId = @OrderId;
+                """,
+                ("@OrderId", targetOrderId.Value)
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceMemberName) ||
+            !string.IsNullOrWhiteSpace(targetMemberName))
+        {
+            if (string.Equals(
+                sourceMemberName,
+                targetMemberName,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                fullDetails +=
+                    $". Thành viên: {sourceMemberName ?? targetMemberName}";
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(sourceMemberName))
+                    fullDetails += $". Thành viên nguồn: {sourceMemberName}";
+                if (!string.IsNullOrWhiteSpace(targetMemberName))
+                    fullDetails += $". Thành viên đích: {targetMemberName}";
+            }
+        }
+
+        int? actorUserId = null;
+        if (int.TryParse(
+            User.FindFirstValue(ClaimTypes.NameIdentifier),
+            out var parsedUserId))
+        {
+            actorUserId = parsedUserId;
+        }
+
+        var actorName =
+            User.FindFirstValue("FullName") ??
+            User.Identity?.Name ??
+            "Hệ thống";
+
+        var relatedIdsText = relatedIds.Count == 0
+            ? null
+            : "," + string.Join(",", relatedIds) + ",";
+
+        await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            INSERT INTO TableOperationLogs
+                (
+                    OperationType,
+                    SourceTableId,
+                    TargetTableId,
+                    RelatedTableIds,
+                    SourceOrderId,
+                    TargetOrderId,
+                    ActorUserId,
+                    ActorName,
+                    Details,
+                    CreatedAt
+                )
+            VALUES
+                (
+                    @OperationType,
+                    @SourceTableId,
+                    @TargetTableId,
+                    @RelatedTableIds,
+                    @SourceOrderId,
+                    @TargetOrderId,
+                    @ActorUserId,
+                    @ActorName,
+                    @Details,
+                    GETDATE()
+                );
+            """,
+            ("@OperationType", operationType),
+            ("@SourceTableId", sourceTableId),
+            ("@TargetTableId", targetTableId),
+            ("@RelatedTableIds", relatedIdsText),
+            ("@SourceOrderId", sourceOrderId),
+            ("@TargetOrderId", targetOrderId),
+            ("@ActorUserId", actorUserId),
+            ("@ActorName", actorName),
+            ("@Details", fullDetails)
+        );
+    }
+
+    private static async Task EnsureTableOperationLogTableAsync(
+        DbConnection connection,
+        DbTransaction transaction)
+    {
+        await ExecuteAsync(
+            connection,
+            transaction,
+            """
+            IF OBJECT_ID(N'dbo.TableOperationLogs', N'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.TableOperationLogs
+                (
+                    OperationLogId int IDENTITY(1,1) NOT NULL
+                        CONSTRAINT PK_TableOperationLogs PRIMARY KEY,
+                    OperationType nvarchar(40) NOT NULL,
+                    SourceTableId int NULL,
+                    TargetTableId int NULL,
+                    RelatedTableIds nvarchar(1000) NULL,
+                    SourceOrderId int NULL,
+                    TargetOrderId int NULL,
+                    ActorUserId int NULL,
+                    ActorName nvarchar(200) NULL,
+                    Details nvarchar(2000) NULL,
+                    CreatedAt datetime2 NOT NULL
+                        CONSTRAINT DF_TableOperationLogs_CreatedAt
+                        DEFAULT (GETDATE())
+                );
+
+                CREATE INDEX IX_TableOperationLogs_SourceTable_CreatedAt
+                    ON dbo.TableOperationLogs(SourceTableId, CreatedAt DESC);
+
+                CREATE INDEX IX_TableOperationLogs_TargetTable_CreatedAt
+                    ON dbo.TableOperationLogs(TargetTableId, CreatedAt DESC);
+            END;
+            """
+        );
     }
 
     private static async Task<int> ExecuteAsync(

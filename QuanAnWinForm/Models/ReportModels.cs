@@ -6,6 +6,7 @@ public class RevenueSummaryDto
     public int OrderCount { get; set; }
     public decimal AvgOrderValue { get; set; }
     public decimal TotalDiscount { get; set; }
+    public int GuestCount { get; set; }
     public double? TrendPercent { get; set; }
 }
 

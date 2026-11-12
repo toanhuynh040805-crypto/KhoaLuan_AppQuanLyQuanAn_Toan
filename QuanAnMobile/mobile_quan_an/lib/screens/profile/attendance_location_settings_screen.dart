@@ -35,6 +35,7 @@ class _AttendanceLocationSettingsScreenState
   double? _selectedLongitude;
   double? _currentAccuracy;
   bool _currentIsMocked = false;
+  bool _hasFreshRealLocation = false;
   bool _loading = true;
   bool _capturing = false;
   bool _saving = false;
@@ -81,6 +82,9 @@ class _AttendanceLocationSettingsScreenState
                 .round()
                 .toString();
 
+        _currentAccuracy = null;
+        _currentIsMocked = false;
+        _hasFreshRealLocation = false;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -104,6 +108,7 @@ class _AttendanceLocationSettingsScreenState
 
     setState(() {
       _capturing = true;
+      _hasFreshRealLocation = false;
     });
 
     try {
@@ -145,6 +150,23 @@ class _AttendanceLocationSettingsScreenState
         return;
       }
 
+      if (result.isMocked) {
+        setState(() {
+          _currentAccuracy =
+              result.accuracyMeters;
+          _currentIsMocked = true;
+          _hasFreshRealLocation = false;
+        });
+
+        TopMessage.show(
+          context,
+          message:
+              'Phát hiện vị trí mô phỏng. Không thể dùng vị trí này làm vị trí quán.',
+          type: TopMessageType.error,
+        );
+        return;
+      }
+
       setState(() {
         _selectedLatitude =
             result.latitude;
@@ -152,14 +174,14 @@ class _AttendanceLocationSettingsScreenState
             result.longitude;
         _currentAccuracy =
             result.accuracyMeters;
-        _currentIsMocked =
-            result.isMocked;
+        _currentIsMocked = false;
+        _hasFreshRealLocation = true;
       });
 
       TopMessage.show(
         context,
         message:
-            'Đã lấy vị trí hiện tại. Bấm Lưu vị trí quán để áp dụng.',
+            'Đã lấy GPS thật từ thiết bị. Bấm Lưu vị trí quán để áp dụng.',
         type: TopMessageType.success,
       );
     } catch (_) {
@@ -194,6 +216,18 @@ class _AttendanceLocationSettingsScreenState
         context,
         message:
             'Hãy lấy vị trí hiện tại trước khi lưu.',
+        type: TopMessageType.warning,
+      );
+      return;
+    }
+
+    if (!_hasFreshRealLocation ||
+        _currentIsMocked ||
+        _currentAccuracy == null) {
+      TopMessage.show(
+        context,
+        message:
+            'Cần lấy GPS thật mới từ thiết bị tại quán trước khi lưu vị trí.',
         type: TopMessageType.warning,
       );
       return;
@@ -258,6 +292,8 @@ class _AttendanceLocationSettingsScreenState
         longitude: longitude,
         radiusMeters: radius,
         maxAccuracyMeters: maxAccuracy,
+        accuracyMeters: _currentAccuracy!,
+        isMocked: _currentIsMocked,
       );
 
       if (!mounted) return;
@@ -268,6 +304,7 @@ class _AttendanceLocationSettingsScreenState
             saved.latitude;
         _selectedLongitude =
             saved.longitude;
+        _hasFreshRealLocation = false;
       });
 
       TopMessage.show(
@@ -490,10 +527,10 @@ class _AttendanceLocationSettingsScreenState
                               top: 8,
                             ),
                             child: Text(
-                              'Thiết bị đang báo vị trí mô phỏng. Khi vận hành thật nên thiết lập bằng điện thoại tại quán.',
+                              'Phát hiện vị trí mô phỏng. Hệ thống không cho phép lưu vị trí này.',
                               style: TextStyle(
                                 color: Colors
-                                    .orange.shade800,
+                                    .red.shade700,
                                 fontSize: 12,
                               ),
                             ),

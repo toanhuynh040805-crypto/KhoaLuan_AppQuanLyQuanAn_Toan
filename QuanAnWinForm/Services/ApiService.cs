@@ -4,6 +4,13 @@ using QuanAnWinForm.Models;
 
 namespace QuanAnWinForm.Services;
 
+public sealed class TableLockConflictException : Exception
+{
+    public TableLockConflictException(string message) : base(message)
+    {
+    }
+}
+
 public class ApiService
 {
     private readonly HttpClient _http;
@@ -14,10 +21,103 @@ public class ApiService
         _http = new HttpClient(new AuthHeaderHandler()) { BaseAddress = new Uri(ApiConfig.BaseUrl) };
     }
 
-    public async Task<List<TableDto>> GetTablesAsync()
+    public async Task<TableLockLeaseDto?> AcquireTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken,
+        bool forceTakeover = false)
     {
-        var res = await _http.GetFromJsonAsync<List<TableDto>>("/api/tables", JsonOpts);
-        return res ?? new List<TableDto>();
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/acquire",
+            new
+            {
+                employeeCode,
+                clientToken,
+                forceTakeover
+            });
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            string message = "Bàn đang được tài khoản khác giữ.";
+            try
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("message", out var messageElement))
+                {
+                    var serverMessage = messageElement.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(serverMessage))
+                        message = serverMessage;
+                }
+            }
+            catch
+            {
+                // Giữ message mặc định để UI vẫn có thể hỏi xác nhận takeover.
+            }
+
+            throw new TableLockConflictException(message);
+        }
+
+        await EnsureSuccessOrThrowMessageAsync(response);
+        return await response.Content.ReadFromJsonAsync<TableLockLeaseDto>(JsonOpts);
+    }
+
+    public async Task<(bool IsOwner, string? Message)> HeartbeatTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/heartbeat",
+            new
+            {
+                employeeCode,
+                clientToken
+            });
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            string? message = null;
+            try
+            {
+                var body = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOpts);
+                if (body.ValueKind == JsonValueKind.Object &&
+                    body.TryGetProperty("message", out var messageElement))
+                {
+                    message = messageElement.GetString();
+                }
+            }
+            catch
+            {
+                // Giữ message mặc định bên dưới.
+            }
+
+            return (false, message);
+        }
+
+        await EnsureSuccessOrThrowMessageAsync(response);
+        return (true, null);
+    }
+
+    public async Task ReleaseTableLockAsync(
+        int tableId,
+        string employeeCode,
+        string clientToken)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/table-locks/{tableId}/release",
+            new
+            {
+                employeeCode,
+                clientToken
+            });
+
+        // Nếu phiên đã bị thiết bị khác tiếp quản thì release sẽ 409.
+        // Không coi đây là lỗi vì lease cũ đã không còn thuộc client này.
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            return;
+
+        await EnsureSuccessOrThrowMessageAsync(response);
     }
 
     public async Task<List<MenuItemDto>> GetMenuAsync()
@@ -99,11 +199,21 @@ public class ApiService
 
     public async Task<PaymentPreviewOrderDto?> GetPaymentPreviewAsync(
         int orderId,
-        int? campaignId = null)
+        int? campaignId = null,
+        int? customerId = null,
+        int? redeemPoints = null)
     {
-        var url = $"/api/payments/preview/order/{orderId}";
+        var query = new List<string>();
         if (campaignId.HasValue)
-            url += $"?campaignId={campaignId.Value}";
+            query.Add($"campaignId={campaignId.Value}");
+        if (customerId.HasValue && customerId.Value > 0)
+            query.Add($"customerId={customerId.Value}");
+        if (redeemPoints.HasValue && redeemPoints.Value > 0)
+            query.Add($"redeemPoints={redeemPoints.Value}");
+
+        var url = $"/api/payments/preview/order/{orderId}";
+        if (query.Count > 0)
+            url += "?" + string.Join("&", query);
 
         return await _http.GetFromJsonAsync<PaymentPreviewOrderDto>(
             url,
@@ -209,8 +319,12 @@ public class ApiService
     public async Task<List<TableDto>> GetTablesAsync(int? areaId = null)
     {
         var url = areaId.HasValue ? $"/api/tables?areaId={areaId}" : "/api/tables";
-        var res = await _http.GetFromJsonAsync<List<TableDto>>(url, JsonOpts);
-        return res ?? new List<TableDto>();
+
+        using var response = await _http.GetAsync(url);
+        await EnsureSuccessOrThrowMessageAsync(response);
+
+        var tables = await response.Content.ReadFromJsonAsync<List<TableDto>>(JsonOpts);
+        return tables ?? new List<TableDto>();
     }
 
     public async Task<List<AreaDto>> GetAreasAsync()
@@ -420,7 +534,19 @@ public class ApiService
             "/api/attendance-settings",
             JsonOpts);
     }
-
+    // Giờ nhận món của bếp (backend: GET /api/kitchen-hours). Lỗi mạng -> null (coi như không chặn ở UI,
+    // backend vẫn là lớp chặn cuối cùng).
+    public async Task<KitchenHoursDto?> GetKitchenHoursAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<KitchenHoursDto>("/api/kitchen-hours", JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
     public async Task<AttendanceLocationSettingsDto?> UpdateAttendanceLocationSettingsAsync(
         double latitude,
         double longitude,
@@ -468,6 +594,45 @@ public class ApiService
         return res ?? new List<OrderItemStatusDto>();
     }
 
+    public async Task<KitchenPrioritySnapshotDto> GetKitchenPrioritiesAsync()
+    {
+        using var res = await _http.GetAsync("/api/mobile/ops/kitchen-priorities");
+        await EnsureSuccessOrThrowMessageAsync(res);
+
+        return await res.Content.ReadFromJsonAsync<KitchenPrioritySnapshotDto>(JsonOpts)
+            ?? new KitchenPrioritySnapshotDto();
+    }
+
+    public async Task SetKitchenItemPriorityAsync(
+        int orderItemId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/item/{orderItemId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    public async Task SetKitchenTablePriorityAsync(
+        int tableId,
+        bool active)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/mobile/ops/priority/table/{tableId}",
+            new
+            {
+                active,
+                employeeCode = SessionContext.EmployeeCode
+            });
+
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
     // Cập nhật trạng thái món ăn kèm userId, lý do hủy và RowVer - trả về trạng
     // thái THẬT SỰ đang có ở Backend sau khi cập nhật (dùng để đồng bộ lại UI,
     // tránh lệch trạng thái nếu có sự cố mạng/SignalR trong lúc gọi).
@@ -500,6 +665,31 @@ public class ApiService
 
         var res = await _http.GetFromJsonAsync<List<OrderSummaryDto>>(url, JsonOpts);
         return res ?? new List<OrderSummaryDto>();
+    }
+
+    public async Task<OrderAuditResponseDto> GetOrderAuditAsync(
+        DateTime date,
+        int? tableId = null,
+        int? paymentRequestedByUserId = null)
+    {
+        var qs = new List<string>
+        {
+            $"date={date:yyyy-MM-dd}"
+        };
+        if (tableId.HasValue && tableId.Value > 0)
+            qs.Add($"tableId={tableId.Value}");
+        if (paymentRequestedByUserId.HasValue &&
+            paymentRequestedByUserId.Value > 0)
+        {
+            qs.Add(
+                $"paymentRequestedByUserId={paymentRequestedByUserId.Value}");
+        }
+
+        var url = "/api/order-audit?" + string.Join("&", qs);
+        var response = await _http.GetFromJsonAsync<OrderAuditResponseDto>(
+            url,
+            JsonOpts);
+        return response ?? new OrderAuditResponseDto { Date = date.Date };
     }
 
     public async Task<OrderDto?> GetOrderByIdAsync(int orderId)
@@ -578,15 +768,57 @@ public class ApiService
         return res ?? new List<ActiveCampaignDto>();
     }
 
-    public async Task CreateCampaignAsync(string campaignName, DateTime startDate, DateTime endDate, decimal discountPercent, string? note, int userId)
+    // Mọi chiến dịch đang hiệu lực, kèm trạng thái đủ/không đủ điều kiện theo khách + tạm tính.
+    public async Task<List<EligibleCampaignDto>> GetEligibleCampaignsAsync(int? customerId, decimal subTotal)
     {
-        var res = await _http.PostAsJsonAsync("/api/discountcampaigns", new { campaignName, startDate, endDate, discountPercent, note, userId });
+        var url = $"/api/discountcampaigns/eligible?subTotal={subTotal.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        if (customerId.HasValue)
+            url += $"&customerId={customerId.Value}";
+
+        var res = await _http.GetFromJsonAsync<List<EligibleCampaignDto>>(url, JsonOpts);
+        return res ?? new List<EligibleCampaignDto>();
+    }
+
+    public async Task CreateCampaignAsync(
+        string campaignName,
+        DateTime startDate,
+        DateTime endDate,
+        decimal discountPercent,
+        string? note,
+        int userId,
+        List<CampaignConditionDto> conditions)
+    {
+        var res = await _http.PostAsJsonAsync("/api/discountcampaigns", new
+        {
+            campaignName,
+            startDate,
+            endDate,
+            discountPercent,
+            note,
+            userId,
+            conditions = conditions.Select(c => new { conditionType = c.ConditionType, value1 = c.Value1, value2 = c.Value2 }).ToList()
+        });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
-    public async Task UpdateCampaignAsync(int id, string campaignName, DateTime startDate, DateTime endDate, decimal discountPercent, string? note)
+    public async Task UpdateCampaignAsync(
+        int id,
+        string campaignName,
+        DateTime startDate,
+        DateTime endDate,
+        decimal discountPercent,
+        string? note,
+        List<CampaignConditionDto> conditions)
     {
-        var res = await _http.PutAsJsonAsync($"/api/discountcampaigns/{id}", new { campaignName, startDate, endDate, discountPercent, note });
+        var res = await _http.PutAsJsonAsync($"/api/discountcampaigns/{id}", new
+        {
+            campaignName,
+            startDate,
+            endDate,
+            discountPercent,
+            note,
+            conditions = conditions.Select(c => new { conditionType = c.ConditionType, value1 = c.Value1, value2 = c.Value2 }).ToList()
+        });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
@@ -630,24 +862,24 @@ public class ApiService
         return res ?? new List<ReservationDto>();
     }
 
-    public async Task CreateReservationAsync(int tableId, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note)
+    public async Task CreateReservationAsync(int tableId, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note, bool depositPaid = false)
     {
-        var res = await _http.PostAsJsonAsync("/api/reservations", new { tableId, customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note });
+        var res = await _http.PostAsJsonAsync("/api/reservations", new { tableId, customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
     // Đặt NHIỀU bàn cùng lúc cho nhóm khách đông (POST /api/reservations/batch).
     // tables: danh sách (TableId, số khách ngồi ở bàn đó). Backend kiểm tra hết rồi mới lưu.
-    public async Task CreateReservationBatchAsync(IEnumerable<(int TableId, int NumberOfGuests)> tables, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, decimal depositAmount, string? note)
+    public async Task CreateReservationBatchAsync(IEnumerable<(int TableId, int NumberOfGuests)> tables, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, decimal depositAmount, string? note, bool depositPaid = false)
     {
         var slots = tables.Select(t => new { tableId = t.TableId, numberOfGuests = t.NumberOfGuests }).ToList();
-        var res = await _http.PostAsJsonAsync("/api/reservations/batch", new { tables = slots, customerName, customerPhone, reservationTime, durationMinutes, depositAmount, note });
+        var res = await _http.PostAsJsonAsync("/api/reservations/batch", new { tables = slots, customerName, customerPhone, reservationTime, durationMinutes, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
-    public async Task UpdateReservationAsync(int id, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note)
+    public async Task UpdateReservationAsync(int id, string? customerName, string? customerPhone, DateTime reservationTime, int durationMinutes, int numberOfGuests, decimal depositAmount, string? note, bool? depositPaid = null)
     {
-        var res = await _http.PutAsJsonAsync($"/api/reservations/{id}", new { customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note });
+        var res = await _http.PutAsJsonAsync($"/api/reservations/{id}", new { customerName, customerPhone, reservationTime, durationMinutes, numberOfGuests, depositAmount, note, depositPaid });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
@@ -672,6 +904,14 @@ public class ApiService
     public async Task UpdateReservationStatusAsync(int id, int status)
     {
         var res = await _http.PutAsJsonAsync($"/api/reservations/{id}/status", (ReservationStatusEnum)status);
+        await EnsureSuccessOrThrowMessageAsync(res);
+    }
+
+    public async Task ReleaseOverdueReservationAsync(int id)
+    {
+        var res = await _http.PostAsJsonAsync(
+            $"/api/reservations/{id}/release-overdue",
+            new { });
         await EnsureSuccessOrThrowMessageAsync(res);
     }
 
@@ -1051,4 +1291,12 @@ public class RoleDto
         "Bep" => "Bếp",
         _ => RoleName,
     };
+}
+public class KitchenHoursDto
+{
+    public bool IsOpen { get; set; } = true;
+    public string OpenTime { get; set; } = "";
+    public string CloseTime { get; set; } = "";
+    public string Message { get; set; } = "";
+    public DateTime ServerTime { get; set; }
 }

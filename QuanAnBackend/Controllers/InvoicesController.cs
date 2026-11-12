@@ -161,6 +161,27 @@ public class InvoicesController : ControllerBase
             ?? invoice.CreatedByUser?.FullName
             ?? "";
 
+        var loyaltyRows = await _db.LoyaltyPointHistories
+            .AsNoTracking()
+            .Where(history =>
+                history.RelatedInvoiceId == invoice.InvoiceId)
+            .ToListAsync();
+
+        var pointsRedeemed = loyaltyRows
+            .Where(history =>
+                history.Type == LoyaltyPointType.DoiDiem &&
+                history.Points < 0)
+            .Sum(history => -history.Points);
+
+        var pointsEarned = loyaltyRows
+            .Where(history =>
+                history.Type == LoyaltyPointType.TichDiem &&
+                history.Points > 0)
+            .Sum(history => history.Points);
+
+        var loyaltyDiscount =
+            pointsRedeemed * CustomerLoyaltyHelper.PointValueVnd;
+
         return Ok(new
         {
             Id = invoice.InvoiceId,
@@ -194,6 +215,10 @@ public class InvoicesController : ControllerBase
                 .ToList(),
             invoice.SubTotal,
             invoice.DiscountAmount,
+            invoice.DepositAmount,
+            PointsRedeemed = pointsRedeemed,
+            PointsEarned = pointsEarned,
+            LoyaltyDiscount = loyaltyDiscount,
             CampaignName =
                 invoice.AppliedCampaign != null
                     ? invoice.AppliedCampaign.CampaignName

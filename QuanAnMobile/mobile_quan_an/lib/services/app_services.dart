@@ -16,6 +16,7 @@ import 'reference_ops_service.dart';
 import 'table_lock_service.dart';
 import 'customer_service.dart';
 import 'statistics_service.dart';
+import 'order_audit_service.dart';
 import 'staff_management_service.dart';
 
 class AppServices {
@@ -61,6 +62,11 @@ class AppServices {
     apiClient: apiClient,
   );
 
+  static final OrderAuditService orderAuditService =
+      OrderAuditService(
+    apiClient: apiClient,
+  );
+
   static final StaffManagementService staffManagementService =
       StaffManagementService(
     apiClient: apiClient,
@@ -92,7 +98,9 @@ class AppServices {
 
   static final RealtimeService
       realtimeService =
-      RealtimeService();
+      RealtimeService(
+    apiClient: apiClient,
+  );
 
   static final AttendanceService
       attendanceService =

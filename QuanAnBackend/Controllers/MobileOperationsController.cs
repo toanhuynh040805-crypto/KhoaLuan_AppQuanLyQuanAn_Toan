@@ -2,12 +2,32 @@ using System.Data;
 using System.Data.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Hubs;
 
 namespace QuanAnBackend.Controllers;
 
 public record MobilePriorityRequest(bool Active, string? EmployeeCode);
+
+internal sealed record MobileTableTimelineEvent(
+    string EventType,
+    int? HistoryId,
+    int? OperationLogId,
+    int? OrderItemId,
+    string ItemName,
+    int? Quantity,
+    string Status,
+    DateTime ChangedAt,
+    string ChangedBy,
+    string? Note,
+    string? OperationType = null,
+    int? SourceTableId = null,
+    int? TargetTableId = null,
+    int? SourceOrderId = null,
+    int? TargetOrderId = null
+);
 
 [ApiController]
 [Route("api/mobile/ops")]
@@ -15,10 +35,14 @@ public record MobilePriorityRequest(bool Active, string? EmployeeCode);
 public class MobileOperationsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IHubContext<OrderHub> _hub;
 
-    public MobileOperationsController(AppDbContext db)
+    public MobileOperationsController(
+        AppDbContext db,
+        IHubContext<OrderHub> hub)
     {
         _db = db;
+        _hub = hub;
     }
 
     [HttpGet("recent-notes")]
@@ -77,10 +101,11 @@ public class MobileOperationsController : ControllerBase
             await using (var orderCommand = connection.CreateCommand())
             {
                 orderCommand.CommandText = """
-                    SELECT TOP 1 OrderId
-                    FROM Orders
-                    WHERE TableId = @TableId
-                    ORDER BY OrderTime DESC, OrderId DESC;
+                    SELECT TOP 1 o.OrderId
+                    FROM Orders o
+                    LEFT JOIN OrderTables ot ON ot.OrderId = o.OrderId
+                    WHERE o.TableId = @TableId OR ot.TableId = @TableId
+                    ORDER BY o.OrderTime DESC, o.OrderId DESC;
                     """;
                 AddParameter(orderCommand, "@TableId", tableId);
                 var value = await orderCommand.ExecuteScalarAsync();
@@ -88,55 +113,135 @@ public class MobileOperationsController : ControllerBase
                     orderId = Convert.ToInt32(value);
             }
 
-            if (!orderId.HasValue)
-                return Ok(new { tableId, orderId = (int?)null, events = Array.Empty<object>() });
+            var events = new List<MobileTableTimelineEvent>();
 
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT TOP (@Take)
-                    h.HistoryId,
-                    oi.OrderItemId,
-                    COALESCE(mi.ItemName, N'(Món)') AS ItemName,
-                    oi.Quantity,
-                    CASE CONVERT(nvarchar(50), h.Status)
-                        WHEN N'MoiGoi' THEN N'Chờ chế biến'
-                        WHEN N'DangCheBien' THEN N'Đang chế biến'
-                        WHEN N'DaXong' THEN N'Đã xong'
-                        WHEN N'DaPhucVu' THEN N'Đã phục vụ'
-                        WHEN N'DaHuy' THEN N'Đã hủy'
-                        ELSE CONVERT(nvarchar(50), h.Status)
-                    END AS StatusLabel,
-                    h.ChangedAt,
-                    COALESCE(u.FullName, N'Hệ thống') AS ChangedBy,
-                    oi.Note
-                FROM DishStatusHistory h
-                INNER JOIN OrderItems oi ON oi.OrderItemId = h.OrderItemId
-                LEFT JOIN MenuItems mi ON mi.MenuItemId = oi.MenuItemId
-                LEFT JOIN Users u ON u.UserId = h.ChangedBy
-                WHERE oi.OrderId = @OrderId
-                ORDER BY h.ChangedAt DESC, h.HistoryId DESC;
-                """;
-            AddParameter(command, "@Take", take);
-            AddParameter(command, "@OrderId", orderId.Value);
-
-            var events = new List<object>();
-            await using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            if (orderId.HasValue)
             {
-                events.Add(new
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT TOP (@Take)
+                        h.HistoryId,
+                        oi.OrderItemId,
+                        COALESCE(mi.ItemName, N'(Món)') AS ItemName,
+                        oi.Quantity,
+                        CASE CONVERT(nvarchar(50), h.Status)
+                            WHEN N'MoiGoi' THEN N'Chờ chế biến'
+                            WHEN N'DangCheBien' THEN N'Đang chế biến'
+                            WHEN N'DaXong' THEN N'Đã xong'
+                            WHEN N'DaPhucVu' THEN N'Đã phục vụ'
+                            WHEN N'DaHuy' THEN N'Đã hủy'
+                            ELSE CONVERT(nvarchar(50), h.Status)
+                        END AS StatusLabel,
+                        h.ChangedAt,
+                        COALESCE(u.FullName, N'Hệ thống') AS ChangedBy,
+                        oi.Note
+                    FROM DishStatusHistory h
+                    INNER JOIN OrderItems oi ON oi.OrderItemId = h.OrderItemId
+                    LEFT JOIN MenuItems mi ON mi.MenuItemId = oi.MenuItemId
+                    LEFT JOIN Users u ON u.UserId = h.ChangedBy
+                    WHERE oi.OrderId = @OrderId
+                    ORDER BY h.ChangedAt DESC, h.HistoryId DESC;
+                    """;
+                AddParameter(command, "@Take", take);
+                AddParameter(command, "@OrderId", orderId.Value);
+
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
                 {
-                    historyId = reader.GetInt32(0),
-                    orderItemId = reader.GetInt32(1),
-                    itemName = reader.GetString(2),
-                    quantity = reader.GetInt32(3),
-                    status = reader.GetString(4),
-                    changedAt = reader.GetDateTime(5),
-                    changedBy = reader.GetString(6),
-                    note = reader.IsDBNull(7) ? null : reader.GetString(7)
-                });
+                    events.Add(new MobileTableTimelineEvent(
+                        EventType: "dish",
+                        HistoryId: reader.GetInt32(0),
+                        OperationLogId: null,
+                        OrderItemId: reader.GetInt32(1),
+                        ItemName: reader.GetString(2),
+                        Quantity: reader.GetInt32(3),
+                        Status: reader.GetString(4),
+                        ChangedAt: reader.GetDateTime(5),
+                        ChangedBy: reader.GetString(6),
+                        Note: reader.IsDBNull(7) ? null : reader.GetString(7)
+                    ));
+                }
             }
 
-            return Ok(new { tableId, orderId, events });
+            await using (var operationCommand = connection.CreateCommand())
+            {
+                operationCommand.CommandText = """
+                    IF OBJECT_ID(N'dbo.TableOperationLogs', N'U') IS NOT NULL
+                    BEGIN
+                        SELECT TOP (@Take)
+                            OperationLogId,
+                            OperationType,
+                            SourceTableId,
+                            TargetTableId,
+                            SourceOrderId,
+                            TargetOrderId,
+                            ActorName,
+                            Details,
+                            CreatedAt
+                        FROM dbo.TableOperationLogs
+                        WHERE SourceTableId = @TableId
+                           OR TargetTableId = @TableId
+                           OR RelatedTableIds LIKE
+                              N'%,' + CONVERT(nvarchar(20), @TableId) + N',%'
+                        ORDER BY CreatedAt DESC, OperationLogId DESC;
+                    END
+                    """;
+                AddParameter(operationCommand, "@Take", take);
+                AddParameter(operationCommand, "@TableId", tableId);
+
+                await using var operationReader =
+                    await operationCommand.ExecuteReaderAsync();
+
+                while (await operationReader.ReadAsync())
+                {
+                    var operationType = operationReader.GetString(1);
+                    var label = operationType switch
+                    {
+                        "ChuyenBan" => "Chuyển bàn",
+                        "GopDon" => "Gộp đơn",
+                        "GhepBan" => "Ghép bàn",
+                        "TachBan" => "Tách bàn",
+                        _ => operationType
+                    };
+
+                    events.Add(new MobileTableTimelineEvent(
+                        EventType: "tableOperation",
+                        HistoryId: null,
+                        OperationLogId: operationReader.GetInt32(0),
+                        OrderItemId: null,
+                        ItemName: label,
+                        Quantity: null,
+                        Status: "Thao tác bàn",
+                        ChangedAt: operationReader.GetDateTime(8),
+                        ChangedBy: operationReader.IsDBNull(6)
+                            ? "Hệ thống"
+                            : operationReader.GetString(6),
+                        Note: operationReader.IsDBNull(7)
+                            ? null
+                            : operationReader.GetString(7),
+                        OperationType: operationType,
+                        SourceTableId: operationReader.IsDBNull(2)
+                            ? null
+                            : operationReader.GetInt32(2),
+                        TargetTableId: operationReader.IsDBNull(3)
+                            ? null
+                            : operationReader.GetInt32(3),
+                        SourceOrderId: operationReader.IsDBNull(4)
+                            ? null
+                            : operationReader.GetInt32(4),
+                        TargetOrderId: operationReader.IsDBNull(5)
+                            ? null
+                            : operationReader.GetInt32(5)
+                    ));
+                }
+            }
+
+            var timeline = events
+                .OrderByDescending(item => item.ChangedAt)
+                .Take(take)
+                .ToList();
+
+            return Ok(new { tableId, orderId, events = timeline });
         }
         finally
         {
@@ -247,6 +352,19 @@ public class MobileOperationsController : ControllerBase
                 return NotFound(new { message = "Không tìm thấy món trong đơn đang mở" });
 
             var userId = await ResolveUserIdAsync(connection, request.EmployeeCode);
+
+            // Hai chế độ ưu tiên là loại trừ nhau để tránh trường hợp nhân viên
+            // chọn "Ưu tiên món" nhưng cờ "Ưu tiên bàn" cũ vẫn làm mọi phiếu
+            // của bàn bị đẩy lên trước.
+            if (request.Active)
+            {
+                await ClearTablePriorityAsync(
+                    connection,
+                    tableId.Value,
+                    userId
+                );
+            }
+
             await UpsertPriorityAsync(
                 connection,
                 scope: "Item",
@@ -255,6 +373,16 @@ public class MobileOperationsController : ControllerBase
                 active: request.Active,
                 userId: userId
             );
+
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Item",
+                    orderItemId,
+                    tableId,
+                    active = request.Active
+                });
 
             return Ok(new { orderItemId, tableId, active = request.Active });
         }
@@ -291,6 +419,18 @@ public class MobileOperationsController : ControllerBase
             }
 
             var userId = await ResolveUserIdAsync(connection, request.EmployeeCode);
+
+            // Bật ưu tiên bàn thì bỏ các cờ ưu tiên món riêng của chính bàn đó,
+            // để giao diện và thứ tự Bếp chỉ còn một chế độ rõ ràng.
+            if (request.Active)
+            {
+                await ClearItemPrioritiesForTableAsync(
+                    connection,
+                    tableId,
+                    userId
+                );
+            }
+
             await UpsertPriorityAsync(
                 connection,
                 scope: "Table",
@@ -299,6 +439,16 @@ public class MobileOperationsController : ControllerBase
                 active: request.Active,
                 userId: userId
             );
+
+            await _hub.Clients.All.SendAsync(
+                "KitchenPriorityUpdated",
+                new
+                {
+                    scope = "Table",
+                    tableId,
+                    orderItemId = (int?)null,
+                    active = request.Active
+                });
 
             return Ok(new { tableId, active = request.Active });
         }
@@ -348,6 +498,51 @@ public class MobileOperationsController : ControllerBase
         AddParameter(command, "@EmployeeCode", employeeCode.Trim());
         var value = await command.ExecuteScalarAsync();
         return value is null || value == DBNull.Value ? null : Convert.ToInt32(value);
+    }
+
+    private static async Task ClearTablePriorityAsync(
+        DbConnection connection,
+        int tableId,
+        int? userId)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE MobileKitchenPriorities
+            SET IsActive = 0,
+                RequestedByUserId = @RequestedByUserId,
+                UpdatedAt = GETDATE()
+            WHERE PriorityScope = N'Table'
+              AND TableId = @TableId
+              AND IsActive = 1;
+            """;
+        AddParameter(command, "@TableId", tableId);
+        AddParameter(command, "@RequestedByUserId", userId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ClearItemPrioritiesForTableAsync(
+        DbConnection connection,
+        int tableId,
+        int? userId)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE p
+            SET IsActive = 0,
+                RequestedByUserId = @RequestedByUserId,
+                UpdatedAt = GETDATE()
+            FROM MobileKitchenPriorities p
+            INNER JOIN OrderItems oi
+                ON oi.OrderItemId = p.OrderItemId
+            INNER JOIN Orders o
+                ON o.OrderId = oi.OrderId
+            WHERE p.PriorityScope = N'Item'
+              AND p.IsActive = 1
+              AND o.TableId = @TableId;
+            """;
+        AddParameter(command, "@TableId", tableId);
+        AddParameter(command, "@RequestedByUserId", userId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task UpsertPriorityAsync(

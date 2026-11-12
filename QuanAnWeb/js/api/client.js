@@ -50,9 +50,9 @@ function isSessionEndpoint(endpoint) {
 }
 
 function isAnonymousEndpoint(endpoint) {
-    // Lưu ý: /customers/refresh KHÔNG phải endpoint nặc danh vì Backend yêu cầu [Authorize(Roles = "Customer")].
-    // Phải gửi kèm Authorization: Bearer token để làm mới phiên.
-    return /^\/(customers\/(login|register)|auth\/(forgot-password|reset-password|google\/(signin|callback|complete-profile)))(?:\?|$)/i.test(endpoint);
+    // CustomerAuthController dùng refresh token HttpOnly cookie cho refresh/logout,
+    // vì vậy không ép gửi access token cũ vào hai endpoint phiên này.
+    return /^\/(customers\/(login|register|refresh|logout)|auth\/(forgot-password|reset-password|google\/(signin|callback|complete-profile)))(?:\?|$)/i.test(endpoint);
 }
 
 async function refreshAccessToken() {

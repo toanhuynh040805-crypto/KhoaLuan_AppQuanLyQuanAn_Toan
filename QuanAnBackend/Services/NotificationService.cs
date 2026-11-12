@@ -15,15 +15,21 @@ public class NotificationService
     private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly ILogger<NotificationService> _logger;
+    private readonly ReservationAudienceService _audience;
+    private readonly TableEditLockService _tableLocks;
 
     public NotificationService(
         AppDbContext db,
         IHubContext<OrderHub> hub,
-        ILogger<NotificationService> logger)
+        ILogger<NotificationService> logger,
+        ReservationAudienceService audience,
+        TableEditLockService tableLocks)
     {
         _db = db;
         _hub = hub;
         _logger = logger;
+        _audience = audience;
+        _tableLocks = tableLocks;
     }
 
     public async Task CreateAsync(
@@ -33,8 +39,18 @@ public class NotificationService
         string? targetRole = null,
         int? targetUserId = null,
         string? relatedEntityType = null,
-        int? relatedEntityId = null)
+        int? relatedEntityId = null,
+        string? eventKey = null)
     {
+        if (!string.IsNullOrWhiteSpace(eventKey))
+        {
+            if (eventKey.Length > 200)
+                throw new ArgumentException("Event key must contain at most 200 characters.", nameof(eventKey));
+
+            if (await _db.Notifications.AnyAsync(n => n.EventKey == eventKey))
+                return;
+        }
+
         var noti = new Notification
         {
             Title = title,
@@ -44,11 +60,22 @@ public class NotificationService
             TargetUserId = targetUserId,
             RelatedEntityType = relatedEntityType,
             RelatedEntityId = relatedEntityId,
+            EventKey = string.IsNullOrWhiteSpace(eventKey) ? null : eventKey,
             IsRead = false,
             CreatedAt = DateTime.Now
         };
         _db.Notifications.Add(noti);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException exception) when (
+            !string.IsNullOrWhiteSpace(eventKey) &&
+            exception.GetBaseException() is SqlException { Number: 2601 or 2627 })
+        {
+            _db.Entry(noti).State = EntityState.Detached;
+            return;
+        }
 
         var payload = new
         {
@@ -60,6 +87,7 @@ public class NotificationService
             noti.TargetUserId,
             noti.RelatedEntityType,
             noti.RelatedEntityId,
+            noti.EventKey,
             noti.IsRead,
             noti.CreatedAt
         };
@@ -73,7 +101,8 @@ public class NotificationService
             isRead = noti.IsRead,
             time = "Vừa xong",
             relatedEntityType = noti.RelatedEntityType,
-            relatedEntityId = noti.RelatedEntityId
+            relatedEntityId = noti.RelatedEntityId,
+            eventKey = noti.EventKey
         };
 
         if (targetUserId.HasValue)
@@ -101,6 +130,11 @@ public class NotificationService
                 .Group($"role-{targetRole}")
                 .SendAsync("NewNotification", payload);
 
+            await _hub.Clients
+                .Group($"role-{targetRole}")
+                .SendAsync("NotificationReceived", mobilePayload);
+
+            // Giữ tương thích client cũ từng join role dưới dạng dept-*.
             await _hub.Clients
                 .Group($"dept-{targetRole}")
                 .SendAsync("NotificationReceived", mobilePayload);
@@ -195,6 +229,108 @@ public class NotificationService
                 relatedEntityType: relatedEntityType,
                 relatedEntityId: relatedEntityId
             );
+        }
+    }
+
+    /// <summary>
+    /// Thông báo gắn với một Order chỉ gửi cho đúng nhân viên đang sở hữu Order.
+    /// Nếu Order chưa có EmployeeId/UserId thì fallback về Phục vụ đang được
+    /// phân đúng ca + đúng khu vực của bàn.
+    /// </summary>
+    public async Task CreateForOrderResponsibleAsync(
+        int orderId,
+        string title,
+        string content,
+        NotificationType type,
+        string? relatedEntityType = null,
+        int? relatedEntityId = null,
+        string? eventKeyPrefix = null)
+    {
+        var orderInfo = await _db.Orders
+            .AsNoTracking()
+            .Where(order => order.OrderId == orderId)
+            .Select(order => new
+            {
+                TableId = order.TableId,
+                OwnerUserId = order.Employee != null
+                    ? (int?)order.Employee.UserId
+                    : null,
+                AreaId = order.Table != null
+                    ? (int?)order.Table.AreaId
+                    : null
+            })
+            .FirstOrDefaultAsync();
+
+        if (orderInfo is null)
+            return;
+
+        var recipients = new HashSet<int>();
+
+        // 1) Người đang thực sự giữ bàn/thao tác hiện tại có ưu tiên cao nhất.
+        if (orderInfo.TableId.HasValue &&
+            orderInfo.TableId.Value > 0)
+        {
+            var activeLock = _tableLocks.GetActive(
+                orderInfo.TableId.Value);
+
+            if (activeLock is not null &&
+                !string.IsNullOrWhiteSpace(activeLock.EmployeeCode))
+            {
+                var activeUserId = await _db.Employees
+                    .AsNoTracking()
+                    .Where(employee =>
+                        employee.EmployeeCode ==
+                            activeLock.EmployeeCode &&
+                        employee.Status ==
+                            EmployeeStatus.DangLamViec &&
+                        employee.User != null &&
+                        employee.User.IsActive)
+                    .Select(employee => (int?)employee.UserId)
+                    .FirstOrDefaultAsync();
+
+                if (activeUserId.HasValue)
+                    recipients.Add(activeUserId.Value);
+            }
+        }
+
+        // 2) Không có lock thì gửi cho nhân viên sở hữu/tạo Order.
+        if (recipients.Count == 0 &&
+            orderInfo.OwnerUserId.HasValue &&
+            orderInfo.OwnerUserId.Value > 0)
+        {
+            var active = await _db.Users
+                .AsNoTracking()
+                .AnyAsync(user =>
+                    user.UserId == orderInfo.OwnerUserId.Value &&
+                    user.IsActive);
+
+            if (active)
+                recipients.Add(orderInfo.OwnerUserId.Value);
+        }
+
+        // 3) Order legacy/chưa gắn nhân viên -> đúng Phục vụ của khu + ca hiện tại.
+        if (recipients.Count == 0 &&
+            orderInfo.AreaId.HasValue &&
+            orderInfo.AreaId.Value > 0)
+        {
+            recipients =
+                await _audience.GetOperationalRecipientUserIdsAsync(
+                    new[] { orderInfo.AreaId.Value },
+                    DateTime.Now);
+        }
+
+        foreach (var userId in recipients)
+        {
+            await CreateAsync(
+                title,
+                content,
+                type,
+                targetUserId: userId,
+                relatedEntityType: relatedEntityType,
+                relatedEntityId: relatedEntityId,
+                eventKey: string.IsNullOrWhiteSpace(eventKeyPrefix)
+                    ? null
+                    : $"{eventKeyPrefix}:user:{userId}");
         }
     }
 

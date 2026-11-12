@@ -80,9 +80,8 @@ class _KitchenScreenState extends State<KitchenScreen>
     try {
       await AppServices.realtimeService.start(
         employeeCode: appEmployee.employeeCode,
-        roleKey: appEmployee.stationName.trim().isNotEmpty
-            ? appEmployee.stationName.trim()
-            : MobileAccessPolicy.backendRoleKey(appEmployee.role),
+        roleKey: MobileAccessPolicy.backendRoleKey(appEmployee.role),
+        departmentName: appEmployee.stationName.trim(),
       );
     } catch (_) {
       // Polling 6 giây vẫn giữ màn bếp hoạt động nếu SignalR tạm mất kết nối.

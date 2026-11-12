@@ -1,9 +1,11 @@
 using System.Data.Common;
+using System.Data;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuanAnBackend.Data;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
@@ -44,6 +46,7 @@ public record PaymentPreviewDto(
     decimal TaxAmount,
     decimal VIPRoomFee,
     decimal VIPMinimumGap,
+    decimal DepositAmount,
     decimal TotalAmount,
     string QrImageUrl,
     string QrPayload,
@@ -53,18 +56,28 @@ public record PaymentPreviewDto(
     string BankBranch,
     string TransferContent,
     string ShopName,
-    string ShopAddress
+    string ShopAddress,
+    int? CustomerId,
+    string? CustomerName,
+    int LoyaltyPointBalance,
+    int MaxRedeemablePoints,
+    int RedeemedPoints,
+    decimal LoyaltyPointValue,
+    decimal LoyaltyDiscount,
+    int EstimatedEarnedPoints
 );
 
 [ApiController]
 [Route("api/[controller]")]
 public class PaymentsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+        private readonly AppDbContext _db;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly IEmailService _email;
     private readonly IPaymentProvider _paymentProvider;
+    private readonly TableStateService _tableState;
+    private readonly CampaignEligibilityService _campaignEligibility;
     private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
@@ -73,19 +86,26 @@ public class PaymentsController : ControllerBase
         NotificationService notifications,
         IEmailService email,
         IPaymentProvider paymentProvider,
+        TableStateService tableState,
+        CampaignEligibilityService campaignEligibility,
         ILogger<PaymentsController> logger)
     {
         _db = db;
         _hub = hub;
         _notifications = notifications;
+        _tableState = tableState;
         _email = email;
         _paymentProvider = paymentProvider;
+        _campaignEligibility = campaignEligibility;
         _logger = logger;
     }
 
     // Mobile compatibility: xem trước hóa đơn nhưng chưa ghi thanh toán.
     [HttpGet("preview/table/{tableId}")]
-    public async Task<IActionResult> PreviewForMobile(int tableId)
+    public async Task<IActionResult> PreviewForMobile(
+        int tableId,
+        [FromQuery] int? customerId = null,
+        [FromQuery] int? redeemPoints = null)
     {
         var orderId = await FindOpenOrderIdForTableAsync(tableId);
         var order = orderId.HasValue
@@ -99,7 +119,7 @@ public class PaymentsController : ControllerBase
         if (order is null)
             return NotFound(new { message = "Không tìm thấy order đang mở của bàn" });
 
-        var total = await _db.OrderItems
+        var subTotal = await _db.OrderItems
             .Where(oi =>
                 oi.OrderId == order.OrderId &&
                 oi.Status != KitchenStatus.DaHuy)
@@ -112,36 +132,117 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
+        var effectiveCustomerId = customerId ?? order.CustomerId;
+        Customer? customer = null;
+        if (effectiveCustomerId.HasValue)
+        {
+            customer = await _db.Customers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.CustomerId == effectiveCustomerId.Value);
+
+            if (customer is null)
+                return BadRequest(new { message = "Khách hàng thành viên không tồn tại" });
+        }
+
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(paidDeposit, Math.Max(0, subTotal));
+        var amountAfterDeposit = Math.Max(0, subTotal - appliedDeposit);
+
+        var maxRedeemablePoints = customer is null
+            ? 0
+            : Math.Min(
+                customer.LoyaltyPoint,
+                (int)Math.Floor(
+                    amountAfterDeposit / CustomerLoyaltyHelper.PointValueVnd));
+
+        var requestedRedeemPoints = Math.Max(0, redeemPoints ?? 0);
+        if (requestedRedeemPoints > 0 && customer is null)
+        {
+            return BadRequest(new
+            {
+                message = "Cần chọn khách hàng thành viên trước khi dùng điểm"
+            });
+        }
+
+        if (requestedRedeemPoints > maxRedeemablePoints)
+        {
+            return BadRequest(new
+            {
+                message =
+                    $"Khách chỉ có thể đổi tối đa {maxRedeemablePoints} điểm cho hóa đơn này"
+            });
+        }
+
+        var loyaltyDiscount =
+            requestedRedeemPoints * CustomerLoyaltyHelper.PointValueVnd;
+        var totalAmount = Math.Max(
+            0,
+            subTotal - appliedDeposit - loyaltyDiscount);
+        // Điểm tích thêm dựa trên giá trị món trước mọi giảm giá/đổi điểm.
+        var estimatedEarnedPoints =
+            CustomerLoyaltyHelper.CalculateEarnedPoints(subTotal);
+
         // Phục vụ chỉ là người thực sự bấm "Gọi thanh toán".
         // Không fallback sang người tạo Order vì có thể là Quản lý mở bàn hộ.
         var waiterName =
             order.PaymentRequestedByUser?.FullName
             ?? "";
 
+        var qrImageUrl = totalAmount > 0
+            ? BuildMobileQrImagePath(totalAmount, order.OrderId)
+            : "";
+        var qrPayload = totalAmount > 0
+            ? ReceiptProfile.BuildVietQrPayload(totalAmount, order.OrderId)
+            : "";
+
         return Ok(new PaymentPreviewDto(
             order.OrderId,
             tableId,
             order.OrderTime,
             waiterName,
-            total,
+            subTotal,
             0,
-            0,
+            loyaltyDiscount,
             null,
             null,
             0,
             0,
             0,
-            total,
-            ReceiptProfile.BuildVietQrImageUrl(total, order.OrderId),
-            ReceiptProfile.BuildVietQrPayload(total, order.OrderId),
+            appliedDeposit,
+            totalAmount,
+            qrImageUrl,
+            qrPayload,
             ReceiptProfile.BankCode,
             ReceiptProfile.BankAccountNo,
             ReceiptProfile.BankAccountName,
             ReceiptProfile.BankBranch,
             ReceiptProfile.TransferContent(order.OrderId),
             ReceiptProfile.ShopName,
-            ReceiptProfile.ShopAddress
+            ReceiptProfile.ShopAddress,
+            customer?.CustomerId,
+            customer?.FullName,
+            customer?.LoyaltyPoint ?? 0,
+            maxRedeemablePoints,
+            requestedRedeemPoints,
+            CustomerLoyaltyHelper.PointValueVnd,
+            loyaltyDiscount,
+            estimatedEarnedPoints
         ));
+    }
+
+    private static string BuildMobileQrImagePath(
+        decimal amount,
+        int orderId)
+    {
+        var amountText = decimal.Round(
+                amount,
+                0,
+                MidpointRounding.AwayFromZero)
+            .ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+
+        return $"/api/payments/qr-image?amount={Uri.EscapeDataString(amountText)}&orderId={orderId}";
     }
 
     // Dùng cho bill tạm tính WinForms khi giỏ hàng có món chưa lưu.
@@ -262,11 +363,14 @@ public class PaymentsController : ControllerBase
     [HttpGet("preview/order/{orderId:int}")]
     public async Task<IActionResult> PreviewForOrder(
         int orderId,
-        [FromQuery] int? campaignId = null)
+        [FromQuery] int? campaignId = null,
+        [FromQuery] int? customerId = null,
+        [FromQuery] int? redeemPoints = null)
     {
         var order = await _db.Orders
             .AsNoTracking()
             .Include(o => o.PaymentRequestedByUser)
+            .Include(o => o.Table)!.ThenInclude(t => t!.Area)
             .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
         if (order is null)
@@ -274,6 +378,25 @@ public class PaymentsController : ControllerBase
 
         if (order.Status == OrderStatus.DaThanhToan)
             return Conflict(new { message = "Đơn hàng đã được thanh toán" });
+
+        if (!IsTakeawayOrder(order))
+        {
+            var unservedCount = await _db.OrderItems
+                .AsNoTracking()
+                .CountAsync(item =>
+                    item.OrderId == order.OrderId &&
+                    item.Status != KitchenStatus.DaPhucVu &&
+                    item.Status != KitchenStatus.DaHuy);
+
+            if (unservedCount > 0)
+            {
+                return Conflict(new
+                {
+                    message =
+                        $"Còn {unservedCount} món chưa được phục vụ. Chưa thể thanh toán bàn này."
+                });
+            }
+        }
 
         var subTotal = await _db.OrderItems
             .Where(oi =>
@@ -288,31 +411,89 @@ public class PaymentsController : ControllerBase
                         : 0))
             )) ?? 0;
 
-        decimal discountAmount = 0;
+                // Xác định khách TRƯỚC để kiểm tra điều kiện khuyến mãi
+        // (khách quen, hạng thành viên, sinh nhật...).
+        var effectiveCustomerId = customerId ?? order.CustomerId;
+
+        decimal campaignDiscount = 0;
         if (campaignId.HasValue)
         {
-            var campaign = await _db.DiscountCampaigns
-                .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.CampaignId == campaignId.Value);
+            var applyResult = await _campaignEligibility.ValidateForPaymentAsync(
+                campaignId.Value,
+                effectiveCustomerId,
+                subTotal,
+                DateTime.Now,
+                order.OrderId);
 
-            if (campaign is null)
-                return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
-            if (!campaign.IsActive)
-                return BadRequest(new { message = "Chương trình khuyến mãi đã bị tắt" });
+            if (applyResult.Error is not null)
+                return BadRequest(new { message = applyResult.Error });
 
-            var now = DateTime.Now;
-            if (now < campaign.StartDate || now > campaign.EndDate)
-                return BadRequest(new { message = "Chương trình khuyến mãi hiện không còn hiệu lực" });
-            if (campaign.RequireMembership)
-                return BadRequest(new { message = "Chương trình này yêu cầu khách hàng thành viên" });
-
-            discountAmount = Math.Round(
-                subTotal * campaign.DiscountPercent / 100m,
+            campaignDiscount = Math.Round(
+                subTotal * applyResult.Campaign!.DiscountPercent / 100m,
                 0,
                 MidpointRounding.AwayFromZero);
         }
 
-        var totalAmount = Math.Max(0, subTotal - discountAmount);
+        var afterCampaignTotal = Math.Max(
+            0,
+            subTotal - campaignDiscount);
+
+        Customer? customer = null;
+        if (effectiveCustomerId.HasValue)
+        {
+            customer = await _db.Customers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.CustomerId == effectiveCustomerId.Value);
+
+            if (customer is null)
+                return BadRequest(new { message = "Khách hàng thành viên không tồn tại" });
+        }
+
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(
+            paidDeposit,
+            Math.Max(0, afterCampaignTotal));
+        var amountAfterDeposit = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit);
+
+        var maxRedeemablePoints = customer is null
+            ? 0
+            : Math.Min(
+                customer.LoyaltyPoint,
+                (int)Math.Floor(
+                    amountAfterDeposit /
+                    CustomerLoyaltyHelper.PointValueVnd));
+
+        var requestedRedeemPoints = Math.Max(0, redeemPoints ?? 0);
+        if (requestedRedeemPoints > 0 && customer is null)
+        {
+            return BadRequest(new
+            {
+                message = "Cần chọn khách hàng thành viên trước khi dùng điểm"
+            });
+        }
+
+        if (requestedRedeemPoints > maxRedeemablePoints)
+        {
+            return BadRequest(new
+            {
+                message =
+                    $"Khách chỉ có thể đổi tối đa {maxRedeemablePoints} điểm cho hóa đơn này"
+            });
+        }
+
+        var loyaltyDiscount =
+            requestedRedeemPoints * CustomerLoyaltyHelper.PointValueVnd;
+        var discountAmount = campaignDiscount + loyaltyDiscount;
+        var totalAmount = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit - loyaltyDiscount);
+        // Điểm tích thêm dựa trên Tạm tính, không giảm theo khuyến mãi
+        // hoặc số điểm khách vừa dùng cho hóa đơn này.
+        var estimatedEarnedPoints =
+            CustomerLoyaltyHelper.CalculateEarnedPoints(subTotal);
 
         return Ok(new
         {
@@ -321,9 +502,23 @@ public class PaymentsController : ControllerBase
             waiterName = order.PaymentRequestedByUser?.FullName ?? "",
             subTotal,
             discountAmount,
+            campaignDiscount,
+            depositAmount = appliedDeposit,
             totalAmount,
-            qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(totalAmount, orderId),
-            qrPayload = ReceiptProfile.BuildVietQrPayload(totalAmount, orderId),
+            customerId = customer?.CustomerId,
+            customerName = customer?.FullName,
+            loyaltyPointBalance = customer?.LoyaltyPoint ?? 0,
+            maxRedeemablePoints,
+            redeemedPoints = requestedRedeemPoints,
+            loyaltyPointValue = CustomerLoyaltyHelper.PointValueVnd,
+            loyaltyDiscount,
+            estimatedEarnedPoints,
+            qrImageUrl = totalAmount > 0
+                ? ReceiptProfile.BuildVietQrImageUrl(totalAmount, orderId)
+                : "",
+            qrPayload = totalAmount > 0
+                ? ReceiptProfile.BuildVietQrPayload(totalAmount, orderId)
+                : "",
             bankName = ReceiptProfile.BankCode,
             bankAccountNo = ReceiptProfile.BankAccountNo,
             bankAccountName = ReceiptProfile.BankAccountName,
@@ -461,7 +656,7 @@ public class PaymentsController : ControllerBase
             relatedEntityId: order.OrderId
         );
 
-        await _hub.Clients.All.SendAsync("PaymentRequested", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentRequested", new
         {
             TableId = order.TableId,
             TableName = tableName,
@@ -502,6 +697,43 @@ public class PaymentsController : ControllerBase
             return Unauthorized(new { message = "Không xác định được tài khoản xác nhận thanh toán" });
         }
 
+        // Serialize phần ghi thanh toán để hai thiết bị không thể cùng hoàn tất
+        // một Order và để Invoice/Payment/điểm/Order/trạng thái bàn commit đồng bộ.
+        await using var paymentTransaction =
+            await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+
+        var currentOrderStatus = await _db.Orders
+            .AsNoTracking()
+            .Where(item => item.OrderId == order.OrderId)
+            .Select(item => item.Status)
+            .FirstAsync();
+
+        if (currentOrderStatus == OrderStatus.DaThanhToan)
+            return BadRequest(new { message = "Đơn hàng này đã được thanh toán" });
+
+        // Bàn tại chỗ chỉ được thanh toán khi tất cả món còn hiệu lực đã được
+        // phục vụ. Đây là chốt Backend cuối cùng để WinForms/API trực tiếp
+        // không thể bỏ qua quy tắc mà Mobile đã áp dụng ở bước gọi thanh toán.
+        if (!IsTakeawayOrder(order))
+        {
+            var unservedCount = await _db.OrderItems
+                .AsNoTracking()
+                .CountAsync(item =>
+                    item.OrderId == order.OrderId &&
+                    item.Status != KitchenStatus.DaPhucVu &&
+                    item.Status != KitchenStatus.DaHuy);
+
+            if (unservedCount > 0)
+            {
+                await paymentTransaction.RollbackAsync();
+                return Conflict(new
+                {
+                    message =
+                        $"Còn {unservedCount} món chưa được phục vụ. Chưa thể xác nhận thanh toán."
+                });
+            }
+        }
+
         // Phục vụ = đúng tài khoản đã bấm "Gọi thanh toán".
         // Nếu chưa có yêu cầu thanh toán thì để trống, tuyệt đối không lấy người tạo Order.
         var requestedByUserId = order.PaymentRequestedByUserId;
@@ -531,25 +763,33 @@ public class PaymentsController : ControllerBase
         // Áp dụng khuyến mãi (nếu Thu ngân có chọn) - validate LẠI ở đây (không tin
         // tưởng con số % mà WinForm tự tính) để tránh 1 request giả mạo/lỗi thời gian
         // (vd chiến dịch vừa hết hạn ngay lúc bấm) làm sai số tiền thật thu vào.
+                // Xác định khách TRƯỚC để kiểm tra điều kiện khuyến mãi - ưu tiên CustomerId gửi kèm
+        // request, nếu không có thì dùng khách đã gắn sẵn trên Order.
+        var customerId = request.CustomerId ?? order.CustomerId;
+
         decimal discountAmount = 0;
         DiscountCampaign? campaign = null;
         if (request.CampaignId.HasValue)
         {
-            campaign = await _db.DiscountCampaigns.FindAsync(request.CampaignId.Value);
-            if (campaign is null) return BadRequest(new { message = "Chương trình khuyến mãi không tồn tại" });
-            if (!campaign.IsActive) return BadRequest(new { message = "Chương trình khuyến mãi này đã bị tắt" });
-            var now = DateTime.Now;
-            if (now < campaign.StartDate || now > campaign.EndDate)
-                return BadRequest(new { message = "Chương trình khuyến mãi này hiện không còn hiệu lực" });
-            if (campaign.RequireMembership)
-                return BadRequest(new { message = "Chương trình này chỉ áp dụng cho khách hàng thân thiết - hệ thống hiện chưa hỗ trợ kiểm tra điều kiện này" });
+            var applyResult = await _campaignEligibility.ValidateForPaymentAsync(
+                request.CampaignId.Value,
+                customerId,
+                total,
+                DateTime.Now,
+                order.OrderId);
 
-            discountAmount = Math.Round(total * campaign.DiscountPercent / 100m, 0, MidpointRounding.AwayFromZero);
+            if (applyResult.Error is not null)
+                return BadRequest(new { message = applyResult.Error });
+
+            campaign = applyResult.Campaign;
+            discountAmount = Math.Round(
+                total * campaign!.DiscountPercent / 100m,
+                0,
+                MidpointRounding.AwayFromZero);
         }
 
         // Xác định khách hàng thành viên áp dụng cho hóa đơn (nếu có) - ưu tiên
         // CustomerId gửi kèm request, nếu không có thì dùng khách đã gắn sẵn trên Order.
-        var customerId = request.CustomerId ?? order.CustomerId;
         Customer? customer = null;
         if (customerId.HasValue)
         {
@@ -559,6 +799,13 @@ public class PaymentsController : ControllerBase
         }
 
         var afterCampaignTotal = total - discountAmount;
+        var paidDeposit = await GetPaidReservationDepositAsync(order);
+        var appliedDeposit = Math.Min(
+            paidDeposit,
+            Math.Max(0, afterCampaignTotal));
+        var amountAfterDeposit = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit);
 
         // Đổi điểm tích lũy lấy giảm giá (nếu khách yêu cầu) - validate số điểm đổi
         // không vượt quá điểm hiện có VÀ không vượt quá giá trị hóa đơn còn lại
@@ -570,7 +817,11 @@ public class PaymentsController : ControllerBase
             if (customer is null)
                 return BadRequest(new { message = "Cần xác định khách hàng thành viên để đổi điểm" });
 
-            var maxRedeemable = Math.Min(customer.LoyaltyPoint, (int)Math.Floor(afterCampaignTotal / CustomerLoyaltyHelper.PointValueVnd));
+            var maxRedeemable = Math.Min(
+                customer.LoyaltyPoint,
+                (int)Math.Floor(
+                    amountAfterDeposit /
+                    CustomerLoyaltyHelper.PointValueVnd));
             if (request.RedeemPoints.Value > maxRedeemable)
                 return BadRequest(new { message = $"Khách chỉ có thể đổi tối đa {maxRedeemable} điểm cho hóa đơn này" });
 
@@ -578,7 +829,9 @@ public class PaymentsController : ControllerBase
             loyaltyDiscount = redeemedPoints * CustomerLoyaltyHelper.PointValueVnd;
         }
 
-        var netTotal = afterCampaignTotal - loyaltyDiscount;
+        var netTotal = Math.Max(
+            0,
+            afterCampaignTotal - appliedDeposit - loyaltyDiscount);
 
         var invoice = new Invoice
         {
@@ -588,6 +841,7 @@ public class PaymentsController : ControllerBase
             DiscountAmount = discountAmount + loyaltyDiscount,
             AppliedCampaignId = campaign?.CampaignId,
             TaxAmount = 0,
+            DepositAmount = appliedDeposit,
             TotalAmount = netTotal,
             Status = InvoiceStatus.DaThanhToan,
             CreatedBy = cashierUserId, // legacy compatibility
@@ -601,6 +855,7 @@ public class PaymentsController : ControllerBase
         // cứu lại sau này, và cập nhật hạng thành viên theo số dư điểm mới.
         int earnedPoints = 0;
         MemberLevel? previousLevel = null;
+        var memberLevelChanged = false;
         if (customer is not null)
         {
             previousLevel = customer.MemberLevel;
@@ -618,7 +873,9 @@ public class PaymentsController : ControllerBase
                 });
             }
 
-            earnedPoints = CustomerLoyaltyHelper.CalculateEarnedPoints(netTotal);
+            // Tích điểm theo giá trị món trước giảm giá/đổi điểm.
+            // Ví dụ Tạm tính 834.000đ, giảm còn 784.000đ vẫn tích 83 điểm.
+            earnedPoints = CustomerLoyaltyHelper.CalculateEarnedPoints(total);
             if (earnedPoints > 0)
             {
                 customer.LoyaltyPoint += earnedPoints;
@@ -634,16 +891,8 @@ public class PaymentsController : ControllerBase
 
                         customer.MemberLevel = CustomerLoyaltyHelper.CalculateMemberLevel(customer.LoyaltyPoint);
 
-            if (customer.MemberLevel != previousLevel)
-            {
-                await _notifications.CreateForRolesAsync(
-                    "Khách hàng thăng hạng thành viên",
-                    $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
-                    NotificationType.KhuyenMai,
-                    new[] { "QuanLy", "ThuNgan" },
-                    relatedEntityType: "Customer",
-                    relatedEntityId: customer.CustomerId);
-            }
+            memberLevelChanged =
+                customer.MemberLevel != previousLevel;
         }
 
         var qrImageUrl = ReceiptProfile.BuildVietQrImageUrl(
@@ -710,11 +959,11 @@ public class PaymentsController : ControllerBase
         foreach (var notification in paymentRequestNotifications)
             notification.IsRead = true;
 
-        // Trả bàn về trạng thái Trống sau khi thanh toán xong
+        // Đóng lượt đặt bàn gắn với lượt ngồi hiện tại. Trạng thái bàn sau
+        // thanh toán sẽ được TableStateService tính lại sau khi Order đã đóng.
         var finishedReservations = new List<Reservation>();
         if (order.Table is not null)
         {
-            order.Table.Status = TableStatus.Trong;
 
             // FIX: dong luot dat ban gan voi luot ngoi nay lai NGAY LUC NAY (neu co).
             // Truoc day khong co buoc nay -> Reservation.Status dung mai o DaNhanBan
@@ -729,57 +978,57 @@ public class PaymentsController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        // Một order có thể ghép nhiều bàn vật lý. Thanh toán một lần phải trả
-        // toàn bộ bàn thuộc order về Trống.
+        // Một order có thể ghép nhiều bàn vật lý. Sau khi order đã đóng,
+        // mỗi bàn phải trở về trạng thái đúng theo lịch đặt tiếp theo:
+        // DaDat nếu còn reservation hiệu lực, ngược lại Trong.
         var linkedTableIds = await GetLinkedTableIdsAsync(order.OrderId, order.TableId);
-        if (linkedTableIds.Count > 0)
+        var affectedTableIds = linkedTableIds
+            .Append(order.TableId ?? 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        var resolvedStatuses = await _tableState.ResolveIdleStatusesAsync(
+            affectedTableIds);
+
+        var affectedTables = await _db.Tables
+            .Where(table => affectedTableIds.Contains(table.TableId))
+            .ToListAsync();
+
+        foreach (var table in affectedTables)
         {
-            var connection = _db.Database.GetDbConnection();
-            var shouldClose = connection.State != System.Data.ConnectionState.Open;
-            if (shouldClose) await connection.OpenAsync();
-            try
-            {
-                await using var command = connection.CreateCommand();
-                var parameterNames = new List<string>();
-                for (var i = 0; i < linkedTableIds.Count; i++)
-                {
-                    var p = command.CreateParameter();
-                    p.ParameterName = $"@p{i}";
-                    p.Value = linkedTableIds[i];
-                    command.Parameters.Add(p);
-                    parameterNames.Add(p.ParameterName);
-                }
-                command.CommandText = $"UPDATE DiningTables SET Status = N'Trong' WHERE TableId IN ({string.Join(",", parameterNames)});";
-                await command.ExecuteNonQueryAsync();
-            }
-            finally
-            {
-                if (shouldClose) await connection.CloseAsync();
-            }
+            if (resolvedStatuses.TryGetValue(table.TableId, out var status))
+                table.Status = status;
         }
 
-        if (order.Table is not null)
+        await _db.SaveChangesAsync();
+        await paymentTransaction.CommitAsync();
+
+        // Từ đây trở đi chỉ còn side-effects ngoài giao dịch DB lõi.
+        if (memberLevelChanged && customer is not null)
+        {
+            await _notifications.CreateForRolesAsync(
+                "Khách hàng thăng hạng thành viên",
+                $"{customer.FullName} vừa lên hạng {customer.MemberLevel}",
+                NotificationType.KhuyenMai,
+                new[] { "QuanLy", "ThuNgan" },
+                relatedEntityType: "Customer",
+                relatedEntityId: customer.CustomerId);
+        }
+
+        foreach (var table in affectedTables)
         {
             await _hub.Clients.All.SendAsync("TableStatusUpdated", new
             {
-                TableId = order.Table.TableId,
-                order.Table.TableName,
-                Status = order.Table.Status
-            });
-        }
-
-        foreach (var linkedTableId in linkedTableIds.Where(id => id != order.TableId))
-        {
-            await _hub.Clients.All.SendAsync("TableStatusUpdated", new
-            {
-                TableId = linkedTableId,
-                Status = TableStatus.Trong
+                TableId = table.TableId,
+                table.TableName,
+                Status = table.Status
             });
         }
 
         // Phát cho tất cả client để cả WinForms và Mobile đều đóng trạng thái
         // chờ thanh toán/bàn ngay sau khi giao dịch hoàn tất.
-        await _hub.Clients.All.SendAsync("PaymentCompleted", new
+        await _hub.Clients.Group("internal-users").SendAsync("PaymentCompleted", new
         {
             tableId = order.TableId,
             orderId = order.OrderId,
@@ -789,10 +1038,15 @@ public class PaymentsController : ControllerBase
 
         if (customer is not null)
         {
+            var paymentMessage = appliedDeposit > 0
+                ? $"Hóa đơn #{invoice.InvoiceId} đã trừ {appliedDeposit:N0}đ tiền cọc. " +
+                  $"Số tiền còn thanh toán là {netTotal:N0}đ."
+                : $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.";
+
             await _notifications.CreateForCustomerAsync(
                 customer.CustomerId,
                 "Thanh toán thành công",
-                $"Hóa đơn #{invoice.InvoiceId} trị giá {netTotal:N0}đ đã được thanh toán thành công.",
+                paymentMessage,
                 NotificationType.DonHang,
                 $"payment-success:{payment.PaymentId}",
                 "Invoice",
@@ -813,7 +1067,7 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            await _hub.Clients.Group("order-management").SendAsync("OrderUpdated", new
+            await _hub.Clients.Group("internal-users").SendAsync("OrderUpdated", new
             {
                 orderId = order.OrderId
             });
@@ -861,6 +1115,7 @@ public class PaymentsController : ControllerBase
             InvoiceId = invoice.InvoiceId, // de WinForm goi GET /api/invoices/{id} lay hoa don chi tiet, in bien lai
             SubTotal = total,
             DiscountAmount = discountAmount + loyaltyDiscount,
+            DepositAmount = appliedDeposit,
             TotalAmount = netTotal,
             Method = request.Method,
             QRCodeImageUrl = qrImageUrl,
@@ -896,6 +1151,7 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
             command.CommandText = """
                 SELECT TOP 1 o.OrderId
                 FROM Orders o
@@ -917,6 +1173,56 @@ public class PaymentsController : ControllerBase
         }
     }
 
+    private async Task<decimal> GetPaidReservationDepositAsync(Order order)
+    {
+        if (IsTakeawayOrder(order))
+            return 0m;
+
+        var tableIds = await GetLinkedTableIdsAsync(
+            order.OrderId,
+            order.TableId);
+
+        if (tableIds.Count == 0)
+            return 0m;
+
+        var activeReservations = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                tableIds.Contains(reservation.TableId) &&
+                reservation.Status == ReservationStatus.DaNhanBan)
+            .Select(reservation => new
+            {
+                reservation.ReservationId,
+                reservation.BookingGroupId
+            })
+            .ToListAsync();
+
+        if (activeReservations.Count == 0)
+            return 0m;
+
+        var activeReservationIds = activeReservations
+            .Select(reservation => reservation.ReservationId)
+            .ToList();
+        var bookingGroupIds = activeReservations
+            .Where(reservation => reservation.BookingGroupId.HasValue)
+            .Select(reservation => reservation.BookingGroupId!.Value)
+            .Distinct()
+            .ToList();
+
+        return await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                reservation.DepositPaid &&
+                reservation.DepositAmount > 0 &&
+                (
+                    activeReservationIds.Contains(reservation.ReservationId) ||
+                    (reservation.BookingGroupId.HasValue &&
+                     bookingGroupIds.Contains(reservation.BookingGroupId.Value))
+                ))
+            .SumAsync(reservation => (decimal?)reservation.DepositAmount)
+            ?? 0m;
+    }
+
     private async Task<List<int>> GetLinkedTableIdsAsync(int orderId, int? primaryTableId)
     {
         var result = new HashSet<int>();
@@ -927,7 +1233,19 @@ public class PaymentsController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT TableId FROM OrderTables WHERE OrderId = @OrderId;";
+            command.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
+            command.CommandText = """
+                IF OBJECT_ID(N'dbo.OrderTables', N'U') IS NULL
+                BEGIN
+                    SELECT CAST(NULL AS int) AS TableId WHERE 1 = 0;
+                END
+                ELSE
+                BEGIN
+                    SELECT TableId
+                    FROM dbo.OrderTables
+                    WHERE OrderId = @OrderId;
+                END;
+                """;
             var p = command.CreateParameter();
             p.ParameterName = "@OrderId";
             p.Value = orderId;

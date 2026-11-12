@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
@@ -33,11 +35,31 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   bool loadingTasks = false;
   bool loadingHistory = false;
   String? error;
+  StreamSubscription<void>? _shiftChangesSubscription;
 
   @override
   void initState() {
     super.initState();
+    _shiftChangesSubscription =
+        AppServices.realtimeService.shiftChanges.listen((_) {
+      if (!mounted) return;
+      _refreshShiftDataFromRealtime();
+    });
     _loadBase();
+  }
+
+  @override
+  void dispose() {
+    _shiftChangesSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshShiftDataFromRealtime() async {
+    await Future.wait<void>([
+      _loadShifts(),
+      _loadAssignments(),
+      _loadHistory(),
+    ]);
   }
 
   Future<void> _loadBase() async {
@@ -95,6 +117,18 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => loadingAssignments = false);
+      _show(e.message, TopMessageType.error);
+    }
+  }
+
+  Future<void> _loadShifts() async {
+    try {
+      final rows = await AppServices.staffManagementService.getShifts();
+      if (!mounted) return;
+      setState(() {
+        shifts = rows;
+      });
+    } on ApiException catch (e) {
       _show(e.message, TopMessageType.error);
     }
   }
@@ -252,10 +286,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
       }
     }
 
-    return 'NV' +
-        (maxNumber + 1)
-            .toString()
-            .padLeft(3, '0');
+    return 'NV${(maxNumber + 1).toString().padLeft(3, '0')}';
   }
 
   Future<void> _addEmployee() async {
@@ -464,7 +495,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<
                       ManagedRole>(
-                    value: role,
+                    initialValue: role,
                     isExpanded: true,
                     decoration:
                         const InputDecoration(
@@ -509,7 +540,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                     const SizedBox(height: 12),
                     DropdownButtonFormField<
                         ManagedStation>(
-                      value: station,
+                      initialValue: station,
                       isExpanded: true,
                       decoration:
                           const InputDecoration(
@@ -808,6 +839,273 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
     await _loadAssignments();
   }
 
+  Future<void> _addShift() => _openShiftForm();
+
+  Future<void> _editShift(ManagedShift shift) =>
+      _openShiftForm(existing: shift);
+
+  Future<void> _openShiftForm({
+    ManagedShift? existing,
+  }) async {
+    final bool isEditing = existing != null;
+    final name = TextEditingController(
+      text: existing?.name ?? '',
+    );
+    TimeOfDay startTime = existing == null
+        ? const TimeOfDay(hour: 8, minute: 0)
+        : _timeOfDayFromApi(
+            existing.startTime,
+            const TimeOfDay(hour: 8, minute: 0),
+          );
+    TimeOfDay endTime = existing == null
+        ? const TimeOfDay(hour: 16, minute: 0)
+        : _timeOfDayFromApi(
+            existing.endTime,
+            const TimeOfDay(hour: 16, minute: 0),
+          );
+    bool submitting = false;
+
+    final bool? saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          Future<void> pickTime({
+            required bool isStart,
+          }) async {
+            final TimeOfDay initial = isStart ? startTime : endTime;
+            final TimeOfDay? picked = await showTimePicker(
+              context: sheetContext,
+              initialTime: initial,
+            );
+            if (picked == null || !sheetContext.mounted) return;
+            setSheetState(() {
+              if (isStart) {
+                startTime = picked;
+              } else {
+                endTime = picked;
+              }
+            });
+          }
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              4,
+              18,
+              MediaQuery.viewInsetsOf(context).bottom + 20,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isEditing ? 'Sửa ca làm' : 'Thêm ca làm',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: name,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      labelText: 'Tên ca',
+                      hintText: 'Ví dụ: Ca sáng',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () => pickTime(isStart: true),
+                          icon: const Icon(Icons.login_outlined),
+                          label: Text(
+                            'Bắt đầu ${startTime.format(context)}',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: submitting
+                              ? null
+                              : () => pickTime(isStart: false),
+                          icon: const Icon(Icons.logout_outlined),
+                          label: Text(
+                            'Kết thúc ${endTime.format(context)}',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              final String shiftName = name.text.trim();
+                              if (shiftName.isEmpty) {
+                                TopMessage.show(
+                                  sheetContext,
+                                  message: 'Vui lòng nhập tên ca làm',
+                                  type: TopMessageType.warning,
+                                );
+                                return;
+                              }
+
+                              setSheetState(() => submitting = true);
+                              try {
+                                if (existing == null) {
+                                  await AppServices.staffManagementService
+                                      .createShift(
+                                    name: shiftName,
+                                    startTime: _timeOfDayForApi(startTime),
+                                    endTime: _timeOfDayForApi(endTime),
+                                  );
+                                } else {
+                                  await AppServices.staffManagementService
+                                      .updateShift(
+                                    id: existing.id,
+                                    name: shiftName,
+                                    startTime: _timeOfDayForApi(startTime),
+                                    endTime: _timeOfDayForApi(endTime),
+                                  );
+                                }
+
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext, true);
+                                }
+                              } on ApiException catch (e) {
+                                if (sheetContext.mounted) {
+                                  setSheetState(() => submitting = false);
+                                  TopMessage.show(
+                                    sheetContext,
+                                    message: e.message,
+                                    type: TopMessageType.error,
+                                  );
+                                }
+                              } catch (_) {
+                                if (sheetContext.mounted) {
+                                  setSheetState(() => submitting = false);
+                                  TopMessage.show(
+                                    sheetContext,
+                                    message: isEditing
+                                        ? 'Không thể cập nhật ca làm'
+                                        : 'Không thể tạo ca làm',
+                                    type: TopMessageType.error,
+                                  );
+                                }
+                              }
+                            },
+                      icon: submitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(
+                              isEditing
+                                  ? Icons.save_outlined
+                                  : Icons.add_alarm_outlined,
+                            ),
+                      label: Text(
+                        isEditing ? 'Lưu thay đổi' : 'Lưu ca làm',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    // Chờ BottomSheet đóng xong rồi mới dispose controller để tránh
+    // TextField còn ở frame thoát đọc controller đã bị hủy.
+    await Future<void>.delayed(
+      const Duration(milliseconds: 250),
+    );
+    name.dispose();
+
+    if (saved == true && mounted) {
+      await Future.wait<void>([
+        _loadShifts(),
+        _loadAssignments(),
+        _loadHistory(),
+      ]);
+      if (!mounted) return;
+      _show(
+        isEditing
+            ? 'Đã cập nhật ca làm và đồng bộ realtime với WinForms.'
+            : 'Đã thêm ca làm và đồng bộ realtime với WinForms.',
+        TopMessageType.success,
+      );
+    }
+  }
+
+  Future<void> _deleteShift(ManagedShift shift) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xóa ca làm?'),
+        content: Text(
+          'Bạn có chắc muốn xóa "${shift.name}" '
+          '(${shift.timeLabel}) không?\n\n'
+          'Ca đã có phân công sẽ không thể xóa để bảo toàn lịch sử.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Xóa ca'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await AppServices.staffManagementService.deleteShift(shift.id);
+      await Future.wait<void>([
+        _loadShifts(),
+        _loadAssignments(),
+      ]);
+      if (!mounted) return;
+      _show(
+        'Đã xóa ca làm và đồng bộ realtime với WinForms.',
+        TopMessageType.success,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _show(e.message, TopMessageType.error);
+    } catch (_) {
+      if (!mounted) return;
+      _show('Không thể xóa ca làm', TopMessageType.error);
+    }
+  }
+
   Future<void> _assignShift() async {
     final active =
         employees
@@ -865,7 +1163,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 const SizedBox(height: 16),
                 DropdownButtonFormField<
                     ManagedEmployee>(
-                  value: employee,
+                  initialValue: employee,
                   isExpanded: true,
                   decoration:
                       const InputDecoration(
@@ -900,7 +1198,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<
                     ManagedShift>(
-                  value: shift,
+                  initialValue: shift,
                   isExpanded: true,
                   decoration:
                       const InputDecoration(
@@ -1252,6 +1550,17 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
   }
 
   Future<void> _deleteAssignment(ManagedShiftAssignment a) async {
+    final bool hasCheckedIn =
+        a.checkInTime != null || a.status == 1 || a.status == 3;
+
+    if (hasCheckedIn) {
+      _show(
+        'Nhân viên đã điểm danh ca này, không thể xóa phân ca.',
+        TopMessageType.warning,
+      );
+      return;
+    }
+
     if (!await _confirm(
       'Xóa phân ca',
       'Xóa ca ${a.shiftName} của ${a.userName} ngày ${_date(a.workDate)}?',
@@ -1311,7 +1620,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<ManagedEmployee>(
-                  value: employee,
+                  initialValue: employee,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Nhân viên',
@@ -1689,10 +1998,79 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   Widget _shiftTab() {
     return RefreshIndicator(
-      onRefresh: _loadAssignments,
+      onRefresh: () async {
+        await Future.wait<void>([
+          _loadShifts(),
+          _loadAssignments(),
+        ]);
+      },
       child: ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Danh sách ca làm (${shifts.length})',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _addShift,
+                        icon: const Icon(Icons.add_alarm_outlined),
+                        label: const Text('Thêm ca'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  if (shifts.isEmpty)
+                    Text(
+                      'Chưa có ca làm. Tạo ca mới để bắt đầu phân ca.',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: shifts
+                          .map(
+                            (shift) => InputChip(
+                              avatar: const Icon(
+                                Icons.schedule,
+                                size: 17,
+                              ),
+                              label: Text(
+                                '${shift.name} · ${shift.timeLabel}',
+                              ),
+                              tooltip: 'Chạm để sửa ca',
+                              onPressed: () => _editShift(shift),
+                              onDeleted: () => _deleteShift(shift),
+                              deleteIcon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                              ),
+                              deleteButtonTooltipMessage: 'Xóa ca',
+                            ),
+                          )
+                          .toList(),
+                    ),
+                ],
+              ),
+            ),
+          ),
           Row(
             children: [
               Expanded(
@@ -1705,7 +2083,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
               const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: _assignShift,
-                icon: const Icon(Icons.add),
+                icon: const Icon(Icons.event_available_outlined),
                 label: const Text('Phân ca'),
               ),
             ],
@@ -1747,19 +2125,44 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
                       if (value == 's3') _changeAssignmentStatus(a, 3);
                       if (value == 'delete') _deleteAssignment(a);
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'areas',
-                        child: Text('Sửa khu vực'),
-                      ),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 's0', child: Text('Đã xếp lịch')),
-                      PopupMenuItem(value: 's1', child: Text('Đã điểm danh')),
-                      PopupMenuItem(value: 's2', child: Text('Vắng mặt')),
-                      PopupMenuItem(value: 's3', child: Text('Đã hoàn thành')),
-                      PopupMenuDivider(),
-                      PopupMenuItem(value: 'delete', child: Text('Xóa phân ca')),
-                    ],
+                    itemBuilder: (_) {
+                      final bool hasCheckedIn =
+                          a.checkInTime != null || a.status == 1 || a.status == 3;
+
+                      return [
+                        const PopupMenuItem(
+                          value: 'areas',
+                          child: Text('Sửa khu vực'),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem(
+                          value: 's0',
+                          child: Text('Đã xếp lịch'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's1',
+                          child: Text('Đã điểm danh'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's2',
+                          child: Text('Vắng mặt'),
+                        ),
+                        const PopupMenuItem(
+                          value: 's3',
+                          child: Text('Đã hoàn thành'),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: 'delete',
+                          enabled: !hasCheckedIn,
+                          child: Text(
+                            hasCheckedIn
+                                ? 'Không thể xóa - đã điểm danh'
+                                : 'Xóa phân ca',
+                          ),
+                        ),
+                      ];
+                    },
                   ),
                 ),
               ),
@@ -1779,7 +2182,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int>(
-                  value: taskUserId ?? 0,
+                  initialValue: taskUserId ?? 0,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Lọc nhân viên',
@@ -1912,7 +2315,7 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
         padding: const EdgeInsets.all(14),
         children: [
           DropdownButtonFormField<int>(
-            value: historyUserId ?? 0,
+            initialValue: historyUserId ?? 0,
             isExpanded: true,
             decoration:
                 const InputDecoration(
@@ -2126,6 +2529,30 @@ class _StaffManagementScreenState extends State<StaffManagementScreen> {
 
   static String _date(DateTime v) =>
       '${v.day.toString().padLeft(2, '0')}/${v.month.toString().padLeft(2, '0')}/${v.year}';
+
+  static String _timeOfDayForApi(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:00';
+
+  static TimeOfDay _timeOfDayFromApi(
+    String value,
+    TimeOfDay fallback,
+  ) {
+    final List<String> parts = value.split(':');
+    if (parts.length < 2) return fallback;
+
+    final int? hour = int.tryParse(parts[0]);
+    final int? minute = int.tryParse(parts[1]);
+    if (hour == null ||
+        minute == null ||
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59) {
+      return fallback;
+    }
+
+    return TimeOfDay(hour: hour, minute: minute);
+  }
 
   static String _time(DateTime v) =>
       '${v.hour.toString().padLeft(2, '0')}:${v.minute.toString().padLeft(2, '0')}';
