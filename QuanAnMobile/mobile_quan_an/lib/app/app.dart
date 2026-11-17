@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../screens/login/login_screen.dart';
+import '../screens/server/server_bootstrap_screen.dart';
 import 'theme.dart';
 
 class RestaurantApp extends StatelessWidget {
@@ -11,7 +11,7 @@ class RestaurantApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'GustoPOS Mobile',
       theme: AppTheme.lightTheme,
-      home: const LoginScreen(),
+      home: const ServerBootstrapScreen(),
     );
   }
 }

@@ -28,6 +28,9 @@ public class Invoice
     public decimal TaxAmount { get; set; } = 0;
     public decimal VIPRoomFee { get; set; } = 0;
     public decimal VIPMinimumGap { get; set; } = 0;
+    // Tiền cọc của lượt đặt bàn đã được thu trước và khấu trừ khi thanh toán.
+    // Không cộng vào DiscountAmount vì đây là khoản khách đã trả, không phải giảm giá.
+    public decimal DepositAmount { get; set; } = 0;
     public decimal TotalAmount { get; set; }
     public InvoiceStatus Status { get; set; } = InvoiceStatus.ChuaThanhToan;
 

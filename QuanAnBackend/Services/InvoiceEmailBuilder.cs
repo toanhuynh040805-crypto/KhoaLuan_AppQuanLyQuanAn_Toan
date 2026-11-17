@@ -41,8 +41,13 @@ public static class InvoiceEmailBuilder
 
         sb.Append("<table style='width:100%;margin-top:8px'>");
         sb.Append(Row("Tạm tính", $"{invoice.SubTotal:N0}đ"));
-        if (invoice.DiscountAmount > 0) sb.Append(Row("Giảm giá", $"-{invoice.DiscountAmount:N0}đ"));
-        sb.Append(Row("<b>Tổng cộng</b>", $"<b style='color:#ac2d00'>{invoice.TotalAmount:N0}đ</b>"));
+        if (invoice.DiscountAmount > 0)
+            sb.Append(Row("Giảm giá", $"-{invoice.DiscountAmount:N0}đ"));
+        if (invoice.DepositAmount > 0)
+            sb.Append(Row("Tiền cọc đã thu", $"-{invoice.DepositAmount:N0}đ"));
+        sb.Append(Row(
+            invoice.DepositAmount > 0 ? "<b>Còn thanh toán</b>" : "<b>Tổng cộng</b>",
+            $"<b style='color:#ac2d00'>{invoice.TotalAmount:N0}đ</b>"));
         sb.Append("</table>");
 
         if (pointsEarned > 0 || pointsRedeemed > 0)

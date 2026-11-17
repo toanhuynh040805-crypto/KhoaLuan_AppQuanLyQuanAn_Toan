@@ -48,13 +48,13 @@ export function isReservationCancellable(reservation) {
 
     if (isPastTime) return false;
 
-    // Cho phép hủy khi Chờ xác nhận, Đã xác nhận (0), hoặc Đã nhận bàn (1)
+    // Cho phép hủy khi Chờ xác nhận hoặc Đã xác nhận (0), TUYỆT ĐỐI không cho hủy khi Đã nhận bàn (1)
     if (typeof status === 'string') {
-        const cancellableStrings = ['ChoXacNhan', 'DaXacNhan', 'DaDat', 'DaNhanBan'];
+        const cancellableStrings = ['ChoXacNhan', 'DaXacNhan', 'DaDat'];
         if (cancellableStrings.includes(status)) return true;
     }
 
-    if (Number.isInteger(normalizedStatus) && (normalizedStatus === 0 || normalizedStatus === 1 || normalizedStatus === 5)) {
+    if (Number.isInteger(normalizedStatus) && (normalizedStatus === 0 || normalizedStatus === 5)) {
         return true;
     }
 
@@ -322,6 +322,24 @@ export function renderReservationDetails(container, reservation) {
     }
 
     const status = getReservationValue(reservation, 'status', 'Status');
+    const durationMinutes = Number(
+        getReservationValue(reservation, 'durationMinutes', 'DurationMinutes') ??
+        window.AppConfig?.bookingDuration ??
+        30
+    );
+    const rawHoldUntil = getReservationValue(reservation, 'holdUntil', 'HoldUntil');
+    let holdLabel = `${durationMinutes} phút sau giờ hẹn`;
+
+    if (rawHoldUntil) {
+        const holdTime = new Date(rawHoldUntil);
+        if (!Number.isNaN(holdTime.getTime())) {
+            holdLabel = `đến ${holdTime.toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            })} (${durationMinutes} phút)`;
+        }
+    }
 
     const details = document.createElement('dl');
     details.className = 'grid w-full grid-cols-1 gap-4 text-left sm:grid-cols-2';
@@ -332,6 +350,7 @@ export function renderReservationDetails(container, reservation) {
         ['Tên khách', getReservationValue(reservation, 'customerName', 'CustomerName') ?? '—'],
         ['Số điện thoại', getReservationValue(reservation, 'customerPhone', 'CustomerPhone') ?? '—'],
         ['Thời gian', formattedTime],
+        ['Giữ chỗ', holdLabel],
         ['Số khách', getReservationValue(reservation, 'numberOfGuests', 'NumberOfGuests') ?? '—'],
         ['Ghi chú', getReservationValue(reservation, 'note', 'Note') ?? '—']
     ];
@@ -355,4 +374,126 @@ export function renderReservationDetails(container, reservation) {
         details.append(item);
     });
     container.replaceChildren(details);
+}
+
+export function renderBookingPagination(container, {
+    currentPage = 1,
+    totalPages = 1,
+    totalItems = 0,
+    startIndex = 0,
+    endIndex = 0,
+    pageSize = 12,
+    onPageChange = null
+} = {}) {
+    if (!container) return;
+    if (totalItems <= 0) {
+        container.className = 'w-full min-w-0 hidden';
+        container.replaceChildren();
+        return;
+    }
+
+    container.className = 'w-full min-w-0 pt-3 border-t border-outline-variant/40 mt-1';
+    container.replaceChildren();
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex flex-col sm:flex-row items-center justify-between gap-3';
+
+    // 1. Thông tin phân trang: "Đang hiển thị bàn X–Y trên tổng số Z bàn"
+    const infoBox = document.createElement('div');
+    infoBox.className = 'flex items-center flex-wrap justify-center sm:justify-start gap-2 text-xs text-on-surface-variant font-medium';
+    infoBox.innerHTML = `
+        <span>Đang hiển thị bàn <strong class="text-on-surface font-semibold">${startIndex + 1}–${endIndex}</strong> trên tổng số <strong class="text-on-surface font-semibold">${totalItems}</strong> bàn</span>
+        <span class="inline-block px-2 py-0.5 rounded-full bg-surface-container-high text-[11px] font-semibold text-on-surface-variant">${pageSize} bàn/trang</span>
+    `;
+
+    // 2. Nút điều hướng phân trang
+    const controls = document.createElement('nav');
+    controls.className = 'flex items-center gap-1.5 flex-wrap justify-center';
+    controls.setAttribute('aria-label', 'Phân trang danh sách bàn');
+
+    // Nút Trang trước
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = `inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+        currentPage <= 1
+            ? 'opacity-40 cursor-not-allowed bg-surface-container-low text-on-surface-variant'
+            : 'bg-surface-container text-on-surface hover:bg-surface-container-high cursor-pointer'
+    }`;
+    prevButton.disabled = currentPage <= 1;
+    prevButton.innerHTML = `
+        <span class="material-symbols-outlined text-[16px]">chevron_left</span>
+        <span class="hidden xs:inline">Trước</span>
+    `;
+    prevButton.addEventListener('click', () => {
+        if (currentPage > 1 && typeof onPageChange === 'function') {
+            onPageChange(currentPage - 1);
+        }
+    });
+    controls.appendChild(prevButton);
+
+    // Danh sách số trang
+    const pageNumbers = getPaginationPages(currentPage, totalPages);
+    pageNumbers.forEach((p) => {
+        if (p === '...') {
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'w-8 h-8 flex items-center justify-center text-xs text-on-surface-variant font-medium';
+            ellipsis.textContent = '…';
+            controls.appendChild(ellipsis);
+        } else {
+            const pageNum = Number(p);
+            const isCurrent = pageNum === currentPage;
+            const pageBtn = document.createElement('button');
+            pageBtn.type = 'button';
+            pageBtn.className = `min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center ${
+                isCurrent
+                    ? 'bg-primary text-on-primary shadow-xs cursor-default font-bold'
+                    : 'bg-surface-container text-on-surface hover:bg-surface-container-high cursor-pointer'
+            }`;
+            pageBtn.textContent = String(pageNum);
+            pageBtn.setAttribute('aria-current', isCurrent ? 'page' : 'false');
+            pageBtn.addEventListener('click', () => {
+                if (pageNum !== currentPage && typeof onPageChange === 'function') {
+                    onPageChange(pageNum);
+                }
+            });
+            controls.appendChild(pageBtn);
+        }
+    });
+
+    // Nút Trang sau
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = `inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+        currentPage >= totalPages
+            ? 'opacity-40 cursor-not-allowed bg-surface-container-low text-on-surface-variant'
+            : 'bg-surface-container text-on-surface hover:bg-surface-container-high cursor-pointer'
+    }`;
+    nextButton.disabled = currentPage >= totalPages;
+    nextButton.innerHTML = `
+        <span class="hidden xs:inline">Sau</span>
+        <span class="material-symbols-outlined text-[16px]">chevron_right</span>
+    `;
+    nextButton.addEventListener('click', () => {
+        if (currentPage < totalPages && typeof onPageChange === 'function') {
+            onPageChange(currentPage + 1);
+        }
+    });
+    controls.appendChild(nextButton);
+
+    wrapper.appendChild(infoBox);
+    wrapper.appendChild(controls);
+    container.appendChild(wrapper);
+}
+
+function getPaginationPages(currentPage, totalPages) {
+    if (totalPages <= 7) {
+        return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    if (currentPage <= 4) {
+        return [1, 2, 3, 4, 5, '...', totalPages];
+    }
+    if (currentPage >= totalPages - 3) {
+        return [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    }
+    return [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
 }

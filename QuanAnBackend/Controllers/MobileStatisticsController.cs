@@ -64,7 +64,7 @@ public class MobileStatisticsController : ControllerBase
             .GroupBy(_ => 1)
             .Select(g => new
             {
-                Revenue = g.Sum(i => i.TotalAmount),
+                Revenue = g.Sum(i => i.TotalAmount + i.DepositAmount),
                 InvoiceCount = g.Count(),
                 TotalDiscount = g.Sum(i => i.DiscountAmount)
             })
@@ -76,6 +76,7 @@ public class MobileStatisticsController : ControllerBase
         var avgInvoiceValue = invoiceCount > 0
             ? revenue / invoiceCount
             : 0m;
+        var guestCount = await GetGuestCountAsync(fromDate, toExclusive);
 
         var previousRevenue = await _db.Invoices
             .AsNoTracking()
@@ -83,7 +84,7 @@ public class MobileStatisticsController : ControllerBase
                 i.Status == InvoiceStatus.DaThanhToan &&
                 i.InvoiceDate >= previousFrom &&
                 i.InvoiceDate < previousTo)
-            .SumAsync(i => (decimal?)i.TotalAmount) ?? 0m;
+            .SumAsync(i => (decimal?)(i.TotalAmount + i.DepositAmount)) ?? 0m;
 
         double? trendPercent = previousRevenue > 0
             ? (double)((revenue - previousRevenue) / previousRevenue * 100m)
@@ -94,7 +95,7 @@ public class MobileStatisticsController : ControllerBase
             {
                 i.OrderId,
                 i.InvoiceDate,
-                i.TotalAmount
+                TotalAmount = i.TotalAmount + i.DepositAmount
             })
             .ToListAsync();
 
@@ -166,7 +167,7 @@ public class MobileStatisticsController : ControllerBase
             {
                 name = g.Key.Name,
                 invoiceCount = g.Count(),
-                revenue = g.Sum(i => i.TotalAmount)
+                revenue = g.Sum(i => i.TotalAmount + i.DepositAmount)
             })
             .OrderByDescending(x => x.revenue)
             .ToListAsync();
@@ -195,11 +196,43 @@ public class MobileStatisticsController : ControllerBase
             invoiceCount,
             avgInvoiceValue,
             totalDiscount,
+            guestCount,
             trendPercent,
             revenuePoints,
             topItems,
             employees,
             campaigns
         });
+    }
+
+    private async Task<int> GetGuestCountAsync(
+        DateTime fromDate,
+        DateTime toExclusive)
+    {
+        var reservationGuests = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                (reservation.Status == ReservationStatus.DaNhanBan ||
+                 reservation.Status == ReservationStatus.HoanTat) &&
+                reservation.ReservationTime >= fromDate &&
+                reservation.ReservationTime < toExclusive)
+            .SumAsync(reservation => (int?)reservation.NumberOfGuests) ?? 0;
+
+        var walkInGuests = await _db.Database.SqlQuery<int>($"""
+            SELECT COALESCE(
+                SUM(CASE
+                    WHEN NumberOfGuests > 0 THEN NumberOfGuests
+                    ELSE 0
+                END),
+                0
+            ) AS [Value]
+            FROM WaitingQueue
+            WHERE COALESCE(SeatedTime, CheckInTime) >= {fromDate}
+              AND COALESCE(SeatedTime, CheckInTime) < {toExclusive}
+              AND CONVERT(NVARCHAR(50), Status) IN
+                  (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban')
+            """).SingleAsync();
+
+        return reservationGuests + walkInGuests;
     }
 }

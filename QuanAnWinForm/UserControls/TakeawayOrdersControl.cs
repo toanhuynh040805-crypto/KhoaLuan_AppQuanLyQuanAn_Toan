@@ -9,8 +9,11 @@ namespace QuanAnWinForm.UserControls;
 // - "Thanh toán"         -> mở đơn đó ở màn Thanh toán để thu tiền
 // - "Hủy đơn"            -> hủy đơn mang về (khách không lấy)
 // Control dựng hoàn toàn bằng code (không có Designer).
-public partial class TakeawayOrdersControl : UserControl
+public partial class TakeawayOrdersControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadOrdersAsync();
+
+
     private readonly ApiService _api = new();
     private readonly int _userId;
 
@@ -18,6 +21,7 @@ public partial class TakeawayOrdersControl : UserControl
     private readonly FlowLayoutPanel _flowOrders = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15000 };
     private bool _loading;
+    private bool _reloadPending;
 
     // Bấm "Tạo đơn mang về"
     public event Action? CreateRequested;
@@ -39,6 +43,10 @@ public partial class TakeawayOrdersControl : UserControl
         {
             NotificationHubClient.ItemStatusUpdated += OnItemChanged;
             NotificationHubClient.OrderItemCancelled += OnItemCancelled;
+            NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+            NotificationHubClient.OrderUpdated += OnOrderUpdated;
+            NotificationHubClient.TableStatusUpdated += OnTableStatusUpdated;
+            NotificationHubClient.ConnectionRestored += OnConnectionRestored;
             _timer.Start();
             await LoadOrdersAsync();
         };
@@ -50,6 +58,10 @@ public partial class TakeawayOrdersControl : UserControl
         {
             NotificationHubClient.ItemStatusUpdated -= OnItemChanged;
             NotificationHubClient.OrderItemCancelled -= OnItemCancelled;
+            NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+            NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+            NotificationHubClient.TableStatusUpdated -= OnTableStatusUpdated;
+            NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
             _timer.Stop();
             _timer.Dispose();
         };
@@ -122,6 +134,10 @@ public partial class TakeawayOrdersControl : UserControl
     // Các handler realtime chạy trên luồng nền của SignalR -> đẩy về luồng giao diện
     private void OnItemChanged(ItemStatusUpdatedPayload p) => ReloadOnUiThread();
     private void OnItemCancelled(OrderItemCancelledPayload p) => ReloadOnUiThread();
+    private void OnPaymentCompleted(PaymentCompletedPayload p) => ReloadOnUiThread();
+    private void OnOrderUpdated(OrderUpdatedPayload p) => ReloadOnUiThread();
+    private void OnTableStatusUpdated(TableStatusUpdatedPayload p) => ReloadOnUiThread();
+    private void OnConnectionRestored() => ReloadOnUiThread();
 
     private void ReloadOnUiThread()
     {
@@ -141,22 +157,33 @@ public partial class TakeawayOrdersControl : UserControl
 
     private async Task LoadOrdersAsync()
     {
-        if (_loading) return;
-        _loading = true;
-        try
+        if (_loading)
         {
-            var orders = await _api.GetOpenTakeawayOrdersAsync();
-            if (IsDisposed) return;
-            RenderOrders(orders);
+            _reloadPending = true;
+            return;
         }
-        catch (Exception ex)
+
+        do
         {
-            if (!IsDisposed) MessageBox.Show($"Không tải được danh sách đơn mang về: {ex.Message}");
+            _reloadPending = false;
+            _loading = true;
+            try
+            {
+                var orders = await _api.GetOpenTakeawayOrdersAsync();
+                if (IsDisposed) return;
+                RenderOrders(orders);
+            }
+            catch (Exception ex)
+            {
+                if (!IsDisposed && Visible)
+                    MessageBox.Show($"Không tải được danh sách đơn mang về: {ex.Message}");
+            }
+            finally
+            {
+                _loading = false;
+            }
         }
-        finally
-        {
-            _loading = false;
-        }
+        while (_reloadPending && !IsDisposed);
     }
 
     private void RenderOrders(List<TakeawayOrderSummaryDto> orders)

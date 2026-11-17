@@ -9,6 +9,8 @@ import '../../services/auth_service.dart';
 import '../../services/api_client.dart';
 import '../../services/app_services.dart';
 import '../../services/mobile_access_policy.dart';
+import '../../services/api_config.dart';
+import '../server/server_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -145,6 +147,22 @@ class _LoginScreenState extends State<LoginScreen> {
         });
       }
     }
+  }
+
+  Future<void> _openServerSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (routeContext) => ServerSetupScreen(
+          autoDiscover: false,
+          onConnected: () {
+            Navigator.of(routeContext).pop();
+          },
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -285,7 +303,20 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                   ),
                 ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 18),
+                TextButton.icon(
+                  onPressed: _isLoggingIn
+                      ? null
+                      : _openServerSettings,
+                  icon: const Icon(
+                    Icons.dns_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                    'Máy chủ: ${ApiConfig.serverHost}:${ApiConfig.serverPort}',
+                  ),
+                ),
+                const SizedBox(height: 6),
                 const Text(
                   'Cần hỗ trợ? Liên hệ quản lý',
                   style: TextStyle(

@@ -7,6 +7,7 @@ class AppNotification {
   final String notificationType;
   final String? relatedEntityType;
   final int? relatedEntityId;
+  final String? eventKey;
 
   const AppNotification({
     this.id,
@@ -17,6 +18,7 @@ class AppNotification {
     this.notificationType = '',
     this.relatedEntityType,
     this.relatedEntityId,
+    this.eventKey,
   });
 
   factory AppNotification.fromJson(
@@ -48,6 +50,8 @@ class AppNotification {
               : _parseInt(
                   json['relatedEntityId'],
                 ),
+      eventKey:
+          json['eventKey']?.toString(),
     );
   }
 
@@ -60,6 +64,7 @@ class AppNotification {
     String? notificationType,
     String? relatedEntityType,
     int? relatedEntityId,
+    String? eventKey,
   }) {
     return AppNotification(
       id: id ?? this.id,
@@ -76,6 +81,8 @@ class AppNotification {
       relatedEntityId:
           relatedEntityId ??
               this.relatedEntityId,
+      eventKey:
+          eventKey ?? this.eventKey,
     );
   }
 
@@ -92,6 +99,8 @@ class AppNotification {
           relatedEntityType,
       'relatedEntityId':
           relatedEntityId,
+      'eventKey':
+          eventKey,
     };
   }
 

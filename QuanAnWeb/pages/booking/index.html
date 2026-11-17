@@ -44,6 +44,19 @@
         body {
             font-family: 'Inter', sans-serif;
         }
+        #booking-time-dropdown::-webkit-scrollbar {
+            width: 5px;
+        }
+        #booking-time-dropdown::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #booking-time-dropdown::-webkit-scrollbar-thumb {
+            background: #e4beb4;
+            border-radius: 10px;
+        }
+        #booking-time-dropdown::-webkit-scrollbar-thumb:hover {
+            background: #ac2d00;
+        }
     </style>
 </head>
 <body class="bg-background text-on-background antialiased min-h-screen flex flex-col md:flex-row">
@@ -169,11 +182,34 @@
                                     <input class="w-full pl-10 pr-3 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-date" name="date" required type="date">
                                 </div>
                             </div>
-                            <div class="flex flex-col gap-2">
-                                <label class="text-sm font-semibold text-on-surface" for="booking-time">Giờ đến <span class="text-error">*</span></label>
+                            <div class="flex flex-col gap-2 relative" id="booking-time-picker-wrapper">
+                                <label class="text-sm font-semibold text-on-surface" for="booking-time-btn">Giờ đến <span class="text-error">*</span></label>
+                                
+                                <!-- Thẻ select ẩn để bảo toàn 100% logic form, validation và API sẵn có -->
+                                <select class="sr-only" id="booking-time" name="time" required tabindex="-1" aria-hidden="true">
+                                    <option value="">-- Chọn giờ đến --</option>
+                                </select>
+
+                                <!-- Custom Dropdown Trigger Button -->
                                 <div class="relative">
-                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px]">schedule</span>
-                                    <input class="w-full pl-10 pr-3 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-on-surface" id="booking-time" name="time" required type="time" lang="en-GB">
+                                    <button type="button" 
+                                            id="booking-time-btn" 
+                                            class="w-full pl-10 pr-10 h-12 bg-surface rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-sm text-left flex items-center justify-between transition-colors hover:border-primary/60 cursor-pointer select-none" 
+                                            aria-haspopup="listbox" 
+                                            aria-expanded="false" 
+                                            aria-controls="booking-time-dropdown">
+                                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px] pointer-events-none">schedule</span>
+                                        <span id="booking-time-label" class="text-on-surface-variant truncate">-- Chọn giờ đến --</span>
+                                        <span id="booking-time-arrow" class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px] transition-transform duration-200 pointer-events-none">expand_more</span>
+                                    </button>
+
+                                    <!-- Custom Dropdown Panel (Phân nhóm 4 buổi, cuộn độc lập) -->
+                                    <div id="booking-time-dropdown" 
+                                         class="hidden absolute left-0 right-0 z-50 mt-1 bg-surface-container-lowest rounded-xl shadow-xl border border-outline-variant/60 p-3 max-h-[280px] overflow-y-auto space-y-3" 
+                                         role="listbox" 
+                                         aria-label="Danh sách giờ đến">
+                                        <!-- Danh sách khung giờ theo buổi sẽ được JS render -->
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex flex-col gap-2">
@@ -207,12 +243,19 @@
                             <!-- Grid danh sách bàn trực quan dạng Card -->
                             <div id="booking-table-selector" class="w-full min-w-0"></div>
 
+                            <!-- Phân trang danh sách bàn -->
+                            <div id="booking-table-pagination" class="w-full min-w-0 hidden"></div>
+
                             <!-- Select ẩn giữ giá trị đồng bộ cho form submit -->
                             <select id="booking-table" name="tableId" class="sr-only" required>
                                 <option value="">Chọn ngày, giờ và nhập số khách trước</option>
                             </select>
 
                             <p class="text-xs text-on-surface-variant" data-booking-table-state>Hệ thống tự động lọc các bàn còn trống theo khung giờ. Nhóm khách sẽ được gợi ý các bàn vừa vặn nhất, phòng VIP hoặc ghép bàn cùng khu vực.</p>
+                            <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 flex items-start gap-2">
+                                <span class="material-symbols-outlined text-[18px] text-amber-600">schedule</span>
+                                <span><strong>Thời gian giữ chỗ:</strong> bàn được giữ tối đa <strong>30 phút</strong> kể từ giờ hẹn. Sau thời gian này, nếu bạn chưa đến nhận bàn, nhà hàng có thể hủy lượt đặt để phục vụ khách khác.</span>
+                            </div>
                         </div>
 
                         <hr class="border-outline-variant/60 my-6">
@@ -294,6 +337,6 @@
             }
         });
     </script>
-    <script type="module" src="../../js/pages/booking.js?v=auth-session-2"></script>
+    <script type="module" src="../../js/pages/booking.js?v=table-pagination-1"></script>
 </body>
 </html>

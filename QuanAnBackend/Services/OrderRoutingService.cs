@@ -80,6 +80,7 @@ public class OrderRoutingService
                 .SendAsync("NewTicket", new
                 {
                     OrderId = orderId,
+                    TableId = firstOrder?.TableId,
                     TableName = orderLabel,
                     Department = station.StationName,
                     Items = ticketPayload

@@ -9,7 +9,9 @@ public record UpdateAttendanceSettingsRequest(
     double Latitude,
     double Longitude,
     double RadiusMeters = 100,
-    double MaxAccuracyMeters = 50
+    double MaxAccuracyMeters = 50,
+    double? AccuracyMeters = null,
+    bool IsMocked = false
 );
 
 [ApiController]
@@ -92,6 +94,45 @@ public class AttendanceSettingsController
                 {
                     message =
                         "Sai số GPS cho phép phải từ 5 đến 200 mét."
+                }
+            );
+        }
+
+        if (request.IsMocked)
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Phát hiện vị trí mô phỏng. " +
+                        "Không thể dùng GPS giả lập để lưu vị trí nhà hàng."
+                }
+            );
+        }
+
+        if (!request.AccuracyMeters.HasValue ||
+            request.AccuracyMeters.Value <= 0)
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        "Cần GPS thật hiện tại của thiết bị để lưu vị trí nhà hàng."
+                }
+            );
+        }
+
+        if (request.AccuracyMeters.Value >
+            request.MaxAccuracyMeters)
+        {
+            return BadRequest(
+                new
+                {
+                    message =
+                        $"GPS hiện tại chưa đủ chính xác (sai số khoảng " +
+                        $"{Math.Round(request.AccuracyMeters.Value)} m). " +
+                        $"Cần sai số không quá " +
+                        $"{Math.Round(request.MaxAccuracyMeters)} m."
                 }
             );
         }

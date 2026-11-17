@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using QuanAnWinForm.Controls;
 using QuanAnWinForm.Models;
 using QuanAnWinForm.Services;
 using QuanAnWinForm.Theme;
@@ -9,8 +10,15 @@ namespace QuanAnWinForm.UserControls;
 // Man hinh "Thong ke & Bao cao" - QuanLy, ThuNgan.
 // Bo loc: Hom nay / Chon ngay / Theo tuan / Theo thang / Theo quy (+ nut lui/tien ky).
 // Co nut "Xuat Excel" xuat toan bo bao cao cua ky dang xem.
-public partial class RevenueControl : UserControl
+public partial class RevenueControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => ReloadAllAsync(silent: true);
+
+    private readonly System.Windows.Forms.Timer _realtimeTimer =
+        new() { Interval = 700 };
+    private bool _realtimeRunning;
+    private bool _realtimeDirty;
+
     private const int PeriodToday = 0;
     private const int PeriodDay = 1;
     private const int PeriodWeek = 2;
@@ -32,6 +40,7 @@ public partial class RevenueControl : UserControl
 
     private readonly Label[] _insightCaptions = new Label[4];
     private readonly Label[] _insightValues = new Label[4];
+    private readonly StatCard _cardGuests = new();
 
     private static readonly string[] InvoiceStatusLabels = { "Chưa thanh toán", "Đã thanh toán", "Đã hủy" };
     private static readonly string[] Roman = { "I", "II", "III", "IV" };
@@ -39,6 +48,7 @@ public partial class RevenueControl : UserControl
     public RevenueControl()
     {
         InitializeComponent();
+        ConfigureGuestCountCard();
         ArrangeFilterBar();
         BuildInsightRows();
         SetupGridColumns();
@@ -47,11 +57,48 @@ public partial class RevenueControl : UserControl
         ApplyModeUI();
         WireUpEvents();
 
+        _realtimeTimer.Tick += async (s, e) =>
+        {
+            _realtimeTimer.Stop();
+            if (_realtimeRunning)
+            {
+                _realtimeDirty = true;
+                return;
+            }
+
+            _realtimeRunning = true;
+            try
+            {
+                _realtimeDirty = false;
+                await ReloadAllAsync(silent: true);
+            }
+            finally
+            {
+                _realtimeRunning = false;
+                if (_realtimeDirty && !IsDisposed && Visible)
+                    _realtimeTimer.Start();
+            }
+        };
+
         Load += async (s, e) =>
         {
+            SubscribeRealtime();
             PositionHeaderButtons();
             LayoutFilterRow();
             await ReloadAllAsync();
+        };
+
+        VisibleChanged += (s, e) =>
+        {
+            if (Visible && _realtimeDirty)
+                QueueRealtimeRefresh();
+        };
+
+        Disposed += (s, e) =>
+        {
+            UnsubscribeRealtime();
+            _realtimeTimer.Stop();
+            _realtimeTimer.Dispose();
         };
     }
 
@@ -156,6 +203,43 @@ public partial class RevenueControl : UserControl
         _suppress = true;
         try { picker.Value = value; }
         finally { _suppress = wasSuppressed; }
+    }
+
+    private void SubscribeRealtime()
+    {
+        UnsubscribeRealtime();
+        NotificationHubClient.PaymentCompleted += OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated += OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored += OnConnectionRestored;
+    }
+
+    private void UnsubscribeRealtime()
+    {
+        NotificationHubClient.PaymentCompleted -= OnPaymentCompleted;
+        NotificationHubClient.OrderUpdated -= OnOrderUpdated;
+        NotificationHubClient.ConnectionRestored -= OnConnectionRestored;
+    }
+
+    private void OnPaymentCompleted(PaymentCompletedPayload _) => QueueRealtimeRefresh();
+    private void OnOrderUpdated(OrderUpdatedPayload _) => QueueRealtimeRefresh();
+    private void OnConnectionRestored() => QueueRealtimeRefresh();
+
+    private void QueueRealtimeRefresh()
+    {
+        if (IsDisposed) return;
+        _realtimeDirty = true;
+        if (!Visible || !IsHandleCreated) return;
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (IsDisposed || !Visible) return;
+                _realtimeTimer.Stop();
+                _realtimeTimer.Start();
+            });
+        }
+        catch (InvalidOperationException) { }
     }
 
     private void WireUpEvents()
@@ -515,7 +599,7 @@ public partial class RevenueControl : UserControl
     // TAI DU LIEU
     // ------------------------------------------------------------------
 
-    private async Task ReloadAllAsync()
+    private async Task ReloadAllAsync(bool silent = false)
     {
         if (_suppress) return;
 
@@ -553,13 +637,36 @@ public partial class RevenueControl : UserControl
         }
         catch (Exception ex)
         {
-            if (ver == _version && !IsDisposed)
+            if (!silent && ver == _version && !IsDisposed)
                 MessageBox.Show($"Không tải được báo cáo: {ex.Message}");
         }
         finally
         {
             if (ver == _version && !IsDisposed) UseWaitCursor = false;
         }
+    }
+
+    private void ConfigureGuestCountCard()
+    {
+        tlCards.SuspendLayout();
+
+        tlCards.ColumnCount = 5;
+        tlCards.ColumnStyles.Clear();
+        for (var i = 0; i < 5; i++)
+            tlCards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20F));
+
+        cardRevenue.Margin = new Padding(0, 0, 12, 0);
+        cardProfit.Margin = new Padding(0, 0, 12, 0);
+        cardCost.Margin = new Padding(0, 0, 12, 0);
+        cardOrders.Margin = new Padding(0, 0, 12, 0);
+
+        _cardGuests.BackColor = Color.White;
+        _cardGuests.Dock = DockStyle.Fill;
+        _cardGuests.Margin = new Padding(0);
+        _cardGuests.Name = "cardGuests";
+        tlCards.Controls.Add(_cardGuests, 4, 0);
+
+        tlCards.ResumeLayout();
     }
 
     private void ApplySummary(RevenueSummaryDto summary)
@@ -571,6 +678,7 @@ public partial class RevenueControl : UserControl
         cardProfit.Configure("🏷️", AppColors.Warning, Color.FromArgb(255, 243, 224), "TỔNG TIỀN ĐÃ GIẢM", $"{summary.TotalDiscount:N0}đ");
         cardCost.Configure("📊", AppColors.Secondary, AppColors.SecondaryContainer, "GIÁ TRỊ TB/HÓA ĐƠN", $"{summary.AvgOrderValue:N0}đ");
         cardOrders.Configure("🧾", AppColors.Tertiary, Color.FromArgb(224, 242, 241), "SỐ HÓA ĐƠN", summary.OrderCount.ToString("N0"));
+        _cardGuests.Configure("👥", AppColors.Primary, Color.FromArgb(239, 246, 255), "TỔNG SỐ KHÁCH", summary.GuestCount.ToString("N0"));
     }
 
     private void ApplyChart(List<RevenuePointDto> points, string unit)

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -79,6 +80,49 @@ class ApiClient {
 
   Future<dynamic> delete(String endpoint) =>
       _execute(() => _client.delete(_uri(endpoint), headers: _headers));
+
+  Future<Uint8List> getBytes(String urlOrEndpoint) async {
+    final Uri parsed = Uri.parse(urlOrEndpoint);
+    final Uri uri = parsed.hasScheme ? parsed : _uri(urlOrEndpoint);
+
+    final Map<String, String> headers = Map<String, String>.from(_headers)
+      ..['Accept'] = 'image/png,image/*';
+
+    try {
+      final http.Response response = await _client
+          .get(uri, headers: headers)
+          .timeout(ApiConfig.receiveTimeout);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _handleResponse(response);
+      }
+
+      if (response.bodyBytes.isEmpty) {
+        throw const ApiException(
+          message: 'Máy chủ không trả về dữ liệu ảnh QR',
+        );
+      }
+
+      return response.bodyBytes;
+    } on ApiException {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiException(
+        message: 'Tải mã QR quá thời gian chờ',
+        isNetworkError: true,
+      );
+    } on http.ClientException {
+      throw const ApiException(
+        message: 'Không thể kết nối đến máy chủ để tải mã QR',
+        isNetworkError: true,
+      );
+    } catch (_) {
+      throw const ApiException(
+        message: 'Không thể tải mã QR',
+        isNetworkError: true,
+      );
+    }
+  }
 
   Uri _uri(String endpoint) {
     final String normalizedEndpoint = endpoint.startsWith('/')

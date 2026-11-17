@@ -34,7 +34,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Reservation> Reservations => Set<Reservation>();
     public DbSet<DiscountCampaign> DiscountCampaigns => Set<DiscountCampaign>();
-
+    public DbSet<DiscountCampaignCondition> DiscountCampaignConditions => Set<DiscountCampaignCondition>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<LoyaltyPointHistory> LoyaltyPointHistories => Set<LoyaltyPointHistory>();
     public DbSet<Notification> Notifications => Set<Notification>();
@@ -140,6 +140,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Invoice>().Property(i => i.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Payment>().Property(p => p.PaymentMethod).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Payment>().Property(p => p.Status).HasConversion<string>().HasMaxLength(20);
+        modelBuilder.Entity<Payment>().Property(p => p.TransactionRef).HasColumnName("TransactionCode").HasMaxLength(100);
         modelBuilder.Entity<ShiftAssignment>().Property(sa => sa.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<StaffTask>().Property(t => t.Status).HasConversion<string>().HasMaxLength(20);
         modelBuilder.Entity<Reservation>().Property(r => r.Status)
@@ -260,7 +261,19 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(c => c.CreatedBy)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<DiscountCampaignCondition>(e =>
+        {
+            e.ToTable("DiscountCampaignConditions");
+            e.HasKey(x => x.ConditionId);
+            e.Property(x => x.ConditionType).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Value1).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Value2).HasMaxLength(100);
 
+            e.HasOne(x => x.Campaign)
+                .WithMany(c => c.Conditions)
+                .HasForeignKey(x => x.CampaignId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<Order>()
             .HasOne(o => o.Customer)
             .WithMany(c => c.Orders)

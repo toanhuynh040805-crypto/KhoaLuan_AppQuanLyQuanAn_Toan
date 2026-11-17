@@ -57,6 +57,7 @@ class StatisticsDashboard {
   final int invoiceCount;
   final double avgInvoiceValue;
   final double totalDiscount;
+  final int guestCount;
   final double? trendPercent;
   final List<RevenuePoint> revenuePoints;
   final List<TopItemStat> topItems;
@@ -68,6 +69,7 @@ class StatisticsDashboard {
     required this.invoiceCount,
     required this.avgInvoiceValue,
     required this.totalDiscount,
+    required this.guestCount,
     required this.trendPercent,
     required this.revenuePoints,
     required this.topItems,
@@ -87,6 +89,7 @@ class StatisticsDashboard {
       invoiceCount: _integer(json['invoiceCount'] ?? json['InvoiceCount']),
       avgInvoiceValue: _number(json['avgInvoiceValue'] ?? json['AvgInvoiceValue']),
       totalDiscount: _number(json['totalDiscount'] ?? json['TotalDiscount']),
+      guestCount: _integer(json['guestCount'] ?? json['GuestCount']),
       trendPercent: trend == null ? null : _number(trend),
       revenuePoints: listOf(json['revenuePoints'] ?? json['RevenuePoints'], RevenuePoint.fromJson),
       topItems: listOf(json['topItems'] ?? json['TopItems'], TopItemStat.fromJson),

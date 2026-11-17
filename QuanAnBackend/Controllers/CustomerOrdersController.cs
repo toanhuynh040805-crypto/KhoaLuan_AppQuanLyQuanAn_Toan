@@ -35,19 +35,21 @@ public class CustomerOrdersController : ControllerBase
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
     private readonly ILogger<CustomerOrdersController> _logger;
-
-    public CustomerOrdersController(
+    private readonly KitchenHoursService _kitchenHours;
+        public CustomerOrdersController(
         AppDbContext db,
         OrderRoutingService routing,
         IHubContext<OrderHub> hub,
         NotificationService notifications,
-        ILogger<CustomerOrdersController> logger)
+        ILogger<CustomerOrdersController> logger,
+        KitchenHoursService kitchenHours)
     {
         _db = db;
         _routing = routing;
         _hub = hub;
         _notifications = notifications;
         _logger = logger;
+        _kitchenHours = kitchenHours;
     }
 
     private sealed record Line(int MenuItemId, int Quantity, string? Note);
@@ -106,7 +108,9 @@ public class CustomerOrdersController : ControllerBase
         var existing = await LoadOrderAsync(key);
         if (existing is not null)
             return ReplayOrConflict(existing, customerId.Value, request.TableId, lines);
-
+        // Bếp đóng cửa: chặn đơn mới (đặt sau khối idempotent để gửi lại đơn cũ vẫn đúng).
+        if (!_kitchenHours.IsOpenNow(out var kitchenClosedMessage))
+            return Error(400, "KITCHEN_CLOSED", kitchenClosedMessage);
         var menuIds = lines.Select(l => l.MenuItemId).Distinct().ToList();
         var menuItems = await _db.MenuItems.AsNoTracking()
             .Where(m => menuIds.Contains(m.MenuItemId))
@@ -152,9 +156,11 @@ public class CustomerOrdersController : ControllerBase
                     return Error(404, "TABLE_NOT_FOUND", "Không tìm thấy bàn.");
                 if (table.TableName.StartsWith("MV-") || table.Area?.AreaName == "Mang về")
                     return Error(400, "TABLE_NOT_DINE_IN", "Bàn này không nhận đặt món online.");
-                if (table.Status != TableStatus.Trong ||
-                    await _db.Orders.AnyAsync(o => o.TableId == table.TableId && o.Status == OrderStatus.DangMo))
-                    return Error(409, "TABLE_UNAVAILABLE", "Bàn này không còn trống. Vui lòng chọn bàn khác.");
+                // HƯỚNG A: Bắt buộc bàn phải được Mở bàn (DangPhucVu). Nếu bàn đang Trống -> Từ chối ngay.
+                if (table.Status == TableStatus.Trong)
+                    return Error(400, "TABLE_NOT_OPENED", "Bàn chưa được mở, vui lòng liên hệ nhân viên.");
+                if (table.Status != TableStatus.DangPhucVu)
+                    return Error(409, "TABLE_UNAVAILABLE", "Bàn hiện không ở trạng thái sẵn sàng phục vụ. Vui lòng liên hệ nhân viên.");
 
                 var now = DateTime.Now;
                 var order = new Order

@@ -208,6 +208,7 @@ class _StatisticsScreenState extends State<StatisticsScreen> {
       children: [
         _statCard('Doanh thu', _money(data.revenue), Icons.payments_outlined),
         _statCard('Hóa đơn', '${data.invoiceCount}', Icons.receipt_long_outlined),
+        _statCard('Tổng số khách', '${data.guestCount}', Icons.groups_outlined),
         _statCard('TB / hóa đơn', _money(data.avgInvoiceValue), Icons.analytics_outlined),
         _statCard('Đã giảm', _money(data.totalDiscount), Icons.discount_outlined),
       ],

@@ -7,13 +7,15 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Hubs;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 
 [Route("api/orders")]
 [ApiController]
-[Authorize(Roles = "Customer")]
+[Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+[CustomerAccess]
 public class WebOrdersController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -21,19 +23,21 @@ public class WebOrdersController : ControllerBase
     private readonly OrderRoutingService _orderRoutingService;
     private readonly IHubContext<OrderHub> _hub;
     private readonly NotificationService _notifications;
-
-    public WebOrdersController(
+    private readonly KitchenHoursService _kitchenHours;
+        public WebOrdersController(
         AppDbContext context,
         ILogger<WebOrdersController> logger,
         OrderRoutingService orderRoutingService,
         IHubContext<OrderHub> hub,
-        NotificationService notifications)
+        NotificationService notifications,
+        KitchenHoursService kitchenHours)
     {
         _context = context;
         _logger = logger;
         _orderRoutingService = orderRoutingService;
         _hub = hub;
         _notifications = notifications;
+        _kitchenHours = kitchenHours;
     }
 
     private int GetCurrentCustomerId()
@@ -95,13 +99,34 @@ public class WebOrdersController : ControllerBase
                 await transaction.CommitAsync();
                 return await RouteAndRespondAsync(previousOrder, existingItemIds);
             }
-
+            // Bếp đóng cửa: chặn đơn mới. Đặt sau khối kiểm tra trùng yêu cầu
+            // để việc gửi lại đơn đã tạo trước giờ đóng vẫn trả đúng kết quả cũ.
+            if (!_kitchenHours.IsOpenNow(out var kitchenClosedMessage))
+                return BadRequest(new { code = "KITCHEN_CLOSED", message = kitchenClosedMessage });
             var table = await _context.Tables
                 .FirstOrDefaultAsync(candidate => candidate.TableId == request.TableId.Value);
             if (table is null)
                 return NotFound(new { message = "Không tìm thấy bàn đã chọn." });
-            if (table.Status != TableStatus.Trong)
-                return Conflict(new { message = "Bàn vừa được sử dụng hoặc không còn khả dụng. Vui lòng chọn bàn khác." });
+
+            // HƯỚNG A: Bắt buộc bàn phải được Thu ngân/Lễ tân "Mở bàn" (DangPhucVu / InUse).
+            // Nếu bàn đang trống (Trong), từ chối ngay lập tức để chặn lỗ hổng khách chụp mã QR mang về nhà order phá rối.
+            if (table.Status == TableStatus.Trong)
+            {
+                return BadRequest(new
+                {
+                    code = "TABLE_NOT_OPENED",
+                    message = "Bàn chưa được mở, vui lòng liên hệ nhân viên để mở bàn trước khi gọi món."
+                });
+            }
+
+            if (table.Status != TableStatus.DangPhucVu)
+            {
+                return Conflict(new
+                {
+                    code = "TABLE_NOT_AVAILABLE",
+                    message = "Bàn hiện không ở trạng thái sẵn sàng nhận món. Vui lòng liên hệ nhân viên."
+                });
+            }
 
             var webEmployeeId = await _context.Employees
                 .Where(employee => employee.EmployeeCode == OrderSources.WebEmployeeCode)

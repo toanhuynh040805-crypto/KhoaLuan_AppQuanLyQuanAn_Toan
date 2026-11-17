@@ -32,16 +32,12 @@ class _NotificationScreenState
 
   StreamSubscription<AppNotification>?
       _realtimeSubscription;
+  final Set<int> _releasedReservationIds =
+      <int>{};
 
   @override
   void initState() {
     super.initState();
-
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) {
-        _markAllAsRead();
-      },
-    );
 
     _realtimeSubscription =
         AppServices
@@ -73,20 +69,6 @@ class _NotificationScreenState
             );
           }
         });
-
-        // Đang đứng ngay màn Thông báo thì coi như đã xem.
-        final int newIndex =
-            notification.id == null
-                ? -1
-                : widget.notifications.indexWhere(
-                    (item) =>
-                        item.id ==
-                        notification.id,
-                  );
-
-        if (newIndex >= 0) {
-          await _markAsRead(newIndex);
-        }
       },
     );
   }
@@ -229,7 +211,14 @@ class _NotificationScreenState
 
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0,
+                elevation: 0,
+        actions: [
+          if (widget.notifications.any((item) => !item.isRead))
+            TextButton(
+              onPressed: _markAllAsRead,
+              child: const Text('Đọc tất cả'),
+            ),
+        ],
         title: const Text(
           'Thông báo',
           style: TextStyle(
@@ -267,6 +256,15 @@ class _NotificationScreenState
                     notification =
                     widget.notifications[index];
 
+                final bool canReleaseOverdue =
+                    notification.relatedEntityType == 'Reservation' &&
+                    notification.relatedEntityId != null &&
+                    !_releasedReservationIds.contains(
+                      notification.relatedEntityId,
+                    ) &&
+                    (notification.eventKey ?? '')
+                        .startsWith('reservation-overdue:');
+
                 return InkWell(
                   borderRadius:
                       BorderRadius.circular(12),
@@ -282,6 +280,50 @@ class _NotificationScreenState
                         notification.time,
                     isRead:
                         notification.isRead,
+                    actionLabel:
+                        canReleaseOverdue
+                            ? 'Khách không đến – hủy giữ bàn'
+                            : null,
+                    onAction:
+                        canReleaseOverdue
+                            ? () async {
+                                try {
+                                  await widget.notificationService
+                                      .releaseOverdueReservation(
+                                    reservationId:
+                                        notification.relatedEntityId!,
+                                  );
+                                  await _markAsRead(
+                                    index,
+                                    showError: false,
+                                  );
+                                  if (mounted) {
+                                    setState(() {
+                                      _releasedReservationIds.add(
+                                        notification.relatedEntityId!,
+                                      );
+                                    });
+                                    TopMessage.show(
+                                      context,
+                                      message:
+                                          'Đã hủy giữ bàn và đánh dấu khách không đến',
+                                      type:
+                                          TopMessageType.success,
+                                    );
+                                  }
+                                } catch (error) {
+                                  if (mounted) {
+                                    TopMessage.show(
+                                      context,
+                                      message:
+                                          error.toString(),
+                                      type:
+                                          TopMessageType.error,
+                                    );
+                                  }
+                                }
+                              }
+                            : null,
                   ),
                 );
               },
@@ -338,6 +380,8 @@ class NotificationItem extends StatelessWidget {
   final String message;
   final String time;
   final bool isRead;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   const NotificationItem({
     super.key,
@@ -345,6 +389,8 @@ class NotificationItem extends StatelessWidget {
     required this.message,
     required this.time,
     required this.isRead,
+    this.actionLabel,
+    this.onAction,
   });
 
   @override
@@ -442,6 +488,24 @@ class NotificationItem extends StatelessWidget {
                         Colors.grey.shade500,
                   ),
                 ),
+
+                if (actionLabel != null &&
+                    onAction != null) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onAction,
+                      icon: const Icon(
+                        Icons.event_busy_outlined,
+                        size: 18,
+                      ),
+                      label: Text(
+                        actionLabel!,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

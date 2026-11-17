@@ -7,6 +7,7 @@ import '../../app/theme.dart';
 import '../../models/payment_method_option.dart';
 import '../../models/payment_preview.dart';
 import '../../services/app_services.dart';
+import '../../widgets/payment_qr_code.dart';
 
 class PaymentDialogResult {
   final int method;
@@ -308,42 +309,21 @@ class _PaymentDialogState
             ),
           ),
           const SizedBox(height: 10),
-          if (preview
-              .qrImageUrl
-              .isNotEmpty)
-            Container(
+          if (preview.qrPayload.isNotEmpty ||
+              preview.qrImageUrl.isNotEmpty)
+            SizedBox(
               width: 230,
               height: 230,
-              color: Colors.white,
-              padding:
-                  const EdgeInsets.all(
-                6,
-              ),
-              child: Image.network(
-                preview.qrImageUrl,
-                fit: BoxFit.contain,
-                errorBuilder:
-                    (
-                      context,
-                      error,
-                      stackTrace,
-                    ) =>
-                        const Center(
-                  child: Text(
-                    'Không tải được QR',
-                    textAlign:
-                        TextAlign.center,
-                  ),
-                ),
+              child: PaymentQrCode(
+                payload: preview.qrPayload,
+                fallbackImageUrl: preview.qrImageUrl,
+                size: 218,
               ),
             )
           else
             const Padding(
-              padding:
-                  EdgeInsets.all(24),
-              child: Text(
-                'Chưa có mã QR.',
-              ),
+              padding: EdgeInsets.all(24),
+              child: Text('Chưa có mã QR.'),
             ),
           const SizedBox(height: 10),
           Text(
@@ -415,6 +395,14 @@ class _PaymentDialogState
   ) {
     final PaymentMethodOption? method =
         _method;
+    final int otherDiscount =
+        (preview.discountAmount - preview.loyaltyDiscount)
+            .clamp(0, 1 << 31)
+            .toInt();
+    final int projectedPointBalance =
+        preview.loyaltyPointBalance -
+        preview.redeemedPoints +
+        preview.estimatedEarnedPoints;
 
     return AlertDialog(
       title:
@@ -438,12 +426,20 @@ class _PaymentDialogState
                   preview.subTotal,
                 ),
               ),
-              if (preview
-                      .discountAmount >
-                  0)
+              if (otherDiscount > 0)
                 _row(
-                  'Giảm giá',
-                  '-${_money(preview.discountAmount)}',
+                  'Khuyến mãi',
+                  '-${_money(otherDiscount)}',
+                ),
+              if (preview.loyaltyDiscount > 0)
+                _row(
+                  'Đổi ${preview.redeemedPoints} điểm',
+                  '-${_money(preview.loyaltyDiscount)}',
+                ),
+              if (preview.depositAmount > 0)
+                _row(
+                  'Tiền cọc đã thu',
+                  '-${_money(preview.depositAmount)}',
                 ),
               if (preview
                       .vipRoomFee >
@@ -468,12 +464,30 @@ class _PaymentDialogState
                 height: 24,
               ),
               _row(
-                'Tổng thanh toán',
+                preview.depositAmount > 0
+                    ? 'Còn thanh toán'
+                    : 'Tổng thanh toán',
                 _money(
                   preview.totalAmount,
                 ),
                 bold: true,
               ),
+              if (preview.customerId != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  preview.redeemedPoints > 0
+                      ? 'Điểm sau thanh toán dự kiến: '
+                          '$projectedPointBalance '
+                          '(đã dùng ${preview.redeemedPoints}, '
+                          'dự kiến tích ${preview.estimatedEarnedPoints})'
+                      : 'Dự kiến tích thêm '
+                          '${preview.estimatedEarnedPoints} điểm',
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
               const SizedBox(
                 height: 16,
               ),

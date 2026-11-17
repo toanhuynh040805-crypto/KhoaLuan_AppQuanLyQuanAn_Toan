@@ -214,6 +214,29 @@ public class WebReservationsController : ControllerBase
                 new[] { "ThuNgan", "PhucVu" },
                 relatedEntityType: "Reservation",
                 relatedEntityId: code);
+
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = code,
+                    Status = ReservationStatus.DaXacNhan.ToString(),
+                    Stage = "Created",
+                    ReservationTime = start,
+                    HoldUntil = start.AddMinutes(duration)
+                });
+
+            if (customerId.HasValue)
+            {
+                await _notifications.CreateForCustomerAsync(
+                    customerId.Value,
+                    "Đặt bàn đã được xác nhận",
+                    $"Lịch đặt bàn lúc {start:HH:mm dd/MM} đã được ghi nhận. Bàn được giữ đến {start.AddMinutes(duration):HH:mm}.",
+                    NotificationType.DatBan,
+                    $"reservation-web-created:{code}",
+                    "Reservation",
+                    code);
+            }
         }
         catch (Exception ex)
         {
@@ -227,6 +250,9 @@ public class WebReservationsController : ControllerBase
             ReservationCode = code,
             Count = created.Count,
             Ids = created.Select(r => r.ReservationId),
+            ReservationTime = start,
+            DurationMinutes = duration,
+            HoldUntil = start.AddMinutes(duration),
             Status = ReservationStatus.DaXacNhan.ToString()
         });
     }
@@ -257,6 +283,8 @@ public class WebReservationsController : ControllerBase
             first.CustomerPhone,
             first.ReservationTime,
             first.DurationMinutes,
+            HoldUntil = first.ReservationTime.AddMinutes(first.DurationMinutes),
+            IsHoldExpired = DateTime.Now >= first.ReservationTime.AddMinutes(first.DurationMinutes),
             NumberOfGuests = rows.Sum(r => r.NumberOfGuests),
             Status = (int)status,
             first.Note,
@@ -321,6 +349,17 @@ public class WebReservationsController : ControllerBase
             foreach (var t in changedTables)
                 await _hub.Clients.All.SendAsync("TableStatusUpdated",
                     new { TableId = t.TableId, t.TableName, Status = t.Status });
+
+            await _hub.Clients.All.SendAsync(
+                "ReservationUpdated",
+                new
+                {
+                    ReservationId = codeValue,
+                    Status = ReservationStatus.DaHuy.ToString(),
+                    Stage = "Cancelled",
+                    ReservationTime = rows[0].ReservationTime,
+                    HoldUntil = rows[0].ReservationTime.AddMinutes(rows[0].DurationMinutes)
+                });
 
             await _notifications.CreateForRolesAsync(
                 "Khách hủy đặt bàn",

@@ -1,3 +1,5 @@
+import { renderTablePagination } from './tablePagination.js';
+
 export function createElement(tagName, className = '', text) {
     const element = document.createElement(tagName);
 
@@ -283,11 +285,17 @@ export function renderCheckoutTableAlert(container, message, type = 'warning') {
 export function renderCheckoutTables(select, tables = [], options = {}) {
     const {
         gridContainer = document.getElementById('checkout-table-selector'),
+        paginationContainer = document.getElementById('checkout-table-pagination'),
         countBadge = document.getElementById('checkout-available-tables-count'),
         selectedTableId = '',
         activeAreaFilter = 'all',
+        currentPage = 1,
+        pageSize = 10,
+        pageSizeOptions = [10, 20, 50],
         onSelectTable = () => {},
-        onSelectArea = () => {}
+        onSelectArea = () => {},
+        onPageChange = null,
+        onPageSizeChange = null
     } = options;
 
     const normalizedTables = Array.isArray(tables) ? tables : [];
@@ -344,16 +352,37 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
 
     // Trường hợp KHÔNG CÓ BÀN TRỐNG: Hiển thị Empty State thân thiện
     if (availableTables.length === 0) {
+        if (paginationContainer) {
+            renderTablePagination(paginationContainer, { totalItems: 0 });
+        }
         const emptyBox = createElement('div', 'rounded-2xl border border-amber-200 bg-amber-50/70 p-6 text-center');
         const icon = createElement('span', 'material-symbols-outlined mx-auto text-3xl text-amber-600 block', 'table_restaurant');
-        const title = createElement('p', 'mt-2 text-sm font-bold text-amber-900', 'Hiện không có bàn trống. Vui lòng thử lại sau.');
-        const subtext = createElement('p', 'mt-1 text-xs text-amber-700', 'Tất cả các bàn hiện đang phục vụ hoặc đang dọn dẹp. Danh sách sẽ tự động hiển thị ngay khi có bàn trống.');
+        const title = createElement('p', 'mt-2 text-sm font-bold text-amber-900', 'Hiện không có bàn khả dụng. Vui lòng thử lại sau.');
+        const subtext = createElement('p', 'mt-1 text-xs text-amber-700', 'Danh sách sẽ tự động hiển thị ngay khi có bàn khả dụng.');
         emptyBox.append(icon, title, subtext);
         gridContainer.replaceChildren(emptyBox);
         return;
     }
 
     const wrapper = createElement('div', 'space-y-3.5 w-full min-w-0');
+
+    // Hiển thị thông báo trạng thái bàn đang chọn (giữ nguyên khi phân trang)
+    if (selectedTableId) {
+        const selectedObj = availableTables.find(t => String(t.id ?? t.TableId ?? t.tableId) === String(selectedTableId));
+        if (selectedObj) {
+            const selName = selectedObj.tableName || selectedObj.name || `Bàn ${selectedTableId}`;
+            const selArea = selectedObj.areaName ? ` · ${selectedObj.areaName}` : '';
+            const banner = createElement('div', 'flex items-center justify-between rounded-xl bg-[#fff6f4] border border-[#ac2d00]/30 px-3.5 py-2 text-xs font-semibold text-[#ac2d00]');
+            banner.innerHTML = `
+                <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="material-symbols-outlined text-[18px]">check_circle</span>
+                    <span class="truncate">Bàn đang chọn: <strong>${selName}</strong>${selArea}</span>
+                </div>
+                <span class="text-[11px] font-bold bg-[#ac2d00] text-white px-2 py-0.5 rounded-full shrink-0 ml-2">Đang chọn</span>
+            `;
+            wrapper.append(banner);
+        }
+    }
 
     // Thu thập danh sách các khu vực duy nhất có bàn trống
     const areas = [];
@@ -398,10 +427,20 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
         ? availableTables.filter(t => (t.areaName || 'Khu vực chính') === activeAreaFilter)
         : availableTables;
 
+    const totalItems = tablesToShow.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    let validCurrentPage = currentPage;
+    if (validCurrentPage > totalPages) validCurrentPage = 1;
+    if (validCurrentPage < 1) validCurrentPage = 1;
+
+    const startIndex = (validCurrentPage - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, totalItems);
+    const paginatedTables = tablesToShow.slice(startIndex, endIndex);
+
     // Lưới thẻ bàn responsive: 2 cột trên điện thoại, 3 cột trên tablet, 4 cột trên desktop
     const grid = createElement('div', 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 xl:grid-cols-4 gap-2.5 w-full min-w-0');
 
-    tablesToShow.forEach((table) => {
+    paginatedTables.forEach((table) => {
         const id = table?.id ?? table?.TableId ?? table?.tableId;
         const tableName = table?.tableName ?? table?.name ?? table?.TableName ?? `Bàn ${id}`;
         const areaName = table?.areaName ?? table?.AreaName ?? 'Khu vực chung';
@@ -443,8 +482,11 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
 
         // Hàng dưới: Trạng thái trống / Đang chọn
         const bottomRow = createElement('div', 'mt-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-[#f2eae6] w-full min-w-0 gap-1');
-        const statusBadge = createElement('span', 'inline-flex items-center gap-1 font-semibold text-emerald-700 shrink-0');
-        statusBadge.innerHTML = `<span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Trống`;
+        const isTableInUse = table?.status === 'DangPhucVu';
+        const statusBadge = createElement('span', `inline-flex items-center gap-1 font-semibold ${isTableInUse ? 'text-amber-700' : 'text-emerald-700'} shrink-0`);
+        statusBadge.innerHTML = isTableInUse
+            ? '<span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"></span>Đã mở bàn'
+            : '<span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Trống';
         bottomRow.append(statusBadge);
 
         if (isSelected) {
@@ -466,6 +508,20 @@ export function renderCheckoutTables(select, tables = [], options = {}) {
 
     wrapper.append(grid);
     gridContainer.replaceChildren(wrapper);
+
+    // 4. Render thanh phân trang đồng bộ
+    const targetPaginationContainer = paginationContainer || document.getElementById('checkout-table-pagination');
+    if (targetPaginationContainer) {
+        renderTablePagination(targetPaginationContainer, {
+            currentPage: validCurrentPage,
+            totalPages,
+            totalItems,
+            pageSize,
+            pageSizeOptions,
+            onPageChange,
+            onPageSizeChange
+        });
+    }
 }
 
 /** Render thông báo trạng thái hoặc lỗi dùng chung cho checkout */

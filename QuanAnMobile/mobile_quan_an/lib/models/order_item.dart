@@ -5,6 +5,7 @@ class OrderItem {
   final int unitPrice;
   final String status;
   final String? note;
+  final DateTime? createdAt;
 
   // Món khách yêu cầu mang về
   final bool isTakeaway;
@@ -16,6 +17,7 @@ class OrderItem {
     required this.unitPrice,
     required this.status,
     this.note,
+    this.createdAt,
     this.isTakeaway = false,
   });
 
@@ -39,6 +41,7 @@ class OrderItem {
           json['status']?.toString() ??
               'Chờ chế biến',
       note: json['note']?.toString(),
+      createdAt: _parseDateTime(json['createdAt'] ?? json['CreatedAt']),
       isTakeaway: _parseBool(json['isTakeaway']),
     );
   }
@@ -51,8 +54,43 @@ class OrderItem {
       'unitPrice': unitPrice,
       'status': status,
       'note': note,
+      'createdAt': createdAt?.toIso8601String(),
       'isTakeaway': isTakeaway,
     };
+  }
+
+  OrderItem copyWith({
+    int? id,
+    String? name,
+    int? quantity,
+    int? unitPrice,
+    String? status,
+    String? note,
+    bool clearNote = false,
+    DateTime? createdAt,
+    bool clearCreatedAt = false,
+    bool? isTakeaway,
+  }) {
+    return OrderItem(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      quantity: quantity ?? this.quantity,
+      unitPrice: unitPrice ?? this.unitPrice,
+      status: status ?? this.status,
+      note: clearNote ? null : note ?? this.note,
+      createdAt: clearCreatedAt ? null : createdAt ?? this.createdAt,
+      isTakeaway: isTakeaway ?? this.isTakeaway,
+    );
+  }
+
+  static DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+
+    final String raw = value.toString().trim();
+    if (raw.isEmpty) return null;
+
+    return DateTime.tryParse(raw)?.toLocal();
   }
 
   static bool _parseBool(dynamic value) {

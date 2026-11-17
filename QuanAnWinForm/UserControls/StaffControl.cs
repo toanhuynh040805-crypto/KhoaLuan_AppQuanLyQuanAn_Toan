@@ -33,8 +33,11 @@ namespace QuanAnWinForm.UserControls;
 //    tat ca, trinh bay dang timeline nhom theo ngay (ngay gan nhat len dau)
 //    kem khu vuc phu trach va trang thai - phong cach lich su giao dich/
 //    newsfeed cua cac app hien dai thay vi 1 bang DataGridView day dac.
-public partial class StaffControl : UserControl
+public partial class StaffControl : UserControl, IRefreshableContent
 {
+    public Task RefreshDataAsync() => LoadEverythingAsync();
+
+
     private readonly ApiService _api = new();
 
     private List<EmployeeDto> _employees = new();
@@ -56,6 +59,7 @@ public partial class StaffControl : UserControl
     }
     private List<ShiftDto> _shifts = new();
     private List<ShiftAssignmentDto> _assignments = new();
+    private bool _refreshingShiftRealtime;
     private List<StaffTaskDto> _tasks = new();
     private List<AreaDto> _areas = new();
     private List<ShiftAssignmentDto> _history = new();
@@ -201,6 +205,10 @@ public partial class StaffControl : UserControl
     public StaffControl()
     {
         InitializeComponent();
+
+        NotificationHubClient.ShiftChanged += OnRealtimeShiftChanged;
+        Disposed += (s, e) =>
+            NotificationHubClient.ShiftChanged -= OnRealtimeShiftChanged;
 
         // Cac danh sach cuon doc: tat thanh cuon ngang + dong tu gian theo chieu rong.
         foreach (var flow in new[] { flowShiftDefs, flowAssignments, flowTasks, flowHistory })
@@ -774,6 +782,54 @@ public partial class StaffControl : UserControl
     // TAB 2: CA LÀM & PHÂN CÔNG
     // =====================================================================
 
+    private void OnRealtimeShiftChanged()
+    {
+        if (IsDisposed || Disposing || !IsHandleCreated)
+            return;
+
+        void RefreshOnUiThread()
+        {
+            if (IsDisposed || Disposing)
+                return;
+
+            _ = RefreshShiftDataFromRealtimeAsync();
+        }
+
+        try
+        {
+            if (InvokeRequired)
+                BeginInvoke((Action)RefreshOnUiThread);
+            else
+                RefreshOnUiThread();
+        }
+        catch (InvalidOperationException)
+        {
+            // Control đang đóng; bỏ qua sự kiện realtime cuối cùng.
+        }
+    }
+
+    private async Task RefreshShiftDataFromRealtimeAsync()
+    {
+        if (_refreshingShiftRealtime || IsDisposed || Disposing)
+            return;
+
+        _refreshingShiftRealtime = true;
+        try
+        {
+            await LoadShiftsAsync();
+            if (IsDisposed || Disposing) return;
+
+            await LoadAssignmentsAsync();
+            if (IsDisposed || Disposing) return;
+
+            await LoadHistoryAsync();
+        }
+        finally
+        {
+            _refreshingShiftRealtime = false;
+        }
+    }
+
     private async Task LoadShiftsAsync()
     {
         try
@@ -1072,8 +1128,25 @@ public partial class StaffControl : UserControl
                 }
             };
 
-            var lblDelete = MakeLink("Xóa", AppColors.Error);
-            lblDelete.Click += async (s, e) => await DeleteAssignmentAsync(assignment);
+            var hasCheckedIn =
+                assignment.CheckInTime.HasValue ||
+                assignment.Status == 1 ||
+                assignment.Status == 3;
+
+            var lblDelete = MakeLink(
+                hasCheckedIn ? "Đã điểm danh" : "Xóa",
+                hasCheckedIn ? AppColors.Outline : AppColors.Error);
+
+            if (hasCheckedIn)
+            {
+                lblDelete.Cursor = Cursors.Default;
+                lblDelete.Enabled = false;
+            }
+            else
+            {
+                lblDelete.Click += async (s, e) =>
+                    await DeleteAssignmentAsync(assignment);
+            }
 
             row.Controls.Add(sep);
             row.Controls.Add(lblShift);
@@ -1094,7 +1167,9 @@ public partial class StaffControl : UserControl
             {
                 sep.SetBounds(pad, y, w - pad * 2, 1);
 
-                del.Location = new Point(w - pad - TextW("Xóa", FLink), y + (subH - FLink.Height) / 2);
+                del.Location = new Point(
+                    w - pad - TextW(del.Text, FLink),
+                    y + (subH - FLink.Height) / 2);
                 status.Location = new Point(del.Left - Dp(16) - status.Width, y + (subH - status.Height) / 2);
 
                 var areaLeft = Math.Max(Dp(320), (int)(w * 0.40));
@@ -1155,6 +1230,8 @@ public partial class StaffControl : UserControl
             CheckOnClick = true,
             Font = AppFonts.BodyMd,
             IntegralHeight = false,
+            DisplayMember = "Name",
+            ValueMember = "Id",
         };
 
         var selectedIds = assignment.AreaIds.Count > 0
@@ -1235,6 +1312,21 @@ public partial class StaffControl : UserControl
 
     private async Task DeleteAssignmentAsync(ShiftAssignmentDto a)
     {
+        var hasCheckedIn =
+            a.CheckInTime.HasValue ||
+            a.Status == 1 ||
+            a.Status == 3;
+
+        if (hasCheckedIn)
+        {
+            MessageBox.Show(
+                "Nhân viên đã điểm danh ca này, không thể xóa phân ca.",
+                "Không thể xóa",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
         if (MessageBox.Show($"Xóa phân công của \"{a.UserName}\"?", "Xác nhận", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
         try
         {
@@ -1347,6 +1439,8 @@ public partial class StaffControl : UserControl
             CheckOnClick = true,
             Font = AppFonts.BodyMd,
             IntegralHeight = false,
+            DisplayMember = "Name",
+            ValueMember = "Id",
         };
 
         foreach (var area in _areas)

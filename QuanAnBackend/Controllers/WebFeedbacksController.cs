@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using QuanAnBackend.Data;
+using QuanAnBackend.Middleware;
 using QuanAnBackend.Models;
 using QuanAnBackend.Services;
 
@@ -35,12 +36,7 @@ namespace QuanAnBackend.Controllers
         }
 
         private int? GetCurrentCustomerId()
-        {
-            var userIdStr = User.FindFirst("UserId")?.Value ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            return int.TryParse(userIdStr, out var customerId) && customerId > 0
-                ? customerId
-                : null;
-        }
+            => CustomerTokens.GetCustomerId(User);
 
         private IQueryable<Order> GetPaidOrders() => _context.Orders.Where(order =>
             order.Status == OrderStatus.DaThanhToan &&
@@ -248,7 +244,8 @@ namespace QuanAnBackend.Controllers
             return Ok(new { review.ReviewId, review.ModerationStatus, review.IsVisible });
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpGet("orders/{orderId:int}/items")]
         public async Task<IActionResult> GetOrderItemsForReview(
             int orderId,
@@ -347,7 +344,8 @@ namespace QuanAnBackend.Controllers
             });
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpGet("my-reviewable-items")]
         public async Task<IActionResult> GetMyReviewableItems(
             [FromQuery] int skip = 0,
@@ -545,7 +543,8 @@ namespace QuanAnBackend.Controllers
             });
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpPost("orders/{orderId:int}/items/{orderItemId:int}")]
         public async Task<IActionResult> CreateReview(
             int orderId,
@@ -594,7 +593,8 @@ namespace QuanAnBackend.Controllers
             return BuildWriteResponse(review, item.Value!.MenuItemId);
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpPut("orders/{orderId:int}/items/{orderItemId:int}")]
         public async Task<IActionResult> UpdateReview(
             int orderId,
@@ -627,7 +627,8 @@ namespace QuanAnBackend.Controllers
             return BuildWriteResponse(review, item.Value!.MenuItemId);
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpPost("orders/{orderId:int}/experience")]
         public async Task<IActionResult> CreateOrderExperienceReview(
             int orderId,
@@ -674,7 +675,8 @@ namespace QuanAnBackend.Controllers
             return BuildWriteResponse(review, null);
         }
 
-        [Authorize(Roles = "Customer")]
+        [Authorize(Roles = CustomerAccessMiddleware.CustomerRole)]
+        [CustomerAccess]
         [HttpPut("orders/{orderId:int}/experience")]
         public async Task<IActionResult> UpdateOrderExperienceReview(
             int orderId,

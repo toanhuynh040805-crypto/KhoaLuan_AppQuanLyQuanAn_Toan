@@ -10,8 +10,22 @@ class TableService {
   }) : _apiClient = apiClient;
 
   Future<List<RestaurantTable>> getTables() async {
-    final dynamic response =
-        await _apiClient.get('/mobile/dining/tables');
+    dynamic response;
+
+    try {
+      response =
+          await _apiClient.get('/mobile/dining/tables');
+    } on ApiException catch (error) {
+      // Nếu Backend/mạng không tới được thì gọi endpoint thứ hai cũng chỉ làm
+      // người dùng chờ thêm một timeout nữa. Chỉ fallback khi Backend thực sự
+      // đã phản hồi nhưng endpoint mobile trả lỗi HTTP.
+      if (error.isNetworkError) {
+        rethrow;
+      }
+
+      response =
+          await _apiClient.get('/tables');
+    }
 
     dynamic data = response;
 
@@ -140,11 +154,15 @@ class TableService {
   Future<void> receiveTable({
     required int tableId,
     int customerCount = 0,
+    String mode = 'walkin',
+    int? reservationId,
   }) async {
     await _apiClient.put(
       '/mobile/dining/tables/$tableId/receive',
       body: {
         'customerCount': customerCount,
+        'mode': mode,
+        'reservationId': reservationId,
       },
     );
   }

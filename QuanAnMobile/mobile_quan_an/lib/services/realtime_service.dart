@@ -4,7 +4,7 @@ import 'package:signalr_netcore/signalr_client.dart';
 
 import '../models/app_notification.dart';
 import 'api_config.dart';
-import 'mobile_access_policy.dart';
+import 'api_client.dart';
 
 class DishStatusRealtimeEvent {
   final int orderItemId;
@@ -113,16 +113,15 @@ class TableLockTakenOverRealtimeEvent {
 }
 
 class RealtimeService {
+  RealtimeService({
+    required ApiClient apiClient,
+  }) : _apiClient = apiClient;
+
+  final ApiClient _apiClient;
   HubConnection? _connection;
   String? _employeeCode;
   String? _roleKey;
-
-  // Khi Thu ngân/Quản lý vừa tự thanh toán, backend phát PaymentCompleted và
-  // TableStatusUpdated gần như cùng lúc. TableScreen nằm dưới route chi tiết
-  // không cần reload trong vài giây đó vì sau Navigator.pop nó sẽ tự _loadData.
-  // Giữ mốc theo tableId để bỏ qua các event trạng thái bàn thuộc chính giao
-  // dịch vừa hoàn tất, tránh rebuild màn phía dưới trong lúc route đang tháo.
-  final Map<int, DateTime> _recentLocalPaymentTables = <int, DateTime>{};
+  String? _departmentName;
 
   final StreamController<AppNotification> _notificationController =
       StreamController<AppNotification>.broadcast();
@@ -136,12 +135,22 @@ class RealtimeService {
   final StreamController<TableStatusRealtimeEvent> _tableStatusController =
       StreamController<TableStatusRealtimeEvent>.broadcast();
 
+  final StreamController<void> _reservationController =
+      StreamController<void>.broadcast();
+
   final StreamController<TableLockTakenOverRealtimeEvent>
       _tableLockTakeoverController =
       StreamController<TableLockTakenOverRealtimeEvent>.broadcast();
 
   final StreamController<void> _kitchenQueueController =
       StreamController<void>.broadcast();
+
+  final StreamController<void> _orderController =
+      StreamController<void>.broadcast();
+
+  final StreamController<void> _shiftController =
+      StreamController<void>.broadcast();
+
 
   Stream<AppNotification> get notifications =>
       _notificationController.stream;
@@ -155,22 +164,33 @@ class RealtimeService {
   Stream<TableStatusRealtimeEvent> get tableStatusChanges =>
       _tableStatusController.stream;
 
+  Stream<void> get reservationChanges =>
+      _reservationController.stream;
+
   Stream<TableLockTakenOverRealtimeEvent> get tableLockTakeovers =>
       _tableLockTakeoverController.stream;
 
   Stream<void> get kitchenQueueChanges =>
       _kitchenQueueController.stream;
 
-  bool get _isCashierOrManager =>
-      MobileAccessPolicy.canCompletePayment(_roleKey ?? '');
+  Stream<void> get orderChanges =>
+      _orderController.stream;
+
+  Stream<void> get shiftChanges =>
+      _shiftController.stream;
+
 
   Future<void> start({
     required String employeeCode,
     required String roleKey,
+    String? departmentName,
   }) async {
+    final String normalizedDepartment = departmentName?.trim() ?? '';
+
     if (_connection != null &&
         _employeeCode == employeeCode &&
-        _roleKey == roleKey) {
+        _roleKey == roleKey &&
+        (_departmentName ?? '') == normalizedDepartment) {
       return;
     }
 
@@ -178,9 +198,14 @@ class RealtimeService {
 
     _employeeCode = employeeCode;
     _roleKey = roleKey;
+    _departmentName = normalizedDepartment;
+
+    final HttpConnectionOptions httpOptions = HttpConnectionOptions(
+      accessTokenFactory: () async => _apiClient.accessToken ?? '',
+    );
 
     final HubConnection connection = HubConnectionBuilder()
-        .withUrl(ApiConfig.hubUrl)
+        .withUrl(ApiConfig.hubUrl, options: httpOptions)
         .withAutomaticReconnect()
         .build();
 
@@ -203,17 +228,41 @@ class RealtimeService {
     // biết hàng đợi đã thay đổi rồi tải lại đúng StationId của tài khoản.
     connection.on(
       'NewTicket',
-      (_) => _kitchenQueueController.add(null),
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
     );
 
     connection.on(
       'ItemStatusUpdated',
-      (_) => _kitchenQueueController.add(null),
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
     );
 
     connection.on(
       'OrderItemCancelled',
+      (_) {
+        _kitchenQueueController.add(null);
+        _orderController.add(null);
+      },
+    );
+
+    connection.on(
+      'KitchenPriorityUpdated',
       (_) => _kitchenQueueController.add(null),
+    );
+
+    connection.on(
+      'OrderUpdated',
+      (_) => _orderController.add(null),
+    );
+
+    connection.on(
+      'ShiftChanged',
+      (_) => _shiftController.add(null),
     );
 
     connection.on(
@@ -243,18 +292,10 @@ class RealtimeService {
         final PaymentCompletedRealtimeEvent event =
             PaymentCompletedRealtimeEvent.fromJson(data);
 
-        // Thu ngân/Quản lý tự gửi POST /payments. Không phát lại event này vào
-        // chính màn chi tiết vì HTTP response sẽ là nguồn duy nhất đóng route.
-        // Đồng thời đánh dấu tableId để TableStatusUpdated kế tiếp của cùng giao
-        // dịch không làm TableScreen bên dưới rebuild giữa animation Navigator.
-        if (_isCashierOrManager) {
-          if (event.tableId > 0) {
-            _recentLocalPaymentTables[event.tableId] = DateTime.now();
-          }
-          return;
-        }
-
-        // Phục vụ vẫn cần realtime để biết Thu ngân ở thiết bị khác đã thanh toán.
+        // Luôn phát cho Mobile, kể cả tài khoản Quản lý/Thu ngân.
+        // Nếu chính Mobile vừa thanh toán thì màn chi tiết có guard
+        // _closingAfterPayment để không đóng route hai lần; nếu WinForms thanh
+        // toán thì Mobile nhận ngay và tự cập nhật/đóng bàn.
         _paymentController.add(event);
       },
     );
@@ -275,6 +316,11 @@ class RealtimeService {
     );
 
     connection.on(
+      'ReservationUpdated',
+      (_) => _reservationController.add(null),
+    );
+
+    connection.on(
       'TableStatusUpdated',
       (arguments) {
         final Map<String, dynamic>? data = _firstMap(arguments);
@@ -286,24 +332,6 @@ class RealtimeService {
         final TableStatusRealtimeEvent event =
             TableStatusRealtimeEvent.fromJson(data);
 
-        if (_isCashierOrManager) {
-          final DateTime now = DateTime.now();
-
-          _recentLocalPaymentTables.removeWhere(
-            (_, createdAt) =>
-                now.difference(createdAt) > const Duration(seconds: 3),
-          );
-
-          final DateTime? localPaymentAt =
-              _recentLocalPaymentTables[event.tableId];
-
-          if (localPaymentAt != null &&
-              now.difference(localPaymentAt) <=
-                  const Duration(seconds: 3)) {
-            return;
-          }
-        }
-
         _tableStatusController.add(event);
       },
     );
@@ -314,6 +342,7 @@ class RealtimeService {
           connection,
           employeeCode,
           roleKey,
+          normalizedDepartment,
         );
       },
     );
@@ -326,6 +355,7 @@ class RealtimeService {
       connection,
       employeeCode,
       roleKey,
+      normalizedDepartment,
     );
   }
 
@@ -333,6 +363,7 @@ class RealtimeService {
     HubConnection connection,
     String employeeCode,
     String roleKey,
+    String departmentName,
   ) async {
     await connection.invoke(
       'JoinEmployeeGroup',
@@ -341,11 +372,22 @@ class RealtimeService {
       ],
     );
 
-    if (roleKey.trim().isNotEmpty) {
+    final String normalizedRole = roleKey.trim();
+    if (normalizedRole.isNotEmpty) {
+      await connection.invoke(
+        'JoinRoleGroup',
+        args: <Object>[
+          normalizedRole,
+        ],
+      );
+    }
+
+    final String normalizedDepartment = departmentName.trim();
+    if (normalizedDepartment.isNotEmpty) {
       await connection.invoke(
         'JoinDepartmentGroup',
         args: <Object>[
-          roleKey,
+          normalizedDepartment,
         ],
       );
     }
@@ -357,7 +399,7 @@ class RealtimeService {
     _connection = null;
     _employeeCode = null;
     _roleKey = null;
-    _recentLocalPaymentTables.clear();
+    _departmentName = null;
 
     if (connection != null) {
       try {

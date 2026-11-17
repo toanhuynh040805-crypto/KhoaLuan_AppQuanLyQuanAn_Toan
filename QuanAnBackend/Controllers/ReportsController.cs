@@ -47,7 +47,7 @@ public class ReportsController : ControllerBase
             .GroupBy(i => 1)
             .Select(g => new
             {
-                Revenue = g.Sum(i => i.TotalAmount),
+                Revenue = g.Sum(i => i.TotalAmount + i.DepositAmount),
                 OrderCount = g.Count(),
                 TotalDiscount = g.Sum(i => i.DiscountAmount)
             })
@@ -55,12 +55,13 @@ public class ReportsController : ControllerBase
 
         var previousRevenue = await _db.Invoices.AsNoTracking()
             .Where(i => i.Status == InvoiceStatus.DaThanhToan && i.InvoiceDate >= prevFrom && i.InvoiceDate < prevTo)
-            .SumAsync(i => (decimal?)i.TotalAmount) ?? 0;
+            .SumAsync(i => (decimal?)(i.TotalAmount + i.DepositAmount)) ?? 0;
 
         var revenue = current?.Revenue ?? 0;
         var orderCount = current?.OrderCount ?? 0;
         var totalDiscount = current?.TotalDiscount ?? 0;
         var avgOrderValue = orderCount > 0 ? revenue / orderCount : 0;
+        var guestCount = await GetGuestCountAsync(f, t);
         double? trendPercent = previousRevenue > 0 ? (double)((revenue - previousRevenue) / previousRevenue * 100) : null;
 
         return Ok(new
@@ -69,8 +70,40 @@ public class ReportsController : ControllerBase
             OrderCount = orderCount,
             AvgOrderValue = avgOrderValue,
             TotalDiscount = totalDiscount,
+            GuestCount = guestCount,
             TrendPercent = trendPercent
         });
+    }
+
+    private async Task<int> GetGuestCountAsync(
+        DateTime fromDate,
+        DateTime toExclusive)
+    {
+        var reservationGuests = await _db.Reservations
+            .AsNoTracking()
+            .Where(reservation =>
+                (reservation.Status == ReservationStatus.DaNhanBan ||
+                 reservation.Status == ReservationStatus.HoanTat) &&
+                reservation.ReservationTime >= fromDate &&
+                reservation.ReservationTime < toExclusive)
+            .SumAsync(reservation => (int?)reservation.NumberOfGuests) ?? 0;
+
+        var walkInGuests = await _db.Database.SqlQuery<int>($"""
+            SELECT COALESCE(
+                SUM(CASE
+                    WHEN NumberOfGuests > 0 THEN NumberOfGuests
+                    ELSE 0
+                END),
+                0
+            ) AS [Value]
+            FROM WaitingQueue
+            WHERE COALESCE(SeatedTime, CheckInTime) >= {fromDate}
+              AND COALESCE(SeatedTime, CheckInTime) < {toExclusive}
+              AND CONVERT(NVARCHAR(50), Status) IN
+                  (N'DaNhanBan', N'Đã nhận bàn', N'Da Nhan Ban')
+            """).SingleAsync();
+
+        return reservationGuests + walkInGuests;
     }
 
     // GET /api/reports/revenue-by-period?from=&to= -> du lieu ve bieu do cot. Khoang
@@ -84,7 +117,7 @@ public class ReportsController : ControllerBase
 
         var invoices = await _db.Invoices.AsNoTracking()
             .Where(i => i.Status == InvoiceStatus.DaThanhToan && i.InvoiceDate >= f && i.InvoiceDate < t)
-            .Select(i => new { i.InvoiceDate, i.TotalAmount })
+            .Select(i => new { i.InvoiceDate, TotalAmount = i.TotalAmount + i.DepositAmount })
             .ToListAsync();
 
         List<object> points;
@@ -119,7 +152,7 @@ public class ReportsController : ControllerBase
         var day = (date ?? DateTime.Today).Date;
         var invoices = await _db.Invoices.AsNoTracking()
             .Where(i => i.Status == InvoiceStatus.DaThanhToan && i.InvoiceDate >= day && i.InvoiceDate < day.AddDays(1))
-            .Select(i => new { i.InvoiceDate, i.TotalAmount })
+            .Select(i => new { i.InvoiceDate, TotalAmount = i.TotalAmount + i.DepositAmount })
             .ToListAsync();
 
         // Mặc định 08:00-20:00; tự mở rộng nếu có hóa đơn ngoài giờ (sáng sớm/đêm khuya)
@@ -206,9 +239,9 @@ public class ReportsController : ControllerBase
                 || (i.Order.Table != null && i.Order.Table.Area != null && i.Order.Table.Area.AreaName == "Mang về")));
 
         var totalCount = await paid.CountAsync();
-        var totalRevenue = await paid.SumAsync(i => (decimal?)i.TotalAmount) ?? 0;
+        var totalRevenue = await paid.SumAsync(i => (decimal?)(i.TotalAmount + i.DepositAmount)) ?? 0;
         var takeawayCount = await takeawayInvoices.CountAsync();
-        var takeawayRevenue = await takeawayInvoices.SumAsync(i => (decimal?)i.TotalAmount) ?? 0;
+        var takeawayRevenue = await takeawayInvoices.SumAsync(i => (decimal?)(i.TotalAmount + i.DepositAmount)) ?? 0;
 
         var paidOrderIds = paid.Select(i => i.OrderId);
         var takeawayItemsRevenue = await _db.OrderItems.AsNoTracking()
@@ -246,7 +279,7 @@ public class ReportsController : ControllerBase
                 g.Key.EmployeeId,
                 g.Key.EmployeeName,
                 InvoiceCount = g.Count(),
-                Revenue = g.Sum(i => i.TotalAmount)
+                Revenue = g.Sum(i => i.TotalAmount + i.DepositAmount)
             })
             .OrderByDescending(x => x.Revenue)
             .ToListAsync();

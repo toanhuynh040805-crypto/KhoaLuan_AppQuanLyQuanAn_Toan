@@ -12,7 +12,8 @@ public record AttendanceActionRequest(
     string EmployeeCode,
     double? Latitude = null,
     double? Longitude = null,
-    double? AccuracyMeters = null
+    double? AccuracyMeters = null,
+    bool IsMocked = false
 );
 
 public record AttendanceTodayDto(
@@ -285,6 +286,105 @@ public class AttendanceController : ControllerBase
             if (shouldClose)
                 await connection.CloseAsync();
         }
+    }
+
+    // POST api/attendance/check-location
+    // Chỉ kiểm tra vị trí hiện tại, không ghi giờ vào/ra.
+    // Mobile dùng endpoint này để hiển thị rõ nhân viên đang ở đúng
+    // vị trí quán hay ngoài phạm vi trước khi bấm điểm danh.
+    [HttpPost("check-location")]
+    public async Task<IActionResult> CheckLocation(
+        [FromBody] AttendanceActionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.EmployeeCode))
+            return BadRequest(new { message = "Thiếu mã nhân viên" });
+
+        if (!await CanUseEmployeeCodeAsync(request.EmployeeCode))
+            return Forbid();
+
+        if (!request.Latitude.HasValue ||
+            !request.Longitude.HasValue ||
+            !request.AccuracyMeters.HasValue)
+        {
+            return BadRequest(new { message = "Không lấy được vị trí GPS hiện tại." });
+        }
+
+        var latitude = request.Latitude.Value;
+        var longitude = request.Longitude.Value;
+        var accuracy = request.AccuracyMeters.Value;
+
+        if (latitude is < -90 or > 90 ||
+            longitude is < -180 or > 180 ||
+            accuracy < 0)
+        {
+            return BadRequest(new { message = "Dữ liệu vị trí GPS không hợp lệ." });
+        }
+
+        var settings = await _attendanceSettings.GetAsync();
+
+        if (!settings.IsConfigured ||
+            !settings.Latitude.HasValue ||
+            !settings.Longitude.HasValue)
+        {
+            return Conflict(new
+            {
+                message =
+                    "Quản lý chưa thiết lập vị trí nhà hàng. " +
+                    "Vui lòng cấu hình trong Cá nhân > Vị trí điểm danh."
+            });
+        }
+
+        var radius = Math.Max(1, settings.RadiusMeters);
+        var maxAccuracy = Math.Max(1, settings.MaxAccuracyMeters);
+        var distance = CalculateDistanceMeters(
+            latitude,
+            longitude,
+            settings.Latitude.Value,
+            settings.Longitude.Value
+        );
+
+        if (request.IsMocked)
+        {
+            return Ok(new
+            {
+                isInside = false,
+                isMocked = true,
+                distanceMeters = distance,
+                radiusMeters = radius,
+                accuracyMeters = accuracy,
+                message = "Thiết bị đang sử dụng vị trí mô phỏng. Không thể điểm danh."
+            });
+        }
+
+        if (accuracy > maxAccuracy)
+        {
+            return Ok(new
+            {
+                isInside = false,
+                isMocked = false,
+                distanceMeters = distance,
+                radiusMeters = radius,
+                accuracyMeters = accuracy,
+                message =
+                    $"GPS chưa đủ chính xác (sai số khoảng {Math.Round(accuracy)} m). " +
+                    $"Cần sai số không quá {Math.Round(maxAccuracy)} m."
+            });
+        }
+
+        var isInside = distance <= radius;
+
+        return Ok(new
+        {
+            isInside,
+            isMocked = false,
+            distanceMeters = distance,
+            radiusMeters = radius,
+            accuracyMeters = accuracy,
+            message = isInside
+                ? $"Đúng vị trí quán. Bạn đang cách quán khoảng {Math.Round(distance)} m."
+                : $"Ngoài phạm vi điểm danh. Bạn đang cách quán khoảng {Math.Round(distance)} m; " +
+                  $"bán kính cho phép là {Math.Round(radius)} m."
+        });
     }
 
     // POST api/attendance/check-in
@@ -953,6 +1053,18 @@ public class AttendanceController : ControllerBase
                         "Quản lý chưa thiết lập vị trí nhà hàng. " +
                         "Vui lòng cấu hình trong Cá nhân > " +
                         "Vị trí điểm danh."
+                }
+            );
+        }
+
+        if (request.IsMocked)
+        {
+            return Conflict(
+                new
+                {
+                    message =
+                        "Thiết bị đang sử dụng vị trí mô phỏng. " +
+                        "Không thể điểm danh bằng GPS giả lập."
                 }
             );
         }

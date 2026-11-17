@@ -34,11 +34,18 @@ export function ensureCustomerSession() {
                     setCurrentCustomer(customer);
                     return true;
                 } catch (err) {
-                    // Nếu lỗi không phải 401/403 (ví dụ mất mạng tạm thời), không vội xóa phiên
-                    if (err?.status !== 401 && err?.status !== 403) {
+                    // 403 là token hợp lệ nhưng không có quyền Customer: refresh lại cùng
+                    // một danh tính sẽ không sửa được lỗi quyền, nên kết thúc phiên ngay.
+                    if (err?.status === 403) {
+                        clearCustomerSession();
+                        globalThis.dispatchEvent?.(new CustomEvent('gusto:unauthorized'));
+                        return false;
+                    }
+                    // Nếu lỗi không phải 401 (ví dụ mất mạng tạm thời), không vội xóa phiên.
+                    if (err?.status !== 401) {
                         return true;
                     }
-                    // Nếu 401 (token bị từ chối), tiếp tục thử refresh token ở bước dưới
+                    // Nếu 401 (token hết hạn/bị từ chối), tiếp tục thử refresh token ở bước dưới
                 }
             }
 
@@ -63,7 +70,12 @@ export function ensureCustomerSession() {
 
             clearCustomerSession();
             return false;
-        } catch {
+        } catch (err) {
+            if (err?.status === 401 || err?.status === 403) {
+                clearCustomerSession();
+                globalThis.dispatchEvent?.(new CustomEvent('gusto:unauthorized'));
+                return false;
+            }
             return hasCustomerSession() && !isTokenExpired();
         } finally {
             restorePromise = null;

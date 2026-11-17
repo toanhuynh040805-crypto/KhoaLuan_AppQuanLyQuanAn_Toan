@@ -180,7 +180,7 @@ export function getCustomerRoles() {
 
 export function hasCustomerRole() {
     const roles = getCustomerRoles();
-    return roles.includes('Customer');
+    return roles.includes('KhachHang') || roles.includes('Customer');
 }
 
 // Bổ sung tham số rememberMe

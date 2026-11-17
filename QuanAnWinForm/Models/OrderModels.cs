@@ -61,6 +61,7 @@ public class OrderItemDto
     public string? Note { get; set; }
     public int KitchenStatus { get; set; } // khớp enum KitchenStatus ở trên
     public bool IsTakeaway { get; set; }
+    public DateTime CreatedAt { get; set; }
 
     // Bổ sung 2 thuộc tính này để nhận lý do hủy và RowVer từ Backend
     public string? CancelReason { get; set; }
@@ -90,6 +91,30 @@ public class TableDto
     public int Status { get; set; } // khớp enum TableStatusEnum ở trên
     public int AreaId { get; set; }
     public string AreaName { get; set; } = "";
+    public int? GuestCount { get; set; }
+
+    // Phiên hiện tại và lịch đặt tiếp theo được Backend tách riêng.
+    // Nhờ vậy một bàn có thể vừa "Có khách" vừa vẫn hiện lịch đặt tương lai.
+    public string? CurrentSessionType { get; set; } // WalkIn | Reservation
+    public int? NextReservationId { get; set; }
+    public DateTime? NextReservationTime { get; set; }
+    public string? NextReservationCustomerName { get; set; }
+    public int? NextReservationGuestCount { get; set; }
+
+    public bool HasUpcomingReservation =>
+        NextReservationId.HasValue && NextReservationTime.HasValue;
+
+    public bool IsReservationSession =>
+        string.Equals(
+            CurrentSessionType,
+            "Reservation",
+            StringComparison.OrdinalIgnoreCase);
+
+    public bool IsWalkInSession =>
+        string.Equals(
+            CurrentSessionType,
+            "WalkIn",
+            StringComparison.OrdinalIgnoreCase);
 
     // Ghép bàn: null nếu bàn không nằm trong nhóm ghép
     public int? LinkedOrderId { get; set; }
@@ -191,6 +216,7 @@ public class PaymentDto
     public int InvoiceId { get; set; }
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal DepositAmount { get; set; }
     public decimal TotalAmount { get; set; }
     public int Method { get; set; }
     public string? QRCodeContent { get; set; }
@@ -217,6 +243,7 @@ public class LoginResultDto
     public int UserId { get; set; }
     public string FullName { get; set; } = "";
     public string Username { get; set; } = "";
+    public string EmployeeCode { get; set; } = "";
     public string RoleName { get; set; } = "";
     public int? StationId { get; set; }
     public string? StationName { get; set; }
@@ -227,6 +254,7 @@ public class LoginResultDto
 public class NewTicketPayload
 {
     public int OrderId { get; set; }
+    public int? TableId { get; set; }
     public string TableName { get; set; } = "";
     public string Department { get; set; } = "";
     public List<TicketItem> Items { get; set; } = new();
@@ -247,6 +275,7 @@ public class ItemStatusUpdatedPayload
 {
     public int Id { get; set; }
     public int OrderId { get; set; }
+    public int TableId { get; set; }
     public string TableName { get; set; } = "";
     public string MenuItemName { get; set; } = "";
     public int Status { get; set; }
@@ -269,7 +298,17 @@ public class PaymentPreviewOrderDto
     public string WaiterName { get; set; } = "";
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal DepositAmount { get; set; }
     public decimal TotalAmount { get; set; }
+    public decimal CampaignDiscount { get; set; }
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
+    public int LoyaltyPointBalance { get; set; }
+    public int MaxRedeemablePoints { get; set; }
+    public int RedeemedPoints { get; set; }
+    public decimal LoyaltyPointValue { get; set; } = 1000m;
+    public decimal LoyaltyDiscount { get; set; }
+    public int EstimatedEarnedPoints { get; set; }
     public string QrImageUrl { get; set; } = "";
     public string QrPayload { get; set; } = "";
     public string BankName { get; set; } = "";
@@ -279,4 +318,23 @@ public class PaymentPreviewOrderDto
     public string TransferContent { get; set; } = "";
     public string ShopName { get; set; } = "";
     public string ShopAddress { get; set; } = "";
+}
+
+
+public class TableLockLeaseDto
+{
+    public int TableId { get; set; }
+    public string EmployeeCode { get; set; } = "";
+    public string EmployeeName { get; set; } = "";
+    public string ClientToken { get; set; } = "";
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
+}
+
+public class TableLockTakenOverPayload
+{
+    public int TableId { get; set; }
+    public string TableName { get; set; } = "";
+    public string PreviousClientToken { get; set; } = "";
+    public string TakenOverByEmployeeCode { get; set; } = "";
+    public string TakenOverByEmployeeName { get; set; } = "";
 }

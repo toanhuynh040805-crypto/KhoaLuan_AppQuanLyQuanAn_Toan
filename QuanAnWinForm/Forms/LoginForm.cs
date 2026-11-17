@@ -71,6 +71,9 @@ public partial class LoginForm : Form
             SessionContext.Token = result.Token;
             SessionContext.UserId = result.UserId;
             SessionContext.FullName = result.FullName;
+            SessionContext.EmployeeCode = string.IsNullOrWhiteSpace(result.EmployeeCode)
+                ? result.Username
+                : result.EmployeeCode;
             SessionContext.RoleName = result.RoleName;
             SessionContext.StationId = result.StationId;
             SessionContext.StationName = result.StationName ?? "";

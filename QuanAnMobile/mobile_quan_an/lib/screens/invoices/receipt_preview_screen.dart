@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/theme.dart';
+import '../../widgets/payment_qr_code.dart';
 
 class ReceiptLineView {
   final String name;
@@ -38,6 +39,7 @@ class ReceiptPreviewScreen
   final String bankBranch;
   final String transferContent;
   final String qrImageUrl;
+  final String qrPayload;
 
   const ReceiptPreviewScreen({
     super.key,
@@ -60,6 +62,7 @@ class ReceiptPreviewScreen
     required this.bankBranch,
     required this.transferContent,
     required this.qrImageUrl,
+    this.qrPayload = '',
   });
 
   String _money(int value) {
@@ -497,8 +500,8 @@ class ReceiptPreviewScreen
                       ),
                     ],
                   ),
-                  if (qrImageUrl
-                      .isNotEmpty) ...[
+                  if (qrPayload.isNotEmpty ||
+                      qrImageUrl.isNotEmpty) ...[
                     const SizedBox(
                       height: 18,
                     ),
@@ -506,22 +509,10 @@ class ReceiptPreviewScreen
                       child: SizedBox(
                         width: 220,
                         height: 220,
-                        child:
-                            Image.network(
-                          qrImageUrl,
-                          fit:
-                              BoxFit.contain,
-                          errorBuilder:
-                              (
-                                context,
-                                error,
-                                stackTrace,
-                              ) =>
-                                  const Center(
-                            child: Text(
-                              'Không tải được QR',
-                            ),
-                          ),
+                        child: PaymentQrCode(
+                          payload: qrPayload,
+                          fallbackImageUrl: qrImageUrl,
+                          size: 208,
                         ),
                       ),
                     ),

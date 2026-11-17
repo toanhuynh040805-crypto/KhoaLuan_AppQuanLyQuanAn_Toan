@@ -40,6 +40,10 @@ public class InvoiceDetailDto
     public List<InvoiceLineDto> Items { get; set; } = new();
     public decimal SubTotal { get; set; }
     public decimal DiscountAmount { get; set; }
+    public decimal DepositAmount { get; set; }
+    public int PointsRedeemed { get; set; }
+    public int PointsEarned { get; set; }
+    public decimal LoyaltyDiscount { get; set; }
     public string? CampaignName { get; set; } // ten chien dich khuyen mai da ap dung (neu co)
     public decimal TaxAmount { get; set; }
     public decimal TotalAmount { get; set; }

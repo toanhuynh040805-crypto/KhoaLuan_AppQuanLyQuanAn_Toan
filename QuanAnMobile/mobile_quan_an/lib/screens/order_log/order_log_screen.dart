@@ -78,7 +78,7 @@ class _OrderLogScreenState extends State<OrderLogScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          'Nhật ký Order • ${widget.tableName}',
+          'Nhật ký bàn • ${widget.tableName}',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
@@ -93,7 +93,7 @@ class _OrderLogScreenState extends State<OrderLogScreen> {
                         SizedBox(height: 180),
                         Icon(Icons.history, size: 54, color: Colors.grey),
                         SizedBox(height: 10),
-                        Center(child: Text('Chưa có lịch sử Order')),
+                        Center(child: Text('Chưa có lịch sử bàn')),
                       ],
                     )
                   : ListView.separated(
@@ -119,7 +119,18 @@ class _OrderLogScreenState extends State<OrderLogScreen> {
 
                         final Map<String, dynamic> event = _events[index - 1];
                         final String status = event['status']?.toString() ?? '';
-                        final Color color = _color(status.toLowerCase());
+                        final bool isTableOperation =
+                            event['eventType']?.toString() == 'tableOperation';
+                        final Color color = isTableOperation
+                            ? AppTheme.orangeColor
+                            : _color(status.toLowerCase());
+                        final String eventTitle = isTableOperation
+                            ? event['itemName']?.toString() ?? 'Thao tác bàn'
+                            : '${event['itemName'] ?? 'Món'}  x${event['quantity'] ?? 1}';
+                        final String? sourceOrderId =
+                            event['sourceOrderId']?.toString();
+                        final String? targetOrderId =
+                            event['targetOrderId']?.toString();
                         return Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -142,14 +153,30 @@ class _OrderLogScreenState extends State<OrderLogScreen> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      '${event['itemName'] ?? 'Món'}  x${event['quantity'] ?? 1}',
+                                      eventTitle,
                                       style: const TextStyle(fontWeight: FontWeight.bold),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      '$status • ${_time(event['changedAt'])}',
+                                      isTableOperation
+                                          ? 'Thao tác bàn • ${_time(event['changedAt'])}'
+                                          : '$status • ${_time(event['changedAt'])}',
                                       style: TextStyle(color: color, fontWeight: FontWeight.w600),
                                     ),
+                                    if (isTableOperation &&
+                                        (sourceOrderId != null ||
+                                            targetOrderId != null)) ...[
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        sourceOrderId == targetOrderId
+                                            ? 'Order #${sourceOrderId ?? targetOrderId}'
+                                            : 'Order: #${sourceOrderId ?? '-'} → #${targetOrderId ?? '-'}',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade700,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 3),
                                     Text(
                                       'Thực hiện: ${event['changedBy'] ?? 'Hệ thống'}',
@@ -158,7 +185,9 @@ class _OrderLogScreenState extends State<OrderLogScreen> {
                                     if ((event['note']?.toString().trim() ?? '').isNotEmpty) ...[
                                       const SizedBox(height: 3),
                                       Text(
-                                        'Ghi chú: ${event['note']}',
+                                        isTableOperation
+                                            ? event['note'].toString()
+                                            : 'Ghi chú: ${event['note']}',
                                         style: TextStyle(
                                           color: Colors.grey.shade600,
                                           fontStyle: FontStyle.italic,

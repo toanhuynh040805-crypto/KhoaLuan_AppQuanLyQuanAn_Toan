@@ -27,13 +27,18 @@ class TableLockService {
   Future<TableLockLease> acquire({
     required int tableId,
     required String employeeCode,
+    bool forceTakeover = false,
+    String? clientToken,
   }) async {
-    final String token = _newToken();
+    final String token = clientToken?.trim().isNotEmpty == true
+        ? clientToken!.trim()
+        : _newToken();
     final dynamic response = await _apiClient.post(
       '/mobile/table-locks/$tableId/acquire',
       body: <String, dynamic>{
         'employeeCode': employeeCode,
         'clientToken': token,
+        'forceTakeover': forceTakeover,
       },
     );
 

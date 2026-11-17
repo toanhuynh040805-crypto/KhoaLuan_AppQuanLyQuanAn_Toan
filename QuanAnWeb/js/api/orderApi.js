@@ -8,5 +8,14 @@ export const orderApi = {
     },
     getCustomerOrderByRequestId: async (clientRequestId) => {
         return await apiClient.get(`/orders/customer-order/${encodeURIComponent(clientRequestId)}`);
+    },
+    // Giờ nhận món của bếp. Lỗi mạng -> null (UI không chặn, Backend vẫn là lớp chặn cuối).
+    // Trả về: { isOpen, openTime, closeTime, message, serverTime }
+    getKitchenHours: async () => {
+        try {
+            return await apiClient.get('/kitchen-hours');
+        } catch {
+            return null;
+        }
     }
 };
