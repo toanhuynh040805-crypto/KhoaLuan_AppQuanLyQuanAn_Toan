@@ -459,6 +459,13 @@ app.UseMiddleware<AreaAccessMiddleware>();
 
 app.UseAuthorization();
 
+// Endpoint công khai để Mobile nhận diện đúng Backend khi tự dò trong LAN.
+app.MapGet("/api/health", () => Results.Ok(new
+{
+    service = "QuanAnBackend",
+    status = "ok"
+})).AllowAnonymous();
+
 app.MapControllers();
 app.MapHub<OrderHub>("/hubs/order");
 
